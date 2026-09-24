@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.object@1",
+  "title": "NexusObject envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "object_id", "object_type", "payload_uri", "hash_profile_ref", "integrity_hash", "created_by_run", "classification_assertion_ref"],
+  "properties": {
+    "schema_id": {"const": "nexus.object"},
+    "schema_version": {"const": 1},
+    "object_id": {"type": "string", "minLength": 1},
+    "object_type": {"enum": ["user_input", "task_contract", "run_manifest", "artifact", "evidence", "claim", "memory", "skill", "verification"]},
+    "payload_uri": {"type": "string", "minLength": 1},
+    "hash_profile_ref": {"type": "string", "minLength": 1},
+    "integrity_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "semantic_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "created_by_run": {"type": "string", "minLength": 1},
+    "classification_assertion_ref": {"type": "string", "minLength": 1}
+  }
+}

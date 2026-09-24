@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.schema_registration@1",
+  "title": "Nexus Schema registration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "registration_id", "registered_schema_id", "registered_schema_version", "status", "schema_object_ref", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.schema_registration"},
+    "schema_version": {"const": 1},
+    "registration_id": {"type": "string", "minLength": 1},
+    "registered_schema_id": {"type": "string", "minLength": 1},
+    "registered_schema_version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["DRAFT", "ACTIVE", "DEPRECATED", "RETIRED"]},
+    "schema_object_ref": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.object_relation@1",
+  "title": "Nexus ObjectRelation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "from_id", "relation_type", "to_id"],
+  "properties": {
+    "schema_id": {"const": "nexus.object_relation"},
+    "schema_version": {"const": 1},
+    "from_id": {"type": "string", "minLength": 1},
+    "relation_type": {"enum": ["derived_from", "supports", "contradicts", "generated_from", "supersedes"]},
+    "to_id": {"type": "string", "minLength": 1}
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.schema_migration@1",
+  "title": "Nexus SchemaMigration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "migration_id", "input_schema_id", "input_version", "output_schema_id", "output_version", "migration_version", "lossless", "transform_ref"],
+  "properties": {
+    "schema_id": {"const": "nexus.schema_migration"},
+    "schema_version": {"const": 1},
+    "migration_id": {"type": "string", "minLength": 1},
+    "input_schema_id": {"type": "string", "minLength": 1},
+    "input_version": {"type": "integer", "minimum": 1},
+    "output_schema_id": {"type": "string", "minLength": 1},
+    "output_version": {"type": "integer", "minimum": 1},
+    "migration_version": {"type": "string", "minLength": 1},
+    "lossless": {"type": "boolean"},
+    "transform_ref": {"type": "string", "minLength": 1}
+  }
+}

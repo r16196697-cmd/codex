@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.approval_decision@1",
+  "title": "Nexus ApprovalDecision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "approval_id", "approver_principal_id", "target_type", "target_ref", "decision", "approved_scope", "policy_version", "issued_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.approval_decision"},
+    "schema_version": {"const": 1},
+    "approval_id": {"type": "string", "minLength": 1},
+    "approver_principal_id": {"type": "string", "minLength": 1},
+    "target_type": {"type": "string", "minLength": 1},
+    "target_ref": {"type": "string", "minLength": 1},
+    "effect_id": {"type": "string", "minLength": 1},
+    "payload_integrity_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "decision": {"enum": ["APPROVE", "DENY"]},
+    "approved_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "policy_version": {"type": "string", "minLength": 1},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "reason": {"type": "string", "maxLength": 1024},
+    "request_ref": {"type": "string", "minLength": 1}
+  }
+}

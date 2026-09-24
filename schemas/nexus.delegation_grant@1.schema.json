@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.delegation_grant@1",
+  "title": "Nexus DelegationGrant v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "grant_id", "issued_by", "granted_to", "task_scope", "resource_scope", "action_scope", "audience_scope", "issued_at", "expires_at", "status", "policy_version"],
+  "properties": {
+    "schema_id": {"const": "nexus.delegation_grant"},
+    "schema_version": {"const": 1},
+    "grant_id": {"type": "string", "minLength": 1},
+    "parent_grant_id": {"type": "string", "minLength": 1},
+    "issued_by": {"type": "string", "minLength": 1},
+    "granted_to": {"type": "string", "minLength": 1},
+    "task_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "resource_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "action_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "audience_scope": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "status": {"enum": ["PROPOSED", "ACTIVE", "EXPIRED", "REVOKED"]},
+    "policy_version": {"type": "string", "minLength": 1},
+    "credential_ref": {"type": "string", "minLength": 1}
+  }
+}

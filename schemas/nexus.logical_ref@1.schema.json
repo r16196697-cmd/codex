@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.logical_ref@1",
+  "title": "Nexus LogicalRef v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "ref_id", "ref_type", "current_object_id", "revision", "updated_at", "updated_by_run"],
+  "properties": {
+    "schema_id": {"const": "nexus.logical_ref"},
+    "schema_version": {"const": 1},
+    "ref_id": {"type": "string", "minLength": 1},
+    "ref_type": {"type": "string", "minLength": 1},
+    "current_object_id": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "updated_by_run": {"type": "string", "minLength": 1}
+  }
+}

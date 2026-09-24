@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.task@1",
+  "title": "Nexus Task v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "task_id", "requester_id", "status", "created_at", "command_id"],
+  "properties": {
+    "schema_id": {"const": "nexus.task"},
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "conversation_id": {"type": "string", "minLength": 1},
+    "requester_id": {"type": "string", "minLength": 1},
+    "root_run_id": {"type": "string", "minLength": 1},
+    "task_contract_ref": {"type": "string", "minLength": 1},
+    "status": {"enum": ["CREATED", "ACTIVE", "WAITING", "SUCCEEDED", "FAILED", "CANCELLED"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "command_id": {"type": "string", "minLength": 1}
+  }
+}

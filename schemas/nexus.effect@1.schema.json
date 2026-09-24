@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.effect@1",
+  "title": "Nexus Effect v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "effect_id", "run_id", "tool_id", "action_type", "target_ref", "idempotency_key", "grant_id", "execution_state", "effect_outcome", "reconciliation_status"],
+  "properties": {
+    "schema_id": {"const": "nexus.effect"},
+    "schema_version": {"const": 1},
+    "effect_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "tool_id": {"type": "string", "minLength": 1},
+    "action_type": {"type": "string", "minLength": 1},
+    "target_ref": {"type": "string", "minLength": 1},
+    "payload_integrity_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "grant_id": {"type": "string", "minLength": 1},
+    "approval_ref": {"type": "string", "minLength": 1},
+    "execution_state": {"enum": ["DECLARED", "PREPARED", "AUTHORIZED", "COMMITTING", "FINISHED", "CANCELLED"]},
+    "effect_outcome": {"enum": ["UNDETERMINED", "COMMITTED", "NOT_COMMITTED", "UNKNOWN"]},
+    "reconciliation_status": {"enum": ["NOT_REQUIRED", "PENDING", "RETRYING", "EXHAUSTED", "HUMAN_REQUIRED", "BLOCK_AND_ALERT", "RESOLVED"]},
+    "external_receipt_ref": {"type": "string", "minLength": 1}
+  },
+  "if": {"properties": {"execution_state": {"const": "CANCELLED"}}, "required": ["execution_state"]},
+  "then": {"properties": {"effect_outcome": {"const": "NOT_COMMITTED"}}},
+  "allOf": [
+    {
+      "if": {"properties": {"effect_outcome": {"const": "UNDETERMINED"}}, "required": ["effect_outcome"]},
+      "then": {"properties": {"execution_state": {"enum": ["DECLARED", "PREPARED", "AUTHORIZED"]}, "reconciliation_status": {"const": "NOT_REQUIRED"}}}
+    },
+    {
+      "if": {"properties": {"effect_outcome": {"const": "UNKNOWN"}}, "required": ["effect_outcome"]},
+      "then": {"properties": {"reconciliation_status": {"enum": ["PENDING", "RETRYING", "EXHAUSTED", "HUMAN_REQUIRED", "BLOCK_AND_ALERT"]}}}
+    },
+    {
+      "if": {"properties": {"reconciliation_status": {"const": "RESOLVED"}}, "required": ["reconciliation_status"]},
+      "then": {"properties": {"effect_outcome": {"enum": ["COMMITTED", "NOT_COMMITTED"]}}}
+    }
+  ]
+}

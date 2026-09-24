@@ -1,0 +1,13 @@
+# Local runtime and test artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.bak-*
+.pytest_cache/
+coverage.xml
+.coverage
+
+# Nexus payload, database, recovery and purge data must never enter Git
+nexus/data/
+nexus/purge-ledger/
+nexus/backups/

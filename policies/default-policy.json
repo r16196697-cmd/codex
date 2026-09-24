@@ -1,0 +1,17 @@
+{
+  "schema_id": "nexus.policy",
+  "schema_version": 1,
+  "policy_version": "1",
+  "mode": "NORMAL",
+  "trust_anchors": [],
+  "classification": {
+    "sensitivity_rank": {"PUBLIC": 0, "PERSONAL": 1, "PROJECT_PRIVATE": 2, "CONFIDENTIAL": 3, "SECRET": 4},
+    "restrictive_tags": ["LOCAL_ONLY", "NO_EXTERNAL_EGRESS"]
+  },
+  "egress": {"default": "DENY", "allowed_destinations": {}},
+  "budgets": {"account_scope": "TASK", "reservation_required": true, "task_budget_must_be_explicit": true},
+  "effects": {"default_external_write": "HUMAN_GATE", "default_irreversible_write": "HUMAN_GATE", "unknown_requires_authoritative_reconciliation": true, "max_reconciliation_attempts": 3},
+  "trace": {"max_string_bytes": 1024, "max_depth": 4, "max_fields": 64, "telemetry_egress_default": "DENY"},
+  "purge": {"execution_barrier_required": true, "ledger_independent_of_backup": true, "restore_replay_required": true},
+  "learning": {"auto_promote": false, "learned_router": false}
+}

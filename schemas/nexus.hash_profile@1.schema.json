@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.hash_profile@1",
+  "title": "Nexus HashProfile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "profile_id", "profile_version", "integrity_profile"],
+  "properties": {
+    "schema_id": {"const": "nexus.hash_profile"},
+    "schema_version": {"const": 1},
+    "profile_id": {"type": "string", "minLength": 1},
+    "profile_version": {"type": "integer", "minimum": 1},
+    "integrity_profile": {"type": "object", "additionalProperties": false, "required": ["representation", "hash_algorithm"], "properties": {"representation": {"enum": ["RAW_BYTES", "JCS_JSON", "DETERMINISTIC_TREE"]}, "hash_algorithm": {"const": "SHA-256"}}},
+    "semantic_profile": {"type": "object", "additionalProperties": false, "required": ["representation", "canonicalization", "hash_algorithm"], "properties": {"representation": {"type": "string", "minLength": 1}, "canonicalization": {"type": "string", "minLength": 1}, "hash_algorithm": {"type": "string", "minLength": 1}}}
+  }
+}

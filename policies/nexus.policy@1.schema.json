@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.policy@1",
+  "title": "Nexus deployment policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "policy_version", "mode", "trust_anchors", "classification", "egress", "budgets", "effects", "trace", "purge", "learning"],
+  "properties": {
+    "schema_id": {"const": "nexus.policy"},
+    "schema_version": {"const": 1},
+    "policy_version": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["NORMAL", "SAFE", "STATELESS", "RECOVERY"]},
+    "trust_anchors": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "classification": {"type": "object", "additionalProperties": false, "required": ["sensitivity_rank", "restrictive_tags"], "properties": {"sensitivity_rank": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "integer", "minimum": 0}}, "restrictive_tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}}},
+    "egress": {"type": "object", "additionalProperties": false, "required": ["default", "allowed_destinations"], "properties": {"default": {"const": "DENY"}, "allowed_destinations": {"type": "object", "maxProperties": 0}}},
+    "budgets": {"type": "object", "additionalProperties": false, "required": ["account_scope", "reservation_required", "task_budget_must_be_explicit"], "properties": {"account_scope": {"const": "TASK"}, "reservation_required": {"const": true}, "task_budget_must_be_explicit": {"const": true}}},
+    "effects": {"type": "object", "additionalProperties": false, "required": ["default_external_write", "default_irreversible_write", "unknown_requires_authoritative_reconciliation", "max_reconciliation_attempts"], "properties": {"default_external_write": {"const": "HUMAN_GATE"}, "default_irreversible_write": {"const": "HUMAN_GATE"}, "unknown_requires_authoritative_reconciliation": {"const": true}, "max_reconciliation_attempts": {"type": "integer", "minimum": 1}}},
+    "trace": {"type": "object", "additionalProperties": false, "required": ["max_string_bytes", "max_depth", "max_fields", "telemetry_egress_default"], "properties": {"max_string_bytes": {"type": "integer", "maximum": 1024}, "max_depth": {"type": "integer", "maximum": 4}, "max_fields": {"type": "integer", "maximum": 64}, "telemetry_egress_default": {"const": "DENY"}}},
+    "purge": {"type": "object", "additionalProperties": false, "required": ["execution_barrier_required", "ledger_independent_of_backup", "restore_replay_required"], "properties": {"execution_barrier_required": {"const": true}, "ledger_independent_of_backup": {"const": true}, "restore_replay_required": {"const": true}}},
+    "learning": {"type": "object", "additionalProperties": false, "required": ["auto_promote", "learned_router"], "properties": {"auto_promote": {"const": false}, "learned_router": {"const": false}}}
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.trace_event@1",
+  "title": "Nexus TraceEvent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "event_id", "run_id", "seq_no", "event_type", "occurred_at", "actor_id", "object_refs", "effect_refs", "policy_refs", "authority_refs", "data_boundary", "classification_assertion_ref", "typed_metadata"],
+  "properties": {
+    "schema_id": {"const": "nexus.trace_event"},
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "seq_no": {"type": "integer", "minimum": 1},
+    "event_type": {"type": "string", "pattern": "^nexus\\.[a-z0-9_.-]+$", "maxLength": 96},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "actor_id": {"type": "string", "minLength": 1},
+    "object_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "effect_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "policy_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "authority_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "data_boundary": {"$ref": "#/$defs/dataBoundary"},
+    "classification_assertion_ref": {"type": "string", "minLength": 1},
+    "typed_metadata": {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "#/$defs/jsonValue"}}
+  },
+  "$defs": {
+    "dataBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_classifications", "handling_tags"],
+      "properties": {
+        "allowed_classifications": {"type": "array", "items": {"enum": ["PUBLIC", "PERSONAL", "PROJECT_PRIVATE", "CONFIDENTIAL", "SECRET"]}, "uniqueItems": true},
+        "handling_tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "jsonValue": {
+      "anyOf": [
+        {"type": "null"}, {"type": "boolean"}, {"type": "number"},
+        {"type": "string", "maxLength": 1024},
+        {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/jsonValue"}},
+        {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "#/$defs/jsonValue"}}
+      ]
+    }
+  }
+}

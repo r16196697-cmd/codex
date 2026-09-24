@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.task_contract@1",
+  "title": "Nexus TaskContract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "task_id", "requester_id", "goal", "constraints", "success_criteria", "risk_class", "budget_account_ref", "routing_constraints", "routing_preferences", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.task_contract"},
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "requester_id": {"type": "string", "minLength": 1},
+    "goal": {"type": "string", "minLength": 1},
+    "constraints": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "success_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "risk_class": {"type": "string", "minLength": 1},
+    "budget_account_ref": {"type": "string", "minLength": 1},
+    "routing_constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_providers", "forbidden_providers", "locality", "network_required", "modalities"],
+      "properties": {
+        "allowed_providers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "forbidden_providers": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "locality": {"enum": ["ANY", "LOCAL_ONLY", "CLOUD_ALLOWED"]},
+        "network_required": {"type": "boolean"},
+        "modalities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "routing_preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["optimize_for"],
+      "properties": {"optimize_for": {"enum": ["QUALITY", "LATENCY", "COST", "BALANCED"]}}
+    },
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

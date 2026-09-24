@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.classification_assertion@1",
+  "title": "Nexus ClassificationAssertion v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "assertion_id", "subject_type", "subject_ref", "sensitivity_level", "handling_tags", "policy_version", "reason", "actor_id"],
+  "properties": {
+    "schema_id": {"const": "nexus.classification_assertion"},
+    "schema_version": {"const": 1},
+    "assertion_id": {"type": "string", "minLength": 1},
+    "subject_type": {"enum": ["OBJECT", "RUN", "TRACE_EVENT"]},
+    "subject_ref": {"type": "string", "minLength": 1},
+    "sensitivity_level": {"enum": ["PUBLIC", "PERSONAL", "PROJECT_PRIVATE", "CONFIDENTIAL", "SECRET"]},
+    "handling_tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "policy_version": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 1024},
+    "actor_id": {"type": "string", "minLength": 1},
+    "supersedes": {"type": "string", "minLength": 1}
+  }
+}

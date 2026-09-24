@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.trust_anchor@1",
+  "title": "Nexus TrustAnchor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "anchor_id", "principal_id", "policy_ref"],
+  "properties": {
+    "schema_id": {"const": "nexus.trust_anchor"},
+    "schema_version": {"const": 1},
+    "anchor_id": {"type": "string", "minLength": 1},
+    "principal_id": {"type": "string", "minLength": 1},
+    "policy_ref": {"type": "string", "minLength": 1}
+  }
+}

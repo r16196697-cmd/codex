@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.run@1",
+  "title": "Nexus Run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "run_id", "task_id", "executor_kind", "status", "grant_id", "data_boundary", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.run"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "subtask_id": {"type": "string", "minLength": 1},
+    "parent_run_id": {"type": "string", "minLength": 1},
+    "executor_kind": {"enum": ["ORCHESTRATOR", "MODEL", "TOOL"]},
+    "status": {"enum": ["CREATED", "READY", "RUNNING", "WAITING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED"]},
+    "grant_id": {"type": "string", "minLength": 1},
+    "manifest_ref": {"type": "string", "minLength": 1},
+    "budget_reservation_ref": {"type": "string", "minLength": 1},
+    "data_boundary": {"$ref": "#/$defs/dataBoundary"},
+    "classification_assertion_ref": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"not": {"required": ["parent_run_id"]}},
+      "then": {"properties": {"executor_kind": {"const": "ORCHESTRATOR"}}}
+    },
+    {
+      "if": {"required": ["parent_run_id"]},
+      "then": {"properties": {"executor_kind": {"enum": ["MODEL", "TOOL"]}}}
+    }
+  ],
+  "$defs": {
+    "dataBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_classifications", "handling_tags"],
+      "properties": {
+        "allowed_classifications": {"type": "array", "items": {"enum": ["PUBLIC", "PERSONAL", "PROJECT_PRIVATE", "CONFIDENTIAL", "SECRET"]}, "uniqueItems": true},
+        "handling_tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.principal@1",
+  "title": "Nexus Principal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "principal_id", "principal_type", "status"],
+  "properties": {
+    "schema_id": {"const": "nexus.principal"},
+    "schema_version": {"const": 1},
+    "principal_id": {"type": "string", "minLength": 1},
+    "principal_type": {"enum": ["HUMAN", "SERVICE", "MODEL", "TOOL"]},
+    "status": {"enum": ["ACTIVE", "SUSPENDED", "REVOKED"]}
+  }
+}

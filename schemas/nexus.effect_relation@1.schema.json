@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.effect_relation@1",
+  "title": "Nexus EffectRelation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "from_effect_id", "relation_type", "to_effect_id"],
+  "properties": {
+    "schema_id": {"const": "nexus.effect_relation"},
+    "schema_version": {"const": 1},
+    "from_effect_id": {"type": "string", "minLength": 1},
+    "relation_type": {"const": "COMPENSATES"},
+    "to_effect_id": {"type": "string", "minLength": 1}
+  }
+}
