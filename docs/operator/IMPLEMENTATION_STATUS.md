@@ -3,7 +3,7 @@
 Nexus version: `v0.1-development`  
 Current implementation step: Step 8 — RUNNING (Codex-hosted attachment integration remains incomplete)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Implementation checkpoint / branch: `3ee8e32` / `nexus-v2-runtime` (authorized mode-to-Trace, configured CLI mode-set and INSPECT-protected Task projection integration; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
+Implementation checkpoint / branch: `da7aa5d` / `nexus-v2-runtime` (authorized mode-to-Trace, configured CLI mode-set/INSPECT Task projection, and isolated full Purge recovery drill; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
 Schema version: `nexus.* @1`; SQLite migration version `7` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
 Database version: `7` exercised only in isolated integration databases; persistent runtime database not initialized
@@ -80,7 +80,7 @@ Known UNKNOWN Effects: None; Nexus runtime/data not initialized.
 Pending Purge: None.  
 Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-25 authorized CLI Task-inspect projection committed as `3ee8e32`; old-snapshot RECOVERY/PurgeLedger/index-rebuild test and **70-test** full regression pass in the working tree (23.294s). `compileall`, `pip check`, and `git diff --check` pass. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
+Last verified state: 2026-09-25 authorized CLI Task-inspect projection committed as `3ee8e32`; old-snapshot RECOVERY/PurgeLedger/index-rebuild test and **70-test** full regression committed as `da7aa5d` (23.294s). `compileall`, `pip check`, and `git diff --check` pass. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
 Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts, then run Step 9 client tests on an initialized isolated instance and execute the formal Step 10 T1–T12/recovery acceptance. Independent Providers remain deferred.
 
 ## IMPLEMENTATION STEP 2 — PASS
