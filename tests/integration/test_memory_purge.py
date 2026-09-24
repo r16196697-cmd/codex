@@ -14,6 +14,8 @@ from kernel.authority import AuthorityService
 from kernel.memory import MemoryService
 from kernel.purge import PurgeService
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime import RuntimeModeService
+from kernel.run import TraceRuntime
 from kernel.verification import VerificationService
 from kernel.runtime.inspect import InspectService
 
@@ -210,6 +212,72 @@ class MemoryPurgeTests(unittest.TestCase):
             with restored._connection() as conn:
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
                 self.assertEqual([row[0] for row in conn.execute("SELECT action FROM purge_ledger ORDER BY ledger_seq")], ["BARRIER_INSTALLED", "BARRIER_RELEASED"])
+        finally:
+            restored.close()
+
+    def test_old_snapshot_recovery_replays_purge_ledger_before_normal(self):
+        self.memory.retain_raw(command_id="retain-for-recovery", object_id=self.claim, run_id="run-7")
+        result = self._human_verification("verify-for-recovery")
+        self.memory.create_candidate(command_id="candidate-for-recovery", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
+        plan = self.purge.plan(command_id="recovery-purge-plan", plan_id="plan-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+
+        snapshot_root = self.root / "recovery-snapshot"
+        (snapshot_root / "objects").mkdir(parents=True)
+        destination = sqlite3.connect(snapshot_root / "nexus.sqlite")
+        try:
+            with self.store._connection() as source:
+                source.backup(destination)
+        finally:
+            destination.close()
+        shutil.copytree(self.data_root / "objects", snapshot_root / "objects", dirs_exist_ok=True)
+
+        # Enter RECOVERY on the isolated snapshot using the ordinary authorized Runtime mode path.
+        snapshot_store = ObjectStore(snapshot_root, policy=self.authority.policy)
+        try:
+            snapshot_authority = AuthorityService(snapshot_store, self.authority.policy)
+            now = datetime.now(timezone.utc)
+            snapshot_authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"recovery-mode-grant","issued_by":"human-root","granted_to":"agent","task_scope":["recovery-mode-task"],"resource_scope":["runtime-mode:instance","recovery-mode-root"],"action_scope":["RUNTIME_CONFIGURE","RUN_CREATE","TRACE_APPEND"],"audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "recovery-mode-grant-create")
+            trace = TraceRuntime(snapshot_store, snapshot_authority)
+            trace.create_task({"schema_id":"nexus.task","schema_version":1,"task_id":"recovery-mode-task","requester_id":"human-root","status":"CREATED","created_at":now.isoformat(),"command_id":"recovery-mode-task-create"})
+            with snapshot_store._connection() as conn:
+                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-run-class", "RUN", "recovery-mode-root", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
+                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-root-event-class", "TRACE_EVENT", "evt-recovery-mode-root-create", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
+                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-event-class", "TRACE_EVENT", "evt-enter-recovery", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
+            trace.create_run({"schema_id":"nexus.run","schema_version":1,"run_id":"recovery-mode-root","task_id":"recovery-mode-task","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"recovery-mode-grant","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"recovery-mode-run-class","created_at":now.isoformat()}, command_id="recovery-mode-root-create", event_classification_assertion_ref="recovery-mode-root-event-class")
+            modes = RuntimeModeService(snapshot_store, snapshot_authority)
+            modes.set_mode(command_id="enter-recovery", grant_id="recovery-mode-grant", task_id="recovery-mode-task", mode="RECOVERY", classification_assertion_ref="recovery-mode-event-class")
+            self.assertEqual(modes.current()["mode"], "RECOVERY")
+        finally:
+            snapshot_store.close()
+
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        outcome = self.purge.execute(command_id="recovery-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(outcome["status"], "COMPLETED")
+
+        restored_root = self.root / "restored-old-snapshot"
+        shutil.copytree(snapshot_root, restored_root)
+        restored = ObjectStore(restored_root, policy=self.authority.policy)
+        try:
+            self.assertEqual(RuntimeModeService(restored, AuthorityService(restored, self.authority.policy)).current()["mode"], "RECOVERY")
+            restored_authority = AuthorityService(restored, self.authority.policy)
+            restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
+            restored_purge = PurgeService(restored, restored_authority, restored_memory, independent_journal_path=self.journal_path)
+            restored_modes = RuntimeModeService(restored, restored_authority)
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                restored_memory.search_raw(query="governed memory", run_id="run-7")
+            report = restored_modes.complete_validated_recovery(command_id="finish-old-snapshot-restore", purge_service=restored_purge)
+            self.assertEqual(report["mode"], "NORMAL")
+            self.assertTrue(report["purge_report"]["normal_allowed"])
+            with self.assertRaises(PurgedObject):
+                restored.get_payload(self.claim)
+            self.assertEqual(restored_memory.search_raw(query="governed memory", run_id="run-7"), [])
+            self.assertEqual(restored_memory.search_admitted(query="governed memory", run_id="run-7"), [])
+            with restored._connection() as conn:
+                self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
+                self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "PURGED")
+            self.assertEqual(restored_modes.current()["mode"], "NORMAL")
         finally:
             restored.close()
 

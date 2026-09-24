@@ -18,7 +18,7 @@ Step 6: PASS
 Step 7: PASS
 Step 8: RUNNING (Codex-hosted attachment integration; standalone Provider/Broker cases DEFERRED / NOT_CONFIGURED)
 Step 9: PARTIAL (mode-to-Trace, controlled inspect, and policy-configured CLI mode-set/reopen pass on disposable data; live Hosted connection and deployment-root acceptance remain incomplete)
-Step 10: NOT_STARTED (full manual acceptance suite remains gated; latest 69-test suite is regression evidence, not T1–T12 acceptance)
+Step 10: PARTIAL (70-test regression and an end-to-end old-snapshot → RECOVERY → PurgeLedger replay → index rebuild → verified NORMAL recovery pass on isolated data; T2/T5/T9 remain partial, so release acceptance is not met)
 
 Tests passed:
 - 2026-09-25 corrective mode/inspect + client run: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 65 passed; `compileall`, `pip check`, `git diff --check`, CLI `--help` passed. The only `git diff --check` output was Git's LF→CRLF advisory, not whitespace errors.
@@ -26,6 +26,7 @@ Tests passed:
 - 2026-09-25 mode-to-Trace correction: focused Runtime/Trace/replay/deterministic-runtime/client regression — 32 passed; full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **68 passed** in 21.325s. `compileall`, `pip check`, CLI `--help` and `mode set --help`, and `git diff --check` passed. These checks establish only tested Core behavior, not a live persistent-client deployment or full T1–T12 acceptance.
 - 2026-09-25 configured CLI end-to-end: a disposable policy-configured instance completed authorized CLI `mode set SAFE`, persisted the matching TraceEvent, and reopened with mode/event intact. Full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **69 passed** in 21.392s; `compileall`, `pip check`, CLI help, and `git diff --check` passed. No persistent deployment root was created.
 - 2026-09-25 CLI inspect integration: a disposable policy-configured instance used a separate exact `INSPECT` Grant to retrieve the Task/Root-Run projection after the authorized mode-set path; the projection exposed no payload field. Full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **69 passed** in 21.967s. This is isolated client integration evidence, not deployment-root or live Codex Host acceptance.
+- 2026-09-25 full recovery regression: `test_old_snapshot_recovery_replays_purge_ledger_before_normal` created a pre-purge snapshot, entered RECOVERY through an authorized mode command on the isolated snapshot, completed purge in the source instance, restored the snapshot, blocked Core access during RECOVERY, replayed the independent Purge Ledger, rebuilt FTS, verified payload/search unavailability, and only then returned to NORMAL. Full suite — **70 passed** in 23.294s; `compileall`, `pip check`, and `git diff --check` passed. Temporary synthetic data only.
 - Four modes: authorized/idempotent/persistent switches; SAFE blocks external reversible Effect commit, memory writes and learning/profile/descriptor changes; STATELESS blocks Memory service reads/writes, disallowed Trace classes and the SQLite Memory table/index access path while preserving allowlisted traces; Recovery blocks Core/inspect, skips startup migration/cleanup, rejects ordinary exit, and exits only after SQLite integrity/migration, Purge Ledger, object SHA-256, index and deletion checks. Pending Purge barrier and corrupted payload tests remain in RECOVERY.
 - Inspect: valid Task projection succeeds under exact `INSPECT` task/resource/audience scope; unauthorized Grant and RECOVERY calls deny; Approval hash is redacted unless a distinct `INSPECT_PROTECTED` scope is present; real synthetic Effect UNKNOWN and Purge PARTIAL facts pass through Core inspect APIs and remain UNKNOWN/PARTIAL in the client presentation.
 - CLI: mode set reads an optional schema-validated policy JSON, passes the disposable-instance authorized mode/Trace/reopen integration test, and refuses absent data roots without creating `nexus.sqlite`; client facade contains no raw SQLite query code.
@@ -33,7 +34,7 @@ Tests passed:
 - Deployment shape remains **Nexus v0.1 — Codex-hosted / Attached**. Independent Model/Search Provider adapters and actual Credential Broker secret resolution remain `DEFERRED / NOT_CONFIGURED`, not PASS and not Core failures.
 - No persistent runtime database exists; all new migration, mode, Recovery, inspect and effect/purge displays were tested in isolated temporary roots only.
 - Mode Trace binding is now implemented without changing the Trace schema or Foundation Contracts: an authorized mode command requires the Task's actual ORCHESTRATOR Root Run, the same Grant on that Run, `RUNTIME_CONFIGURE` plus `TRACE_APPEND`, and a pre-authorized event-specific classification assertion. The mode event, mode audit row, CommandLedger result, and mode state commit atomically; Root Run replay accepts the typed mode fact without changing Run state. Missing Run, authority, or valid classification fails closed.
-- Known Step 8 / Step 10 blockers: the live Codex host is not connected to a running Nexus data root/ingestion bridge, and full old-snapshot→Recovery→Purge Ledger→index rebuild→NORMAL drill has not been run. Existing fake/core tests do not establish those release gates.
+- Known Step 8 / Step 10 blockers: the live Codex host is not connected to a running Nexus data root/ingestion bridge; T2, T5, and T9 still have documented partial coverage. The isolated old-snapshot→Recovery→Purge Ledger→index rebuild→NORMAL drill now passes but does not replace those gates.
 - Environment audit: Python, Git, SQLite, SQLite FTS5 detected.
 - Step 0 snapshot: core global AGENTS/Skill/config files hash-match; config parses; 7 SQLite backup copies pass `PRAGMA integrity_check`.
 - Existing Nexus runtime/data: none found in the audited target workspace.
@@ -72,14 +73,14 @@ Open blockers:
 - Independent real Model/Search Providers and Credential Broker are intentionally deferred by operator decision. Current deployment shape is **Codex-hosted Nexus**: Codex supplies the client/model execution environment; Nexus provides local governance, state, Trace, Memory, verification and integrity. This is not a Core failure and is not Step 8 PASS.
 - Step 8 hosted bridge is not implemented/connected: current Codex session tools cannot be shown to ingest a real Host execution into a running Nexus Task/Run/Artifact/Evidence/Trace here; exact underlying model identifiers must remain absent rather than guessed. This specific Hosted integration remains open; independent Provider APIs remain deferred.
 - Step 9 is **PARTIAL**, not blocked on its former Runtime safety prerequisite: four-mode gates, authorized inspect APIs, mode Trace linkage/replay, client status rendering, and a policy-configured CLI mode-set/reopen flow pass on isolated data. No deployment-root instance is initialized and the live Codex Host execution/inspect chain is not integrated.
-- Step 10 formal Kernel Acceptance is **NOT_STARTED**. The 65-test regression mapping in `eval/regression/2026-09-25-mode-inspect-regression.md` is evidence, not a full T1–T12 acceptance run. T2/T5/T9/T12 remain PARTIAL; required old-snapshot recovery drill has not been performed against a deployed root.
+- Step 10 Kernel Acceptance is **PARTIAL**. The full isolated regression and the end-to-end old-snapshot RECOVERY/PurgeLedger/index-rebuild drill pass; T12's recovery path is now exercised, but T2/T5/T9 still have documented gaps and there is no persistent deployment root. This is not release acceptance or PRODUCTION_READY.
 - Existing `auth.json` / `.env` files remain unread and are not Nexus credential sources. No persistent runtime database or real records exist. Prior Steps 0–7 checkpoints are committed on `nexus-v2-runtime`.
 
 Known UNKNOWN Effects: None; Nexus runtime/data not initialized.  
 Pending Purge: None.  
 Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-25 authorized mode-to-Trace and configured CLI mode-set/reopen committed through `ba235562281c57102f8f2a0a6cee49ce7c9bef96`; authorized CLI Task-inspect projection plus full 69-test regression committed as `3ee8e32`; latest rerun 69 passed in 22.433s with compileall, pip check, CLI help, and `git diff --check` passing. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
+Last verified state: 2026-09-25 authorized CLI Task-inspect projection committed as `3ee8e32`; old-snapshot RECOVERY/PurgeLedger/index-rebuild test and **70-test** full regression pass in the working tree (23.294s). `compileall`, `pip check`, and `git diff --check` pass. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
 Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts, then run Step 9 client tests on an initialized isolated instance and execute the formal Step 10 T1–T12/recovery acceptance. Independent Providers remain deferred.
 
 ## IMPLEMENTATION STEP 2 — PASS
@@ -631,7 +632,7 @@ Files changed:
 `kernel/runtime/modes.py`, `kernel/runtime/service.py`, `kernel/run/service.py`, `adapters/client/`, `docs/user/operator-cli.md`, three focused integration test files, this status and the regression map.
 
 Known limitations:
-Validated recovery exit remains represented by the dedicated immutable recovery/mode CommandLedger records; no ordinary Core/Trace API is opened before Recovery validation completes. The CLI flow was exercised on disposable policy-configured data only, not a deployment root. Full T1–T12 acceptance remains NOT_STARTED.
+Validated recovery exit remains represented by the dedicated immutable recovery/mode CommandLedger records; no ordinary Core/Trace API is opened before Recovery validation completes. The CLI and recovery flow were exercised on disposable policy-configured data only, not a deployment root. Step 10 is PARTIAL: T12 recovery passes in isolation, while T2/T5/T9 remain partial and required release acceptance is unmet.
 
 Next:
 Continue Step 8 Hosted integration assessment, then Step 9 persistent-client verification and Step 10 formal acceptance; do not claim PRODUCTION_READY.
