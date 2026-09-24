@@ -32,7 +32,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "cmd-principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "cmd-anchor")
         now = datetime.now(timezone.utc)
-        self.root_resources = ["run-root", "run-e0", "run-e1", "run-e2", "run-tool", "run-tool-comp", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read", "sandbox-target"]
+        self.root_resources = ["runtime-mode:instance", "run-root", "run-e0", "run-e1", "run-e2", "run-tool", "run-tool-comp", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read", "sandbox-target"]
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": self.root_resources, "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE", "OBJECT_WRITE", "CLASSIFY", "RUNTIME_CONFIGURE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=300)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-root-grant")
         self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "status": "CREATED", "created_at": self._now(), "command_id": "cmd-task"})
         self.budget.create_account(command_id="cmd-budget", account_id="budget-1", task_id="task-1", amount_limit=100, unit="credits", model_call_limit=10, tool_call_limit=10, child_run_limit=10)
@@ -194,12 +194,10 @@ class DeterministicRuntimeTests(unittest.TestCase):
         effects.create_effect(command_id="cmd-effect-create", effect=effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-effect-create", "tool-agent"))
         effects.prepare(command_id="cmd-effect-prepare", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-prepare", "tool-agent"))
         effects.authorize(command_id="cmd-effect-authorize", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-authorize", "tool-agent"))
-        mode_time = datetime.now(timezone.utc)
-        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"mode-config-grant","issued_by":"human-root","granted_to":"agent","task_scope":["task-1"],"resource_scope":["runtime-mode:instance"],"action_scope":["RUNTIME_CONFIGURE"],"audience_scope":["nexus-runtime"],"issued_at":mode_time.isoformat(),"expires_at":(mode_time+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "cmd-mode-config-grant")
-        self.runtime.set_mode(command_id="cmd-mode-safe", grant_id="mode-config-grant", task_id="task-1", mode="SAFE")
+        self.runtime.set_mode(command_id="cmd-mode-safe", grant_id="grant-root", task_id="task-1", mode="SAFE", classification_assertion_ref=self._event_class("cmd-mode-safe", "agent"))
         with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_MODE_DENIED"):
             effects.commit(command_id="cmd-effect-safe-denied", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-safe-denied-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-safe-denied-start", "tool-agent"))
-        self.runtime.set_mode(command_id="cmd-mode-normal", grant_id="mode-config-grant", task_id="task-1", mode="NORMAL")
+        self.runtime.set_mode(command_id="cmd-mode-normal", grant_id="grant-root", task_id="task-1", mode="NORMAL", classification_assertion_ref=self._event_class("cmd-mode-normal", "agent"))
         original = effects.commit(command_id="cmd-effect-commit", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-commit-start", "tool-agent"))
         self.assertEqual(original["effect_outcome"], "UNKNOWN")
         self.assertEqual(dispatcher.calls, 1)

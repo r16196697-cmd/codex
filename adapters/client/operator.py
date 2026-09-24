@@ -23,8 +23,8 @@ class OperatorClient:
         mode = self.runtime.current_mode()["mode"]
         return {"mode": mode, "guidance": MODE_GUIDANCE[mode]}
 
-    def set_mode(self, *, mode: str, command_id: str, grant_id: str, task_id: str) -> dict[str, Any]:
-        result = self.runtime.set_mode(command_id=command_id, grant_id=grant_id, task_id=task_id, mode=mode)
+    def set_mode(self, *, mode: str, command_id: str, grant_id: str, task_id: str, classification_assertion_ref: str) -> dict[str, Any]:
+        result = self.runtime.set_mode(command_id=command_id, grant_id=grant_id, task_id=task_id, mode=mode, classification_assertion_ref=classification_assertion_ref)
         return {**result, "guidance": MODE_GUIDANCE[result["mode"]]}
 
     def inspect_task(self, *, grant_id: str, task_id: str) -> dict[str, Any]:

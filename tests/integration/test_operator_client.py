@@ -39,6 +39,8 @@ class OperatorClientTests(unittest.TestCase):
     def test_cli_has_documented_mode_and_inspect_surfaces(self):
         parsed = _parser().parse_args(["--data-root", "nexus-data", "inspect", "effect", "fx-1", "--task-id", "task-1", "--grant-id", "grant-1"])
         self.assertEqual((parsed.command, parsed.inspect_kind, parsed.effect_id), ("inspect", "effect", "fx-1"))
+        mode = _parser().parse_args(["--data-root", "nexus-data", "mode", "set", "SAFE", "--command-id", "mode-1", "--grant-id", "grant-1", "--task-id", "task-1", "--classification-assertion-ref", "class-evt-mode-1"])
+        self.assertEqual((mode.command, mode.mode, mode.classification_assertion_ref), ("mode", "SAFE", "class-evt-mode-1"))
 
     def test_cli_refuses_to_create_a_database_as_a_side_effect(self):
         with tempfile.TemporaryDirectory() as root:

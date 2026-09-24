@@ -4,6 +4,8 @@ Environment: Windows 10.0.22631.0; Python 3.11.0; SQLite 3.38.4 + FTS5; branch `
 
 Executed:
 
+- Follow-up audit: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **65 passed** in 19.736s; `compileall`, `pip check`, `git diff --check`, and CLI `--help` passed. This reruns the mode/inspect and client regression coverage; it does not create or substitute for the manual's formal T1–T12 Acceptance Suite.
+- Mode-to-Trace correction: focused Runtime/Trace/replay/deterministic-runtime/client regression — **32 passed**; full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **68 passed** in 21.325s. `compileall`, `pip check`, CLI `--help`, `mode set --help`, and `git diff --check` passed. The full suite still is not a formal T1–T12 acceptance run.
 - `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **65 passed** (rerun after adding Recovery `PRAGMA integrity_check`).
 - `.venv\Scripts\python.exe -m compileall -q adapters kernel tests` — PASS.
 - `.venv\Scripts\python.exe -m pip check` — PASS, no broken requirements.
@@ -25,6 +27,6 @@ This is a regression mapping, not a claim that the full manual `nexus test accep
 | T9 Purge barrier / restore | PARTIAL | PARTIAL with active Run + UNKNOWN Effect is inspected/rendered as PARTIAL; old-backup PurgeLedger anti-resurrection test passes. No full recovery-mode restore of a representative old snapshot was run. |
 | T10 DAG / routing | PASS (fake profiles) | Deterministic routing, Run kinds, Manifest constraints, hard constraints and E0/E1/E2 tests pass. No independent Provider or live Host route recording. |
 | T11 search / verifier | DEFERRED / NOT_APPLICABLE for Provider | Verifier/Memory truth and independence Core tests pass. Hosted search-to-Evidence/source-URL ingestion is not integrated; independent Search API is intentionally not configured. |
-| T12 modes / recovery | PARTIAL | Four-mode API/storage gates, persisted mode, SAFE/STATELESS Memory bypass tests, pending-barrier and corrupted-payload isolation, plus a successful isolated Recovery validation exit pass. Full old-snapshot restore→Purge replay→index rebuild→unavailability verification against a real deployed data root remains unrun. |
+| T12 modes / recovery | PARTIAL | Four-mode Runtime/API gates, SAFE/STATELESS bypass denials, authorized Root-Run-bound mode Trace events, atomic rollback, replay, pending-barrier/corrupt-payload isolation, and successful isolated Recovery validation exit pass. Full old-snapshot restore→Purge replay→index rebuild→unavailability verification against a deployed data root remains unrun. |
 
-Release disposition: **DEVELOPMENT**. The 65 passing tests do not satisfy required `T1–T9, T12` release acceptance because T2/T5/T9/T12 remain partial and the Step 8 Codex-hosted execution bridge is not connected to a live runtime. Independent Model/Search Provider and Credential Broker work remains `DEFERRED / NOT_CONFIGURED` by operator decision.
+Release disposition: **DEVELOPMENT**. The 68 passing tests do not satisfy required `T1–T9, T12` release acceptance because T2/T5/T9/T12 remain partial, the Step 8 Codex-hosted execution bridge is not connected to a live runtime, and Step 9 CLI has not been exercised against an initialized policy-configured instance. Independent Model/Search Provider and Credential Broker work remains `DEFERRED / NOT_CONFIGURED` by operator decision.

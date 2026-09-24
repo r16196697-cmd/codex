@@ -30,6 +30,7 @@ def _parser() -> argparse.ArgumentParser:
     set_mode.add_argument("--command-id", required=True)
     set_mode.add_argument("--grant-id", required=True)
     set_mode.add_argument("--task-id", required=True)
+    set_mode.add_argument("--classification-assertion-ref", required=True, help="pre-authorized TRACE_EVENT assertion bound to evt-<command-id>")
 
     inspect = commands.add_parser("inspect")
     inspect_commands = inspect.add_subparsers(dest="inspect_kind", required=True)
@@ -72,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "mode" and args.mode_action == "show":
             result = client.mode()
         elif args.command == "mode":
-            result = client.set_mode(mode=args.mode, command_id=args.command_id, grant_id=args.grant_id, task_id=args.task_id)
+            result = client.set_mode(mode=args.mode, command_id=args.command_id, grant_id=args.grant_id, task_id=args.task_id, classification_assertion_ref=args.classification_assertion_ref)
         elif args.command == "inspect":
             common = {"grant_id": args.grant_id}
             if args.inspect_kind == "task":

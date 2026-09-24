@@ -45,9 +45,9 @@ class DeterministicRuntime:
         """Return the persisted instance mode; this is a non-mutating Core API."""
         return self.modes.current()
 
-    def set_mode(self, *, command_id: str, grant_id: str, task_id: str, mode: str) -> dict[str, Any]:
+    def set_mode(self, *, command_id: str, grant_id: str, task_id: str, mode: str, classification_assertion_ref: str) -> dict[str, Any]:
         """Change mode through authority, policy, and CommandLedger checks."""
-        return self.modes.set_mode(command_id=command_id, grant_id=grant_id, task_id=task_id, mode=mode)
+        return self.modes.set_mode(command_id=command_id, grant_id=grant_id, task_id=task_id, mode=mode, classification_assertion_ref=classification_assertion_ref)
 
     def complete_validated_recovery(self, *, command_id: str, purge_service) -> dict[str, Any]:
         return self.modes.complete_validated_recovery(command_id=command_id, purge_service=purge_service)

@@ -23,6 +23,7 @@ _STATELESS_TRACE_TYPES = frozenset(
         "nexus.effect.reconciled",
         "nexus.authority.denied",
         "nexus.trace.event_rejected",
+        "nexus.runtime.mode_changed",
     }
 )
 
@@ -98,19 +99,34 @@ class RuntimeModeService:
             self.current()["mode"], capability, effect_class=effect_class, event_type=event_type
         )
 
-    def set_mode(self, *, command_id: str, grant_id: str, task_id: str, mode: str) -> dict[str, Any]:
+    def set_mode(self, *, command_id: str, grant_id: str, task_id: str, mode: str, classification_assertion_ref: str) -> dict[str, Any]:
         if self.authority.store is not self.store:
             raise ValueError("Mode changes require AuthorityService and RuntimeModeService to share one ObjectStore")
         if mode not in MODES:
             raise RuntimeDenied("RUNTIME_MODE_INVALID")
-        require_mode_permission(self.current()["mode"], "core_write")
+        self.require("core_write")
+        self.require("trace_write", event_type="nexus.runtime.mode_changed")
         operation = "set_runtime_mode"
-        request = {"grant_id": grant_id, "task_id": task_id, "mode": mode}
+        request = {"grant_id": grant_id, "task_id": task_id, "mode": mode, "classification_assertion_ref": classification_assertion_ref}
         request_hash = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
             prior = self.store._replay_command(conn, command_id, operation, request_hash)
         if prior is not None:
             return prior
+        with self.store._lock:
+            return self._set_mode_locked(
+                command_id=command_id,
+                grant_id=grant_id,
+                task_id=task_id,
+                mode=mode,
+                classification_assertion_ref=classification_assertion_ref,
+                operation=operation,
+                request_hash=request_hash,
+            )
+
+    def _set_mode_locked(self, *, command_id, grant_id, task_id, mode, classification_assertion_ref, operation, request_hash):
+        self.require("core_write")
+        self.require("trace_write", event_type="nexus.runtime.mode_changed")
         self.authority.evaluate_authorization(
             grant_id,
             {
@@ -121,10 +137,22 @@ class RuntimeModeService:
             },
             command_id + "-authorize",
         )
+        with self.store._connection() as conn:
+            task = conn.execute("SELECT root_run_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            run = conn.execute("SELECT task_id,parent_run_id,executor_kind,grant_id FROM runs WHERE run_id=?", (task["root_run_id"],)).fetchone() if task and task["root_run_id"] else None
+        if not run or run["task_id"] != task_id or run["parent_run_id"] is not None or run["executor_kind"] != "ORCHESTRATOR":
+            raise RuntimeDenied("MODE_TRACE_ROOT_RUN_REQUIRED")
+        if run["grant_id"] != grant_id:
+            raise RuntimeDenied("MODE_TRACE_GRANT_MUST_MATCH_ROOT_RUN")
+        self.authority.evaluate_authorization(
+            grant_id,
+            {"task": task_id, "resource": task["root_run_id"], "action": "TRACE_APPEND", "audience": "nexus-runtime"},
+            command_id + "-trace-authorize",
+        )
         if self.current()["mode"] == "RECOVERY" and mode != "RECOVERY":
             raise RuntimeDenied("RECOVERY_EXIT_REQUIRES_VALIDATED_RESTORE")
 
-        with self.store._lock, self.store._connection() as conn:
+        with self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 prior = self.store._replay_command(conn, command_id, operation, request_hash)
@@ -143,7 +171,28 @@ class RuntimeModeService:
                 sequence = conn.execute(
                     "SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_mode_events"
                 ).fetchone()[0]
-                result = {"mode": mode, "previous_mode": previous, "sequence": sequence}
+                from kernel.run import TraceRuntime
+
+                trace = TraceRuntime(self.store, self.authority)
+                event_id = "evt-" + command_id
+                trace_seq = conn.execute("SELECT COALESCE(MAX(seq_no),0)+1 FROM trace_events WHERE run_id=?", (task["root_run_id"],)).fetchone()[0]
+                chain = self.authority.validate_delegation_chain(grant_id)
+                event = trace._make_event(
+                    conn,
+                    event_id=event_id,
+                    run_id=task["root_run_id"],
+                    seq_no=trace_seq,
+                    event_type="nexus.runtime.mode_changed",
+                    actor_id=chain[-1]["granted_to"],
+                    object_refs=[],
+                    effect_refs=[],
+                    policy_refs=[self.authority.policy["policy_version"]],
+                    authority_refs=[grant_id],
+                    classification_ref=classification_assertion_ref,
+                    metadata={"previous_mode": previous, "next_mode": mode},
+                )
+                trace._insert_event(conn, event)
+                result = {"mode": mode, "previous_mode": previous, "sequence": sequence, "trace_event_id": event_id, "run_id": task["root_run_id"], "trace_seq_no": trace_seq}
                 self.store._record_command(conn, command_id, operation, request_hash, result)
                 conn.execute(
                     "INSERT INTO runtime_mode_events(sequence,command_id,previous_mode,next_mode,grant_id,task_id,changed_at,request_hash) VALUES(?,?,?,?,?,?,?,?)",

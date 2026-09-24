@@ -35,6 +35,7 @@ _METADATA_ALLOWLIST = {
     "nexus.effect.compensation_created": {"effect_id", "compensated_effect_id"},
     "nexus.authority.denied": {"reason_code"},
     "nexus.trace.event_rejected": {"reason_code"},
+    "nexus.runtime.mode_changed": {"previous_mode", "next_mode"},
 }
 _FORBIDDEN_KEYS = re.compile(r"(?i)(prompt|output|content|payload|document|preview|secret|token|password|authorization|credential|response|transcript)")
 _SECRET_VALUE = re.compile(
@@ -573,7 +574,7 @@ class TraceRuntime:
                 if state != before or after not in _TRANSITIONS.get(before, set()):
                     raise TraceAdmissionDenied("TRACE_REPLAY_INVALID_TRANSITION")
                 state = after
-            elif event["event_type"] != "nexus.object.created":
+            elif event["event_type"] not in {"nexus.object.created", "nexus.runtime.mode_changed"}:
                 raise TraceAdmissionDenied("TRACE_REPLAY_UNSUPPORTED_EVENT")
             expected_seq += 1
         if state != run["status"]:
