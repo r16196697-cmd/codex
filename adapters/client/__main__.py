@@ -20,6 +20,7 @@ from kernel.runtime import DeterministicRuntime
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nexus", description="Codex-hosted Nexus local operator surface")
     parser.add_argument("--data-root", required=True, type=Path, help="Existing Nexus data root; the CLI never initializes a database")
+    parser.add_argument("--policy", type=Path, help="Optional existing nexus.policy@1 JSON file; read-only and schema-validated")
     commands = parser.add_subparsers(dest="command", required=True)
 
     mode = commands.add_parser("mode")
@@ -53,11 +54,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _runtime(data_root: Path):
+def _runtime(data_root: Path, policy_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
         raise ValueError("No existing Nexus database at --data-root; use the separately reviewed initialization procedure.")
-    store = ObjectStore(root)
+    policy = json.loads(policy_path.expanduser().resolve(strict=True).read_text(encoding="utf-8")) if policy_path else None
+    store = ObjectStore(root, policy=policy)
     authority = AuthorityService(store, store.policy)
     budget = BudgetService(store)
     trace = TraceRuntime(store, authority)
@@ -68,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
-        store, authority, _budget, _trace, runtime = _runtime(args.data_root)
+        store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy)
         client = OperatorClient(runtime)
         if args.command == "mode" and args.mode_action == "show":
             result = client.mode()
