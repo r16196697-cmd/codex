@@ -1,0 +1,1 @@
+"""JSON Schema contract tests."""

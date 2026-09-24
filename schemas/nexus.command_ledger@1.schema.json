@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.command_ledger@1",
+  "title": "Nexus CommandLedger entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "command_id", "operation", "request_hash", "result_json", "status", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.command_ledger"},
+    "schema_version": {"const": 1},
+    "command_id": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "request_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "result_ref": {"type": "string", "minLength": 1},
+    "result_json": {"type": "object", "maxProperties": 64},
+    "status": {"const": "SUCCEEDED"},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

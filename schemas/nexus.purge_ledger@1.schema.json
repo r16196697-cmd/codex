@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.purge_ledger@1",
+  "title": "Nexus PurgeLedger entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "ledger_seq", "command_id", "barrier_id", "action", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.purge_ledger"},
+    "schema_version": {"const": 1},
+    "ledger_seq": {"type": "integer", "minimum": 1},
+    "command_id": {"type": "string", "minLength": 1},
+    "barrier_id": {"type": "string", "minLength": 1},
+    "action": {"enum": ["BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"]},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}
