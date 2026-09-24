@@ -1,18 +1,18 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 3 — PASS
+Current implementation step: Step 4 — PASS
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `b09251f1318cc23b66643887506dbccc524bafb8` / `nexus-v2-runtime` (Step 3 checkpoint pending)
-Schema version: `nexus.* @1`; SQLite migration version `2`
+Git commit / branch: `59f077179c5f895c8dc3e28b5ac292ce3eeb775b` / `nexus-v2-runtime`
+Schema version: `nexus.* @1`; SQLite migration version `3` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
-Database version: `2` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `3` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
 Step 2: PASS
 Step 3: PASS
-Step 4: NOT_STARTED  
+Step 4: PASS
 Step 5: NOT_STARTED  
 Step 6: NOT_STARTED  
 Step 7: NOT_STARTED  
@@ -30,11 +30,15 @@ Tests passed:
 - Step 2 static checks: `pip check` reports no broken requirements; `compileall` passes. `git diff --check` initially found trailing Markdown whitespace in this status file; that whitespace was removed before checkpointing.
 - Step 3: 32 contract/integration tests pass, including T4-style trust-root/chain/scope/audience/depth denials, principal/grant revoke revalidation, target/Effect/payload-bound approval, classification lowering approval, fail-closed classified egress, and concurrent atomic Task-budget reservations/idempotent settlement/release.
 - Step 3 static checks: all 25 schemas and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass. No credentials/provider connection was used.
+- Step 4: 38 contract/integration tests pass. Task/Root Run creation and state transitions commit atomically with append-only Trace sequence and CommandLedger; replay after reopen matches Run and Task projections; retry after simulated response loss returns the original event result; a forced Trace insert failure rolls back state and ledger together.
+- Step 4 security/admission: only allowlisted event types and event-specific scalar metadata are admitted; secret-pattern, payload-like key, nested metadata, forged transition and wrong-actor attempts leave no Trace rows; high-classification objects cannot be downgraded and Trace contains refs rather than payload bytes.
+- Step 4 static checks: all 25 JSON Schemas and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
 - Step 2 first integration runs exposed a hash-profile FK mismatch, open test handles, migration trigger parsing, and a child-process test harness issue; these were corrected. An early Step 2 test also expected an orphan payload for a missing lineage source; after enforcing validation before payload write, the test was updated to assert no payload or metadata is persisted.
 - Step 3 first runs exposed a policy-schema directory assumption and a stale test expectation for a single migration; both were corrected. A classification egress test initially supplied an assertion ID rather than an object ID; the API was tightened to derive classification only from persisted object envelopes. A final immutable-ledger test initially queried the losing concurrent reservation ID; it now selects the actual winning ledger command. The final 32-test suite passes.
+- Step 4 initial tests caught event creation ordering, schema-version expectation, high-classification fixture wiring, and the need to rollback Run state if Trace append fails; fixes are covered by the final 38-test suite.
 
 Open blockers:
 - Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
@@ -44,8 +48,8 @@ Known UNKNOWN Effects: None; Nexus runtime/data not initialized.
 Pending Purge: None.  
 Pending migration: None.  
 Rollback point: clean base commit `ac61316178d7e145ed420de2fbb9ee0273067263`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.  
-Last verified state: 2026-09-24 Step 3 suite (32 tests); branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
-Next allowed action: checkpoint Step 3, then begin Step 4 only after writing its Step Card.
+Last verified state: 2026-09-24 Step 4 suite (38 tests); branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
+Next allowed action: checkpoint Step 4, then begin Step 5 only after using its Step Card below.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -178,3 +182,102 @@ Rollback point:
 
 Next:
 STEP 4 — Trace / State / Replay
+
+## IMPLEMENTATION STEP 4 — PASS
+
+Goal:
+Implement Task/Run state, append-only classified Trace admission, transactional state-transition/event/CommandLedger writes, and deterministic replay without adding models, tools, or external telemetry.
+
+Inputs:
+Committed Step 1–3 schemas and policy; SQLite migration version 2; ObjectStore classification lookup; AuthorityService; disposable test DBs only.
+
+Allowed files:
+`kernel/trace/`, `kernel/run/`, `adapters/storage/sqlite_store.py`, a new `migrations/0003_trace_state.sql`, new Step 4 schemas (existing schema changes require same-directory backup and must preserve Step 1 contracts), `tests/contract/`, `tests/integration/`, and this status file.
+
+Forbidden files:
+Migrations `0001` and `0002`; global or business-project `AGENTS.md`; global Skills/config; user databases; real credentials; real payloads/Trace; any real model, search, tool, MCP or external telemetry adapter; and any change to frozen contract semantics.
+
+Expected outputs:
+Schema-validated Task and ORCHESTRATOR/MODEL/TOOL Run state; legal transition matrix; `transition_run(command_id,expected_state,next_state)` looks up CommandLedger first and commits state, next event sequence, event and command result atomically; replay rebuilds projections from append-only Trace facts. Trace admission applies per-event metadata allowlists, rejects payload-like fields and secret patterns, enforces policy byte/depth/count limits, validates classifications and referenced object boundaries, and stores references only. OTel export port remains independent and DENY by default.
+
+Exact tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -v`; targeted T2 response-loss/replay and illegal-transition cases; T6 classification inheritance and trace metadata rejection; recovery/reopen replay; then `pip check`, `compileall`, all-schema/default-policy validation, `git diff --check`, and secret-pattern scan.
+
+PASS criteria:
+Duplicate command with identical canonical request returns the original resulting state/event sequence before checking stale expected state; new command with stale state conflicts; no invalid/secret/payload event enters SQLite; Run/Trace classification is not downgraded; replay from empty projections reproduces persisted state and sequence; all tests/static checks pass.
+
+FAIL handling:
+Initial failures were fixed within Step 4; keep event admission independent of OTel export and do not advance until its checkpoint is committed.
+
+Rollback point:
+Step 3 checkpoint `59f077179c5f895c8dc3e28b5ac292ce3eeb775b`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+
+Do NOT:
+- Put full prompts, outputs, documents, tools results, secrets, or arbitrary previews in Trace.
+- Call any real model or Tool; Trace replay must pass before those adapters.
+- Let OTel acceptance imply permission to export.
+- Add a sixth Foundation Contract or change the three executor kinds.
+
+## STEP 4 — IMPLEMENTATION REPORT
+
+Implemented:
+- Task creation, ORCHESTRATOR/MODEL/TOOL Run identities, task/root linkage, legal Run/Task state transitions and append-only `TraceEvent` storage in migration `0003`.
+- Run create/transition event and projection updates plus `CommandLedger` result commit in one SQLite transaction; command lookup precedes stale-state and authorization rechecks on replay.
+- Allowlisted event-specific typed metadata, scalar/size/depth/count/secret guardrails, actor-chain checks, classification/data-boundary inheritance, unavailable/purged object rejection, and payload-free object refs.
+- Deterministic Run and Task replay projections; independent OTel egress remains unimplemented and DENY by default.
+
+Tests executed:
+- `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 38 passed.
+- Simulated Trace insert failure proved Run status, event and command result roll back together.
+- Reopen/replay, stale-state retry, metadata rejection, forged transition rejection and classification downgrade rejection all passed.
+- `pip check`, `compileall`, all-schema/default-policy validation, `git diff --check`, secret-pattern scan — passed.
+
+Evidence:
+- Temporary SQLite databases only; no real payload, provider, tool, telemetry or persistent runtime data.
+
+Files changed:
+- `kernel/run/`, `migrations/0003_trace_state.sql`, `tests/integration/test_trace_state.py`, plus Step 2 migration-count regression test.
+
+Known limitations:
+- DAG scheduling, RunManifest binding, ToolDescriptor/ModelProfile eligibility and richer internal event producers remain Step 5+; live provider/telemetry remains disabled.
+
+Rollback point:
+- Step 3 commit `59f077179c5f895c8dc3e28b5ac292ce3eeb775b`; Step 0 snapshot recorded above.
+
+Next:
+STEP 5 — Deterministic Runtime
+
+## IMPLEMENTATION STEP 5 — NOT_STARTED
+
+Goal:
+Build the deterministic Task/Root scheduler and acyclic subtask DAG, executor-specific RunManifest binding, and simple fail-closed node-level routing without executing any real Model or Tool.
+
+Inputs:
+Committed Steps 1–4 schemas, object/classification store, authority/budget services, Task/Run/Trace replay, and disposable fixtures.
+
+Allowed files:
+`kernel/runtime/`, a new `migrations/0004_runtime.sql`, new Step 5 schemas in `schemas/`, `adapters/storage/sqlite_store.py` only for invariant enforcement, `tests/contract/`, `tests/integration/`, and this status file.
+
+Forbidden files:
+Migrations `0001`–`0003`; global or business-project `AGENTS.md`; global Skills/config; user databases; secrets; real Trace/payload; real model/tool/search adapters; network egress; and changes to the five Foundation Contract semantics or `executor_kind` values.
+
+Expected outputs:
+TaskContract/Object + Task LogicalRef CAS, acyclic DAG nodes with declared input/output schema, validation method and budget; ORCHESTRATOR Root owns Task/DAG/scheduling and never calls Model/Tool; MODEL and TOOL Child Run each have correct executor-specific Manifest; Manifest is immutable, readable NexusObject and must be bound before READY. Fixed deterministic E0/E1/E2 selection policy records RouteDecision and hard constraints before budget reservation; fake executors only.
+
+Exact tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -v`; targeted T1 (Task→Root→MODEL/TOOL child identities and Manifest conditionals), T2 (schedule/idempotent checkpoint), T8 (budget reservation before execution), T10 (DAG cycle, node-level eligibility, route recording, hard constraint and child boundary); all-schema validation, `pip check`, `compileall`, `git diff --check`, secret-pattern scan.
+
+PASS criteria:
+Root Run remains ORCHESTRATOR with no model fields; MODEL/TOOL child and Manifest schemas match exactly; cyclic/incomplete DAG rejected; no Run enters READY without immutable Manifest; only eligible models are selected under hard user/privacy/budget constraints; route and reservation records are deterministic and replayable; no executor contacts a real provider/tool.
+
+FAIL handling:
+Fix only Step 5 runtime/schema/tests; do not connect real adapters before Step 4 replay and fake execution pass.
+
+Rollback point:
+Step 4 checkpoint to be committed before Step 5 modifications; Step 0 snapshot recorded above.
+
+Do NOT:
+- Implement Learned Router, model SDK, real tool, SearchProvider or external writes.
+- Let Root Run execute inference or tool code.
+- Replace Task budget with recursive parent/child accounts.
+- Bind manifests by mutating their payloads.
