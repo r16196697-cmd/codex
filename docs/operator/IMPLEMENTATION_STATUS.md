@@ -3,7 +3,7 @@
 Nexus version: `v0.1-development`  
 Current implementation step: Step 8 — RUNNING (Codex-hosted attachment integration remains incomplete)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Implementation checkpoint / branch: `c4a3484` / `nexus-v2-runtime` (authorized mode-to-Trace, CLI mode/inspect, old-snapshot Recovery drill, T2 crash window, T5 v6→v7 migration, and T9 journal-before-barrier recovery; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
+Implementation checkpoint / branch: `aac346a` / `nexus-v2-runtime` (authorized mode-to-Trace, CLI mode/inspect, old-snapshot Recovery drill, T2/T5 fault/migration cases, and T9 barrier/delete crash recovery; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
 Schema version: `nexus.* @1`; SQLite migration version `7` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
 Database version: `7` exercised only in isolated integration databases; persistent runtime database not initialized
@@ -82,7 +82,7 @@ Known UNKNOWN Effects: None; Nexus runtime/data not initialized.
 Pending Purge: None.  
 Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-25 previous T2/T5/T9 fault/migration coverage and **73-test** full regression committed as `c4a3484`; the deletion crash/retry case and **74-test** full regression pass in the working tree (21.779s), with `compileall`, `pip check`, and `git diff --check` passing. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
+Last verified state: 2026-09-25 T9 deletion crash/retry case and **74-test** full regression committed as `aac346a` (21.779s), with `compileall`, `pip check`, and `git diff --check` passing. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
 Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts; address remaining T2/T5/T9 gaps and verify the applicable client surface against an isolated initialized instance. Independent Providers remain deferred; do not claim release readiness.
 
 ## IMPLEMENTATION STEP 2 — PASS
