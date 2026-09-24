@@ -3,7 +3,7 @@
 Nexus version: `v0.1-development`  
 Current implementation step: Step 8 — RUNNING (Codex-hosted attachment integration remains incomplete)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `09550fb7cb6db1bb3d9b2defccdbf09567f9e425` / `nexus-v2-runtime`
+Implementation checkpoint / branch: `83d9b4181a85cbe8b32fcf6fe7568edb28361841` / `nexus-v2-runtime` (mode/inspect correction; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
 Schema version: `nexus.* @1`; SQLite migration version `7` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
 Database version: `7` exercised only in isolated integration databases; persistent runtime database not initialized
