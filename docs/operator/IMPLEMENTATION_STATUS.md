@@ -17,7 +17,7 @@ Step 5: PASS (corrective four-mode Runtime gates, authorized inspect, and mode-t
 Step 6: PASS
 Step 7: PASS
 Step 8: RUNNING (Codex-hosted attachment integration; standalone Provider/Broker cases DEFERRED / NOT_CONFIGURED)
-Step 9: PARTIAL (mode-to-Trace, controlled inspect, and policy-configured CLI mode-set/reopen pass on disposable data; live Hosted connection and deployment-root acceptance remain incomplete)
+Step 9: PARTIAL (mode-to-Trace, controlled inspect, and policy-configured CLI mode-set/reopen/Task-inspect pass on disposable data; live Hosted connection and deployment-root acceptance remain incomplete)
 Step 10: PARTIAL (70-test regression and an end-to-end old-snapshot → RECOVERY → PurgeLedger replay → index rebuild → verified NORMAL recovery pass on isolated data; T2/T5/T9 remain partial, so release acceptance is not met)
 
 Tests passed:
@@ -81,7 +81,7 @@ Pending Purge: None.
 Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
 Last verified state: 2026-09-25 authorized CLI Task-inspect projection committed as `3ee8e32`; old-snapshot RECOVERY/PurgeLedger/index-rebuild test and **70-test** full regression committed as `da7aa5d` (23.294s). `compileall`, `pip check`, and `git diff --check` pass. Persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
-Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts, then run Step 9 client tests on an initialized isolated instance and execute the formal Step 10 T1–T12/recovery acceptance. Independent Providers remain deferred.
+Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts; address remaining T2/T5/T9 gaps and verify the applicable client surface against an isolated initialized instance. Independent Providers remain deferred; do not claim release readiness.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
