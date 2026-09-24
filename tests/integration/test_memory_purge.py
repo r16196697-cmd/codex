@@ -204,6 +204,47 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
 
+    def test_purge_delete_transaction_failure_keeps_barrier_and_same_command_completes_after_reopen(self):
+        self.memory.retain_raw(command_id="retain-before-delete-crash", object_id=self.claim, run_id="run-7")
+        verification = self._human_verification("verify-before-delete-crash")
+        self.memory.create_candidate(command_id="candidate-before-delete-crash", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=verification["verification_id"], review_trigger="review")
+        plan = self.purge.plan(command_id="delete-crash-plan", plan_id="plan-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        protected = sorted(set(plan["target_refs"]) | set(plan["descendant_refs"]))
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+            conn.execute("CREATE TRIGGER fail_purge_state_update BEFORE UPDATE OF payload_state ON object_states WHEN NEW.payload_state='PURGED' BEGIN SELECT RAISE(ABORT,'SIMULATED_PURGE_DB_CRASH'); END")
+
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "SIMULATED_PURGE_DB_CRASH"):
+            self.purge.execute(command_id="purge-delete-crash", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "ACTIVE")
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='record-7'").fetchone()[0], "RUNNING")
+            conn.execute("DROP TRIGGER fail_purge_state_update")
+        missing_after_rollback = []
+        for object_id in protected:
+            metadata = self.store.get_object_metadata(object_id)
+            if not self.store._payload_path(metadata["payload_uri"]).is_file():
+                missing_after_rollback.append(object_id)
+        self.assertTrue(missing_after_rollback, "the injected SQLite rollback occurs after filesystem unlink")
+        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
+
+        self.store.close()
+        self.store = ObjectStore(self.data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        outcome = self.purge.execute(command_id="purge-delete-crash", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(outcome["status"], "COMPLETED")
+        for object_id in protected:
+            with self.assertRaises(PurgedObject):
+                self.store.get_payload(object_id)
+        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
+        self.assertTrue(self.purge.replay_independent_journal()["normal_allowed"])
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
+
     def test_purge_backup_restore_replays_external_ledger_without_resurrection(self):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")
         result = self._human_verification("verify-for-purge")
