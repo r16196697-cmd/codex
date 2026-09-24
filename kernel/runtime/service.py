@@ -327,7 +327,7 @@ class DeterministicRuntime:
         elif run["executor_kind"] == "TOOL":
             with self.store._connection() as conn:
                 descriptor = conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (manifest["tool_id"], manifest["tool_descriptor_version"])).fetchone()
-            if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED" or json.loads(descriptor["descriptor_json"])["effect_class"] != "READ_ONLY":
+            if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED":
                 raise RuntimeDenied("TOOL_DESCRIPTOR_NOT_APPROVED")
 
     def _object_exists(self, object_id: str) -> bool:
@@ -550,8 +550,8 @@ class DeterministicRuntime:
             if not desc_row:
                 raise RuntimeDenied("TOOL_DESCRIPTOR_NOT_REGISTERED")
             descriptor = json.loads(desc_row["descriptor_json"])
-            if descriptor["review_status"] != "APPROVED" or descriptor["effect_class"] != "READ_ONLY":
-                raise RuntimeDenied("STEP5_TOOL_NOT_READ_ONLY_APPROVED")
+            if descriptor["review_status"] != "APPROVED":
+                raise RuntimeDenied("TOOL_DESCRIPTOR_NOT_REVIEWED")
             if not set(descriptor["required_authority"]).issubset(self.authority.compute_effective_authority(child_grant_id)["action_scope"]):
                 raise RuntimeDenied("TOOL_REQUIRED_AUTHORITY_NOT_GRANTED")
             for input_id in node["input_object_refs"]:

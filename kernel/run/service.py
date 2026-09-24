@@ -25,6 +25,13 @@ _METADATA_ALLOWLIST = {
     "nexus.object.created": {"object_type"},
     "nexus.verification.inconclusive": {"reason_code", "verification_ref"},
     "nexus.effect.committed": {"effect_id"},
+    "nexus.effect.declared": {"effect_id"},
+    "nexus.effect.prepared": {"effect_id", "execution_state"},
+    "nexus.effect.authorized": {"effect_id", "execution_state"},
+    "nexus.effect.commit_started": {"effect_id", "execution_state"},
+    "nexus.effect.outcome_recorded": {"effect_id", "execution_state", "effect_outcome", "reconciliation_status"},
+    "nexus.effect.reconciled": {"effect_id", "effect_outcome", "reconciliation_status"},
+    "nexus.effect.compensation_created": {"effect_id", "compensated_effect_id"},
     "nexus.authority.denied": {"reason_code"},
     "nexus.trace.event_rejected": {"reason_code"},
 }
@@ -520,7 +527,7 @@ class TraceRuntime:
                 raise TraceAdmissionDenied("MODEL_RUN_BUDGET_ESTIMATE_MISMATCH")
         elif run["executor_kind"] == "TOOL":
             descriptor = conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (manifest["tool_id"], manifest["tool_descriptor_version"])).fetchone()
-            if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED" or json.loads(descriptor["descriptor_json"])["effect_class"] != "READ_ONLY":
+            if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED":
                 raise TraceAdmissionDenied("TOOL_RUN_DESCRIPTOR_UNAVAILABLE")
             descriptor_doc = json.loads(descriptor["descriptor_json"])
             effective = self.authority.compute_effective_authority(run["grant_id"])

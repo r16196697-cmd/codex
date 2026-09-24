@@ -1,12 +1,12 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 6 — NOT_STARTED
+Current implementation step: Step 6 — PASS
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `1338b0080b55f0faa2183c5828e91d526c8bf8fb` / `nexus-v2-runtime`
-Schema version: `nexus.* @1`; SQLite migration version `4` (isolated tests)
+Git commit / branch: `ac208477d70d623ebb7deb44b0dd55dc2` / `nexus-v2-runtime`
+Schema version: `nexus.* @1`; SQLite migration version `5` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
-Database version: `4` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `5` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
@@ -14,7 +14,7 @@ Step 2: PASS
 Step 3: PASS
 Step 4: PASS
 Step 5: PASS
-Step 6: NOT_STARTED  
+Step 6: PASS
 Step 7: NOT_STARTED  
 Step 8: NOT_STARTED  
 Step 9: NOT_STARTED  
@@ -36,6 +36,8 @@ Tests passed:
 - Step 5: 41 contract/integration tests pass, including deterministic DAG routing/scheduling for ORCHESTRATOR, MODEL and TOOL identities; E0/E1/E2 quality floors, locality/provider/classification/context/budget hard gates; exact child Manifest binding before READY; TaskContract/LogicalRef and schema-bound inputs; authority-descended Run grants; atomic budget reservations; scheduler command replay; dependency gating; Trace-backed Subtask replay; and rejection/no persistence of an unreviewed external-write descriptor.
 - Step 5 static checks: all 30 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass. Targeted Step 5 + Trace suite: 9 passed.
 - Environment note corrected to match the observed source layout (`kernel/`, `adapters/`, `schemas/`, `migrations/`, `tests/`); no source was moved.
+- Step 6: 43 contract/integration tests pass. Fake dispatcher response loss becomes UNKNOWN, same-command retry does not redispatch, the configured authoritative fake channel resolves using evidence, and budget settlement is bounded/idempotent. A separate compensation Effect and COMPENSATES relation commits without changing the original COMMITTED fact. Payload-hash-mismatched ApprovalDecision and revoked parent Grant both prevent dispatch.
+- Step 6 static checks: all 30 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
@@ -43,6 +45,7 @@ Tests failed:
 - Step 3 first runs exposed a policy-schema directory assumption and a stale test expectation for a single migration; both were corrected. A classification egress test initially supplied an assertion ID rather than an object ID; the API was tightened to derive classification only from persisted object envelopes. A final immutable-ledger test initially queried the losing concurrent reservation ID; it now selects the actual winning ledger command. The final 32-test suite passes.
 - Step 4 initial tests caught event creation ordering, schema-version expectation, high-classification fixture wiring, and the need to rollback Run state if Trace append fails; fixes are covered by the final 38-test suite.
 - Step 5 development tests exposed composite DAG-edge identity, scheduling preflight ordering, child Manifest/schema constraints, and projection recovery details; these were corrected and the final 41-test suite passes.
+- Step 6 development tests exposed the Step 5 read-only Descriptor scheduling boundary, migration-version expectations, commit-in-progress DB constraints and fixture identity bindings; these were corrected and the final 43-test suite passes.
 
 Open blockers:
 - Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
@@ -50,10 +53,10 @@ Open blockers:
 
 Known UNKNOWN Effects: None; Nexus runtime/data not initialized.  
 Pending Purge: None.  
-Pending migration: None.  
-Rollback point: Step 4 checkpoint `1338b0080b55f0faa2183c5828e91d526c8bf8fb`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-24 Step 5 full suite (41 tests) and static checks; Step 5 checkpoint commit is being recorded; branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
-Next allowed action: create the Step 5 checkpoint, then begin only Step 6 Effect Gate after recording its Step Card and rollback point.
+Pending migration: `0005_effect_gate.sql` is test-applied only; there is no persistent runtime database to migrate.
+Rollback point: Step 5 checkpoint `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Last verified state: 2026-09-24 Step 6 full suite (43 tests), static checks and synthetic Effect recovery paths; branch `nexus-v2-runtime`; no persistent Nexus runtime database initialized. Step 6 checkpoint is being recorded.
+Next allowed action: commit the Step 6 checkpoint, then prepare only Step 7's Implementation Step Card.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -320,3 +323,73 @@ Rollback point:
 
 Next:
 STEP 6 — Effect Gate
+
+## IMPLEMENTATION STEP 6 — PASS
+
+Goal:
+Implement governed Effect preparation, commit/UNKNOWN semantics, bounded authoritative reconciliation, and independent compensation Effects/relations; all external interactions are synthetic fake-service fixtures.
+
+Inputs:
+Committed Steps 1–5, especially ApprovalDecision/payload-bound authorization, Task budget reservations, Trace replay, immutable Object storage and reviewed ToolDescriptor contracts. Disposable SQLite DBs and fake receipts only.
+
+Allowed files:
+`kernel/effect/`; a new forward-only `migrations/0005_effect_gate.sql`; new Step 6-only reconciliation schema(s) under `schemas/` if no existing schema expresses the required persisted facts; `kernel/runtime/service.py` only to allow scheduling of approved mutating descriptors without providing any bypass around Effect Gate; `kernel/run/service.py` only to add schema-validated internal Effect Trace event types while keeping public event writes restricted; `tests/contract/`, `tests/integration/`, and this status file.
+
+Forbidden files:
+Migrations `0001`–`0004`; existing frozen Foundation Contract schemas `nexus.effect@1`, `nexus.effect_relation@1`, Approval, Grant, Run and Trace schemas; migrations already applied; global or business-project `AGENTS.md`; global Skills/config; persistent/user databases; secrets; real providers/tools/network/external writes; and any change that rewrites a committed Effect fact or conflates the three axes.
+
+Expected outputs:
+Typed Effect records with independent `execution_state`, `effect_outcome`, and `reconciliation_status`; authorization and ApprovalDecision revalidation immediately before commit; stable idempotency key and fail-closed UNKNOWN on ambiguous dispatch; authoritative reconciliation only through a configured synthetic channel with a finite attempt/deadline bound, otherwise HUMAN_REQUIRED/BLOCK_AND_ALERT; compensation creates a new Effect plus COMPENSATES relation and never mutates the original outcome; append-only facts and recoverable command replay.
+
+Exact tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -v`; targeted T3 (UNKNOWN never auto-resubmits; authoritative reconciliation; original COMMITTED preserved after independent compensation; three axes remain independent; ToolDescriptor cannot grant permission), T7 (Approval binds payload/effect and parent revocation before commit denies), plus migration/reopen/replay recovery; all-schema/default-policy validation, `pip check`, `compileall`, `git diff --check`, secret-pattern scan.
+
+PASS criteria:
+Ambiguous fake dispatch persists UNKNOWN and retry cannot resubmit; bounded authoritative channel may reconcile only with authoritative evidence; unavailable/ambiguous channel blocks for a human; commit performs fresh Grant and Approval checks against exact payload hash/target/effect; compensation is separately authorized, approved as required, budgeted and recorded as an independent Effect/relationship; original outcome remains immutable; all tests/static checks pass without any real external call.
+
+FAIL handling:
+Fix only Step 6 and its migration/tests; do not enter Step 7 until T3/T7 behavior and recovery tests pass and this checkpoint is committed.
+
+Rollback point:
+Step 5 checkpoint `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+
+Do NOT:
+- Treat timeout as failure or automatically retry a commit.
+- Use ToolDescriptor as a permission source.
+- Update an original COMMITTED Effect to COMPENSATED.
+- Call a real external endpoint or install an orchestration framework.
+
+## STEP 6 — IMPLEMENTATION REPORT
+
+Implemented:
+- Forward migration `0005_effect_gate.sql` with immutable Effect identity/idempotency key, three independent state axes, constrained transitions, synchronized Effect JSON projection, immutable reconciliation attempts and COMPENSATES relations.
+- Effect preparation and commit require an active TOOL Run, exact RunManifest Descriptor/version, matching immutable payload hash/classification, active Run budget reservation, and fresh scoped authority; external commit revalidates exact action, target, Effect ID, payload hash and ApprovalDecision under the SQLite write lock.
+- Persisted `COMMITTING/UNKNOWN` before dispatch; ambiguous outcomes never trigger another dispatcher call. A retried in-progress command closes conservatively to UNKNOWN. Dispatcher returns settle the existing Tool Run reservation conservatively; UNKNOWN remains explicit.
+- Bounded reconciliation uses only an injected channel whose identity matches the reviewed Descriptor and declares itself authoritative. Missing/untrusted channels produce HUMAN_REQUIRED; attempts are capped by policy. Reconciliation evidence is append-only and replayed command IDs do not re-query.
+- Compensation is a second authorized Effect on a distinct TOOL Run with its own reservation and a `COMPENSATES` relation. Original COMMITTED outcome remains immutable.
+- The scheduler and READY-manifest validation admit reviewed mutating ToolDescriptors for scheduling only; no path bypasses Effect Gate for dispatch.
+
+Tests executed:
+- `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 43 passed.
+- `.venv\Scripts\python.exe -m pip check` — no broken requirements.
+- `.venv\Scripts\python.exe -m compileall -q adapters kernel tests` — passed.
+- All 29 schema files plus the policy schema passed Draft 2020-12 validation; default policy validates.
+- `git diff --check` — passed (Git reports only informational LF→CRLF normalization); secret-pattern scan — no matches.
+
+Evidence:
+- Isolated temporary SQLite databases and synthetic identities/payloads only. Migration v5 is applied only to disposable tests; no persistent DB, real credentials, network, provider or external system was used.
+- UNKNOWN response-loss path called the fake dispatcher once; same-command replay retained one dispatch. An authoritative fake reconciliation record resolved it. Original and compensation Effects remain independently COMMITTED; the relation and separate budget consumption were queried from SQLite.
+- Approval payload mismatch and parent Grant revocation were exercised at commit time; neither invoked the fake dispatcher.
+
+Files changed:
+- `kernel/effect/`, `migrations/0005_effect_gate.sql`, internal Effect Trace allowlist in `kernel/run/service.py`, scheduling-only reviewed mutation support in `kernel/runtime/service.py`, integration tests/migration expectation, and this status file.
+
+Known limitations:
+- Dispatch/reconciliation are in-process fake ports only; no real external service was configured or contacted. A real service requires an independently reviewed authoritative reconciliation channel and a confirmed credential-store decision. Network-egress descriptors remain subject to the deny-by-default egress gate.
+- This step does not claim production readiness and does not initialize a persistent Nexus runtime database.
+
+Rollback point:
+- Step 5 commit `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; Step 0 snapshot recorded above.
+
+Next:
+STEP 7 — Verifier + Memory Admission + FTS + Purge

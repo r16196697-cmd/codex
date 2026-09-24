@@ -6,8 +6,10 @@ from pathlib import Path
 
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
+from kernel.authority.errors import ApprovalDenied, InvalidDelegation
 from kernel.budget import BudgetService
 from kernel.run import TraceAdmissionDenied, TraceRuntime
+from kernel.effect import AmbiguousDispatch, DeterministicEffectService
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
 
@@ -28,8 +30,8 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "cmd-principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "cmd-anchor")
         now = datetime.now(timezone.utc)
-        self.root_resources = ["run-root", "run-e0", "run-e1", "run-e2", "run-tool", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read"]
-        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": self.root_resources, "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE", "OBJECT_WRITE", "CLASSIFY", "RUNTIME_CONFIGURE", "TOOL_READ"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=300)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-root-grant")
+        self.root_resources = ["run-root", "run-e0", "run-e1", "run-e2", "run-tool", "run-tool-comp", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read", "sandbox-target"]
+        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": self.root_resources, "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE", "OBJECT_WRITE", "CLASSIFY", "RUNTIME_CONFIGURE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=300)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-root-grant")
         self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "status": "CREATED", "created_at": self._now(), "command_id": "cmd-task"})
         self.budget.create_account(command_id="cmd-budget", account_id="budget-1", task_id="task-1", amount_limit=100, unit="credits", model_call_limit=10, tool_call_limit=10, child_run_limit=10)
         self._classify("class-root-run", "RUN", "run-root", "agent")
@@ -75,7 +77,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
             if conn.execute("SELECT 1 FROM delegation_grants WHERE grant_id=?", (grant_id,)).fetchone():
                 return
         now = datetime.now(timezone.utc)
-        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id, "parent_grant_id": "grant-root", "issued_by": "agent", "granted_to": principal_id, "task_scope": ["task-1"], "resource_scope": [run_id], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "TOOL_READ"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=30)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-" + grant_id)
+        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id, "parent_grant_id": "grant-root", "issued_by": "agent", "granted_to": principal_id, "task_scope": ["task-1"], "resource_scope": [run_id, "sandbox-target", "tool-read"], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=30)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-" + grant_id)
 
     def _model_profile(self, model_id, model_class, cost, *, provider="fake", local="LOCAL"):
         profile = {"schema_id": "nexus.model_profile", "schema_version": 1, "model_id": model_id, "provider": provider, "model_class": model_class, "modalities": ["text"], "context_limit": 4096, "structured_output_support": True, "tool_use_support": False, "local_or_cloud": local, "allowed_classifications": ["PUBLIC", "PERSONAL"], "provider_policy_ref": "fake-policy-1", "cost_profile": {"unit": "credits", "estimated_cost": cost}, "latency_profile": {"estimated_ms": 100 * cost}, "local_eval_status": "PASSED", "version": "1", "model_adapter_version": "fake-adapter-1", "available": True}
@@ -86,6 +88,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         for node_id, quality, run_class in (("node-e0", "ROUTINE", "LOW"), ("node-e1", "STANDARD", "STANDARD"), ("node-e2", "CRITICAL", "CRITICAL")):
             result.append({"schema_id": "nexus.subtask", "schema_version": 1, "subtask_id": node_id, "task_id": "task-1", "input_object_refs": ["input-1"], "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "dependency_ids": [], "quality_requirement": quality, "risk_class": run_class, "validation_method": "SCHEMA", "budget_amount": 10, "requested_executor": "MODEL", "required_modalities": ["text"], "requires_structured_output": True, "requires_tool_use": False, "created_at": "2026-09-24T00:00:00Z"})
         result.append({"schema_id": "nexus.subtask", "schema_version": 1, "subtask_id": "node-tool", "task_id": "task-1", "input_object_refs": ["input-1"], "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "dependency_ids": [], "quality_requirement": "ROUTINE", "risk_class": "LOW", "validation_method": "TEST", "budget_amount": 2, "requested_executor": "TOOL", "tool_id": "tool-read", "required_modalities": ["text"], "created_at": "2026-09-24T00:00:00Z"})
+        result.append({"schema_id": "nexus.subtask", "schema_version": 1, "subtask_id": "node-tool-comp", "task_id": "task-1", "input_object_refs": ["input-1"], "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "dependency_ids": [], "quality_requirement": "ROUTINE", "risk_class": "LOW", "validation_method": "TEST", "budget_amount": 2, "requested_executor": "TOOL", "tool_id": "tool-read", "required_modalities": ["text"], "created_at": "2026-09-24T00:00:00Z"})
         return result
 
     def _schedule(self, node_id, run_id, actor_id, grant_id, route_id=None):
@@ -157,6 +160,91 @@ class DeterministicRuntimeTests(unittest.TestCase):
         node = self._nodes()[2]
         with self.assertRaisesRegex(RuntimeDenied, "NO_MODEL_MEETS_HARD_ROUTING_AND_QUALITY_CONSTRAINTS"):
             self.runtime._choose_model(node, self.runtime._contract("task-1")[1], self._root(), self.runtime._budget_snapshot("budget-1"), self.runtime._contract("task-1")[0])
+
+    def test_unknown_effect_is_reconciled_without_retry_and_compensation_is_independent(self):
+        class FakeDispatcher:
+            def __init__(self): self.calls = 0
+            def dispatch(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1: raise AmbiguousDispatch("synthetic response loss")
+                return {"outcome": "COMMITTED", "receipt_ref": "fake-receipt-2"}
+
+        class FakeAuthorityChannel:
+            channel_id = "fake-authoritative"
+            authoritative = True
+            def __init__(self): self.calls = 0
+            def query(self, **kwargs): self.calls += 1; return {"outcome": "COMMITTED", "evidence_ref": "fake-authoritative-evidence-1"}
+
+        self.runtime.create_dag(command_id="cmd-effect-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        dispatcher = FakeDispatcher()
+        reconciliation_channel = FakeAuthorityChannel()
+        effects = DeterministicEffectService(self.store, self.authority, self.trace, self.budget, dispatchers={"tool-read": dispatcher}, reconciliation_ports={"fake-authoritative": reconciliation_channel})
+        descriptor = {"schema_id": "nexus.tool_descriptor", "schema_version": 1, "tool_id": "tool-read", "version": "1", "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "effect_class": "EXTERNAL_REVERSIBLE", "required_authority": ["FAKE_WRITE"], "required_classifications": ["PUBLIC"], "idempotency_support": True, "reconciliation_capability": "fake-authoritative", "compensation_capability": "fake-compensate", "network_egress": False, "risk_tags": ["synthetic"], "review_status": "APPROVED"}
+        effects.register_descriptor(command_id="cmd-effect-descriptor", grant_id="grant-root", task_id="task-1", descriptor=descriptor)
+        self._schedule("node-tool", "run-tool", "tool-agent", "grant-tool")
+        self._advance("run-tool", "cmd-tool-running", "READY", "RUNNING", "tool-agent")
+        digest = self.store.get_object_metadata("input-1")["integrity_hash"]
+        effect = {"schema_id": "nexus.effect", "schema_version": 1, "effect_id": "effect-original", "run_id": "run-tool", "tool_id": "tool-read", "action_type": "FAKE_WRITE", "target_ref": "sandbox-target", "payload_integrity_hash": digest, "idempotency_key": "stable-effect-key-1", "grant_id": "grant-tool", "execution_state": "DECLARED", "effect_outcome": "UNDETERMINED", "reconciliation_status": "NOT_REQUIRED"}
+        approval = {"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approve-effect-original", "approver_principal_id": "human-root", "target_type": "FAKE_WRITE", "target_ref": "sandbox-target", "effect_id": "effect-original", "payload_integrity_hash": digest, "decision": "APPROVE", "approved_scope": ["FAKE_WRITE", "sandbox-target"], "policy_version": "1", "issued_at": self._now()}
+        self.authority.create_approval(approval, "cmd-approve-original")
+        effect["approval_ref"] = "approve-effect-original"
+        effects.create_effect(command_id="cmd-effect-create", effect=effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-effect-create", "tool-agent"))
+        effects.prepare(command_id="cmd-effect-prepare", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-prepare", "tool-agent"))
+        effects.authorize(command_id="cmd-effect-authorize", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-authorize", "tool-agent"))
+        original = effects.commit(command_id="cmd-effect-commit", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-commit-start", "tool-agent"))
+        self.assertEqual(original["effect_outcome"], "UNKNOWN")
+        self.assertEqual(dispatcher.calls, 1)
+        replay = effects.commit(command_id="cmd-effect-commit", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-commit-start", "tool-agent"))
+        self.assertEqual(replay, original)
+        self.assertEqual(dispatcher.calls, 1)
+        resolved = effects.reconcile(command_id="cmd-effect-reconcile", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-reconcile", "tool-agent"))
+        self.assertEqual(resolved["effect_outcome"], "COMMITTED")
+        self.assertEqual(effects.reconcile(command_id="cmd-effect-reconcile", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-reconcile", "tool-agent")), resolved)
+        self.assertEqual(reconciliation_channel.calls, 1)
+        self._schedule("node-tool-comp", "run-tool-comp", "tool-agent", "grant-tool-comp")
+        self._advance("run-tool-comp", "cmd-tool-comp-running", "READY", "RUNNING", "tool-agent")
+        compensation = {**effect, "effect_id": "effect-compensation", "run_id": "run-tool-comp", "grant_id": "grant-tool-comp", "idempotency_key": "stable-effect-key-2", "approval_ref": "approve-effect-compensation"}
+        compensation_approval = {**approval, "approval_id": "approve-effect-compensation", "effect_id": "effect-compensation"}
+        self.authority.create_approval(compensation_approval, "cmd-approve-compensation")
+        effects.create_effect(command_id="cmd-compensation-create", effect=compensation, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-compensation-create", "tool-agent"), compensates_effect_id="effect-original")
+        effects.prepare(command_id="cmd-compensation-prepare", effect_id="effect-compensation", classification_assertion_ref=self._event_class("cmd-compensation-prepare", "tool-agent"))
+        effects.authorize(command_id="cmd-compensation-authorize", effect_id="effect-compensation", classification_assertion_ref=self._event_class("cmd-compensation-authorize", "tool-agent"))
+        self.assertEqual(effects.commit(command_id="cmd-compensation-commit", effect_id="effect-compensation", classification_assertion_ref=self._event_class("cmd-compensation-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-compensation-commit-start", "tool-agent"))["effect_outcome"], "COMMITTED")
+        with self.store._connection() as conn:
+            facts = {row["effect_id"]: row["effect_outcome"] for row in conn.execute("SELECT effect_id,effect_outcome FROM effects")}
+            relation = conn.execute("SELECT relation_type FROM effect_relations WHERE from_effect_id='effect-compensation' AND to_effect_id='effect-original'").fetchone()
+            budget = conn.execute("SELECT reserved,consumed,tool_calls_reserved,tool_calls_consumed FROM budget_accounts WHERE account_id='budget-1'").fetchone()
+        self.assertEqual(facts, {"effect-original": "COMMITTED", "effect-compensation": "COMMITTED"})
+        self.assertEqual(relation["relation_type"], "COMPENSATES")
+        self.assertEqual(tuple(budget), (0, 4, 0, 2))
+
+    def test_effect_commit_revalidates_payload_bound_approval_and_revocation(self):
+        class NeverDispatch:
+            calls = 0
+            def dispatch(self, **kwargs): self.calls += 1; return {"outcome": "COMMITTED", "receipt_ref": "should-not-run"}
+
+        self.runtime.create_dag(command_id="cmd-deny-effect-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        effects = DeterministicEffectService(self.store, self.authority, self.trace, self.budget, dispatchers={"tool-read": NeverDispatch()})
+        descriptor = {"schema_id": "nexus.tool_descriptor", "schema_version": 1, "tool_id": "tool-read", "version": "1", "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "effect_class": "EXTERNAL_REVERSIBLE", "required_authority": ["FAKE_WRITE"], "required_classifications": ["PUBLIC"], "idempotency_support": True, "reconciliation_capability": "fake-authoritative", "compensation_capability": "fake-compensate", "network_egress": False, "risk_tags": [], "review_status": "APPROVED"}
+        effects.register_descriptor(command_id="cmd-deny-effect-descriptor", grant_id="grant-root", task_id="task-1", descriptor=descriptor)
+        self._schedule("node-tool", "run-tool", "tool-agent", "grant-tool")
+        self._advance("run-tool", "cmd-deny-effect-running", "READY", "RUNNING", "tool-agent")
+        payload_hash = self.store.get_object_metadata("input-1")["integrity_hash"]
+        effect = {"schema_id": "nexus.effect", "schema_version": 1, "effect_id": "effect-denied", "run_id": "run-tool", "tool_id": "tool-read", "action_type": "FAKE_WRITE", "target_ref": "sandbox-target", "payload_integrity_hash": payload_hash, "idempotency_key": "stable-effect-denied", "grant_id": "grant-tool", "execution_state": "DECLARED", "effect_outcome": "UNDETERMINED", "reconciliation_status": "NOT_REQUIRED", "approval_ref": "approval-wrong-payload"}
+        self.authority.create_approval({"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approval-wrong-payload", "approver_principal_id": "human-root", "target_type": "FAKE_WRITE", "target_ref": "sandbox-target", "effect_id": "effect-denied", "payload_integrity_hash": "0" * 64, "decision": "APPROVE", "approved_scope": ["FAKE_WRITE", "sandbox-target"], "policy_version": "1", "issued_at": self._now()}, "cmd-approval-wrong-payload")
+        effects.create_effect(command_id="cmd-create-denied-effect", effect=effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-create-denied-effect", "tool-agent"))
+        effects.prepare(command_id="cmd-denied-effect-prepare", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-prepare", "tool-agent"))
+        effects.authorize(command_id="cmd-denied-effect-authorize", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-authorize", "tool-agent"))
+        with self.assertRaisesRegex(ApprovalDenied, "APPROVAL_PAYLOAD_HASH_MISMATCH"):
+            effects.commit(command_id="cmd-denied-effect-commit", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-denied-effect-commit-start", "tool-agent"))
+        self.assertEqual(effects._get("effect-denied")["execution_state"], "AUTHORIZED")
+        self.authority.revoke_grant("grant-root", "cmd-deny-effect-revoke-parent")
+        with self.assertRaises(InvalidDelegation):
+            effects.commit(command_id="cmd-denied-effect-after-revoke", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-after-revoke-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-denied-effect-after-revoke-start", "tool-agent"))
+        self.assertEqual(effects.dispatchers["tool-read"].calls, 0)
+        self.assertEqual(effects._get("effect-denied")["execution_state"], "AUTHORIZED")
 
     def _root(self):
         with self.store._connection() as conn:
