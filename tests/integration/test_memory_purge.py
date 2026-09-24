@@ -3,6 +3,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -171,6 +172,37 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertFalse(replay["normal_allowed"])
         self.assertEqual(replay["held_refs"], 3)
         self.assertEqual(self.store.get_payload(self.claim), b"The synthetic Nexus fact is governed memory.")
+
+    def test_crash_after_independent_barrier_record_restores_conservative_purge_hold(self):
+        self.memory.retain_raw(command_id="retain-before-journal-crash", object_id=self.claim, run_id="run-7")
+        plan = self.purge.plan(command_id="journal-crash-plan-command", plan_id="plan-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with mock.patch.object(self.purge, "_install_barrier", side_effect=RuntimeError("SIMULATED_CRASH_AFTER_JOURNAL")):
+            with self.assertRaisesRegex(RuntimeError, "SIMULATED_CRASH_AFTER_JOURNAL"):
+                self.purge.execute(command_id="journal-crash-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone())
+
+        replay = self.purge.replay_independent_journal()
+        self.assertFalse(replay["normal_allowed"])
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
+            self.assertEqual(replay["held_refs"], conn.execute("SELECT COUNT(*) FROM purge_barrier_refs WHERE barrier_id='barrier-7'").fetchone()[0])
+        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
+        with self.assertRaises(PurgeBarrierActive):
+            self.memory.retain_raw(command_id="retain-during-recovered-barrier", object_id=self.claim, run_id="run-7")
+
+        self.store.close()
+        self.store = ObjectStore(self.data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        recovered = self.purge.replay_independent_journal()
+        self.assertFalse(recovered["normal_allowed"])
+        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
 
     def test_purge_backup_restore_replays_external_ledger_without_resurrection(self):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")

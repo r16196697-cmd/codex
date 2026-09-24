@@ -78,6 +78,31 @@ class ObjectStoreTests(unittest.TestCase):
         with self.assertRaises(IntegrityMismatch):
             self.store.get_payload(object_id)
 
+    def test_crash_after_atomic_payload_rename_before_db_commit_cleans_orphan_on_reopen(self) -> None:
+        payload = b"synthetic crash-window payload"
+        object_id = "obj-crash-window"
+        classification_ref = self._classify(object_id)
+        digest = hashlib.sha256(payload).hexdigest()
+        payload_path = self.root / "data" / "objects" / "sha256" / digest[:2] / digest
+        with self.store._connection() as conn:
+            conn.execute(
+                "CREATE TRIGGER simulate_metadata_commit_crash BEFORE INSERT ON objects "
+                "WHEN NEW.object_id='obj-crash-window' BEGIN SELECT RAISE(ABORT,'SIMULATED_COMMIT_CRASH'); END"
+            )
+        with self.assertRaisesRegex(sqlite3.IntegrityError, "SIMULATED_COMMIT_CRASH"):
+            self.store.put_object(command_id="cmd-crash-window", object_id=object_id, payload=payload, object_type="artifact", created_by_run="run_test", classification_assertion_ref=classification_ref)
+        self.assertTrue(payload_path.is_file(), "atomic rename occurred before the simulated metadata commit failure")
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='cmd-crash-window'").fetchone())
+
+        self.store.close()
+        self.store = ObjectStore(self.root / "data")
+        self.assertFalse(payload_path.exists(), "startup recovery must remove the unreferenced payload")
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone())
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
     def test_object_envelope_is_immutable_in_sqlite(self) -> None:
         object_id = self.put("cmd-immutable", b"immutable")
         with self.store._connection() as conn:
@@ -206,6 +231,31 @@ raise SystemExit(0)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
             self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64)])
+
+    def test_v6_snapshot_replays_v7_runtime_mode_migration(self) -> None:
+        database_path = self.root / "data" / "nexus.sqlite"
+        self.store.close()
+        legacy_conn = sqlite3.connect(database_path)
+        try:
+            conn = legacy_conn
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_update")
+            conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_delete")
+            conn.execute("DROP TABLE IF EXISTS runtime_mode_events")
+            conn.execute("DROP TABLE IF EXISTS runtime_mode_state")
+            conn.execute("DELETE FROM schema_migrations WHERE version=7")
+            conn.execute("PRAGMA user_version=6")
+            conn.commit()
+        finally:
+            legacy_conn.close()
+
+        self.store = ObjectStore(self.root / "data")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 7)
+            row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
+            self.assertEqual(tuple(row), (7, "0007_runtime_modes.sql"))
+            self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_changed_applied_migration_is_rejected(self) -> None:
         with self.store._connection() as conn:
