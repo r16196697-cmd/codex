@@ -3,7 +3,7 @@
 Nexus version: `v0.1-development`  
 Current implementation step: Step 8 — RUNNING (Codex-hosted attachment integration remains incomplete)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Implementation checkpoint / branch: `8cc0125d068890f5360ca30151aa618dd93a9c1e` / `nexus-v2-runtime` (authorized mode-to-Trace correction; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
+Implementation checkpoint / branch: `99a7ad7b3e001cf6f3cda0c3e4bf2de8f35f2fc7` / `nexus-v2-runtime` (authorized mode-to-Trace and configured CLI integration; Step 7 base `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`)
 Schema version: `nexus.* @1`; SQLite migration version `7` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
 Database version: `7` exercised only in isolated integration databases; persistent runtime database not initialized
@@ -78,7 +78,7 @@ Known UNKNOWN Effects: None; Nexus runtime/data not initialized.
 Pending Purge: None.  
 Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-25 mode-to-Trace is committed as `8cc0125d068890f5360ca30151aa618dd93a9c1e`; configured CLI integration and 69-test full regression now pass in the working tree based on `bf66c1211d13a0853ab9efc2fd126a67aa4c128f`; these latest CLI changes are uncommitted; persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
+Last verified state: 2026-09-25 mode-to-Trace committed as `8cc0125d068890f5360ca30151aa618dd93a9c1e`; configured CLI integration and the 69-test full regression committed as `99a7ad7b3e001cf6f3cda0c3e4bf2de8f35f2fc7`; persistent Nexus DB/config not initialized; deployment remains DEVELOPMENT.
 Next allowed action: complete the Codex-host attachment bridge to the extent supported by authoritative Host facts, then run Step 9 client tests on an initialized isolated instance and execute the formal Step 10 T1–T12/recovery acceptance. Independent Providers remain deferred.
 
 ## IMPLEMENTATION STEP 2 — PASS
