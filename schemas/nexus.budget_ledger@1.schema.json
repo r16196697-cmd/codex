@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.budget_ledger@1",
+  "title": "Nexus BudgetLedger entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "ledger_seq", "reservation_id", "command_id", "action", "amount", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.budget_ledger"},
+    "schema_version": {"const": 1},
+    "ledger_seq": {"type": "integer", "minimum": 1},
+    "reservation_id": {"type": "string", "minLength": 1},
+    "command_id": {"type": "string", "minLength": 1},
+    "action": {"enum": ["RESERVED", "CONSUMED", "RELEASED"]},
+    "amount": {"type": "integer", "minimum": 0},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

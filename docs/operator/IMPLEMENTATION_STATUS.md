@@ -1,17 +1,17 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 2 — PASS
+Current implementation step: Step 3 — PASS
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `679162116b3ecf8a64f8b77f53a67143636c50b8` / `nexus-v2-runtime` (Step 2 checkpoint pending)
-Schema version: `1` (22 JSON Schemas; SQLite migration `0001`)
+Git commit / branch: `b09251f1318cc23b66643887506dbccc524bafb8` / `nexus-v2-runtime` (Step 3 checkpoint pending)
+Schema version: `nexus.* @1`; SQLite migration version `2`
 Policy version: `1` (fail-closed default policy)  
-Database version: `1` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `2` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
 Step 2: PASS
-Step 3: NOT_STARTED  
+Step 3: PASS
 Step 4: NOT_STARTED  
 Step 5: NOT_STARTED  
 Step 6: NOT_STARTED  
@@ -28,10 +28,13 @@ Tests passed:
 - Step 1 dependency: isolated `.venv` resolves the pinned `jsonschema==4.26.0` lock without modifying system Python.
 - Step 2: 23 contract/integration tests pass, including raw-byte SHA-256/tamper detection, schema-before-payload rejection, lineage-cycle rejection and closure, CAS race, command idempotency/conflict, single-writer exclusion, immutable envelopes, migration checksum guard, SQLite integrity, and persistent purge-barrier blocking after reopen.
 - Step 2 static checks: `pip check` reports no broken requirements; `compileall` passes. `git diff --check` initially found trailing Markdown whitespace in this status file; that whitespace was removed before checkpointing.
+- Step 3: 32 contract/integration tests pass, including T4-style trust-root/chain/scope/audience/depth denials, principal/grant revoke revalidation, target/Effect/payload-bound approval, classification lowering approval, fail-closed classified egress, and concurrent atomic Task-budget reservations/idempotent settlement/release.
+- Step 3 static checks: all 25 schemas and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass. No credentials/provider connection was used.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
 - Step 2 first integration runs exposed a hash-profile FK mismatch, open test handles, migration trigger parsing, and a child-process test harness issue; these were corrected. An early Step 2 test also expected an orphan payload for a missing lineage source; after enforcing validation before payload write, the test was updated to assert no payload or metadata is persisted.
+- Step 3 first runs exposed a policy-schema directory assumption and a stale test expectation for a single migration; both were corrected. A classification egress test initially supplied an assertion ID rather than an object ID; the API was tightened to derive classification only from persisted object envelopes. A final immutable-ledger test initially queried the losing concurrent reservation ID; it now selects the actual winning ledger command. The final 32-test suite passes.
 
 Open blockers:
 - Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
@@ -41,8 +44,8 @@ Known UNKNOWN Effects: None; Nexus runtime/data not initialized.
 Pending Purge: None.  
 Pending migration: None.  
 Rollback point: clean base commit `ac61316178d7e145ed420de2fbb9ee0273067263`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.  
-Last verified state: 2026-09-24 Step 2 suite (23 tests); branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
-Next allowed action: checkpoint Step 2, then begin Step 3 only after writing its Step Card.
+Last verified state: 2026-09-24 Step 3 suite (32 tests); branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
+Next allowed action: checkpoint Step 3, then begin Step 4 only after writing its Step Card.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -108,3 +111,70 @@ Rollback point:
 
 Next:
 STEP 3 — Identity / Authority / Approval / Budget
+
+## IMPLEMENTATION STEP 3 — PASS
+
+Goal:
+Implement the fail-closed authority chain, scoped ApprovalDecision checks, Credential Broker boundary interface, classification/egress authorization gate, and one-account-per-Task atomic budget reservations without connecting real secrets or external providers.
+
+Inputs:
+Step 1–2 committed schemas, fail-closed policy, SHA-256 object layer, CommandLedger, and isolated test databases.
+
+Allowed files:
+`kernel/authority/`, `kernel/budget/`, `adapters/credentials/` (interface only), `adapters/storage/sqlite_store.py` (classification-ref integrity only), a new `migrations/0002_authority_budget.sql`, new Step 3 schemas and backed-up `policies/nexus.policy@1.schema.json` (egress destination-rule schema only), `tests/contract/`, `tests/integration/` (including object-store regression updates), and this status file.
+
+Forbidden files:
+`migrations/0001_initial.sql`; previously committed Foundation Contract schemas except backed-up, compatibility-preserving corrections needed by this card; global or business-project `AGENTS.md`; global Skills/config; user databases; real credentials; real Trace/payload; real model/search/provider adapters; any external write path; and all files outside the allowed list.
+
+Expected outputs:
+`validate_delegation_chain()`, `compute_effective_authority()`, and `evaluate_authorization()` enforce configured trust anchors, principal/parent continuity, grant status/expiry/revocation, scope/resource/action/audience containment, depth bounds, and fail-closed unknowns. Approval binds approver/action/target/effect and optional payload integrity hash/scope/policy/expiry; authorization can be rechecked at commit and changed payload invalidates approval. Broker is a boundary contract only and never persists/prints credentials. Each Task has exactly one hard-limited BudgetAccount; atomic Run reservations cannot overspend under concurrency; CommandLedger protects mutating operations.
+
+Exact tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -v`; targeted T4 (untrusted root, broken/expired/revoked/expanded chains, audience/resource/action denials, depth), T6 (classification inheritance and egress), T7 (parent revoke and payload-hash/effect-bound approval), and T8 (concurrent reservations and hard ceiling); `pip check`, `compileall`, schema meta-validation, `git diff --check`, and secret-pattern scan.
+
+PASS criteria:
+All invalid authority/approval requests fail closed and append no secret material; child effective permissions are a subset of parent permissions; revocation before commit denies while committed facts remain unchanged; payload hash change invalidates approval; concurrent reservations satisfy `reserved+consumed≤limit` and one Task cannot acquire a second account; all tests/static checks pass.
+
+FAIL handling:
+Failures were fixed within Step 3; preserve the five frozen contracts and do not proceed to Step 4 until this checkpoint is committed.
+
+Rollback point:
+Step 2 checkpoint `b09251f1318cc23b66643887506dbccc524bafb8`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+
+Do NOT:
+- Add a sixth Foundation Contract or broaden any grant.
+- Trust an arbitrary chain root, a ToolDescriptor, model output, boolean approval, or client-side budget check.
+- Retrieve real secrets, connect a real provider, or enable external writes.
+- Modify the committed `0001_initial.sql` migration; create a forward migration instead.
+
+## STEP 3 — IMPLEMENTATION REPORT
+
+Implemented:
+- Persisted Principal, TrustAnchor, DelegationGrant, ApprovalDecision and ClassificationAssertion state with immutable audit/event rows and constrained transitions.
+- `validate_delegation_chain()`, `compute_effective_authority()`, and `evaluate_authorization()` fail closed on untrusted roots, broken/expired/revoked chains, policy version drift, depth overflow, and task/resource/action/audience expansion.
+- Commit-time reusable authorization check binds ApprovalDecision to human approver, action, target, Effect, payload SHA-256, policy and expiry. Revocation invalidates future authorization; historical approvals and committed facts are not rewritten.
+- Classification inheritance and lowering controls; outbound eligibility derives labels from persisted object references and a deny-by-default destination policy.
+- Credential Broker protocol boundary only; no OS credential adapter or secret retrieval is active.
+- One immutable-limit BudgetAccount per Task; transactional Run reservations, caps, settlement/release and append-only ledger with idempotent command handling.
+
+Tests executed:
+- `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 32 passed.
+- `.venv\Scripts\python.exe -m pip check` — no broken requirements.
+- `.venv\Scripts\python.exe -m compileall -q adapters kernel tests` — passed.
+- JSON Schema/default-policy validation, `git diff --check`, and secret-pattern scan — passed.
+
+Evidence:
+- All behavior tests use disposable temporary databases, synthetic principals, and fake payloads. Concurrency race verified one of two over-budget reservations is denied.
+- No persistent runtime database, real credentials, or network/provider connection was created.
+
+Files changed:
+- `kernel/authority/`, `kernel/budget/`, `adapters/storage/sqlite_store.py`, `migrations/0002_authority_budget.sql`, three budget schemas, the egress policy schema, and contract/integration coverage.
+
+Known limitations:
+- Credential Broker remains an interface; real credential-store selection is deferred to provider integration. Trace and external Effect commit path do not yet exist; Step 6 must call authorization revalidation.
+
+Rollback point:
+- Step 2 commit `b09251f1318cc23b66643887506dbccc524bafb8`; Step 0 snapshot recorded above.
+
+Next:
+STEP 4 — Trace / State / Replay

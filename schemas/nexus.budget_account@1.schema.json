@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.budget_account@1",
+  "title": "Nexus BudgetAccount v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "account_id", "task_id", "limit", "reserved", "consumed", "unit", "model_call_limit", "tool_call_limit", "child_run_limit"],
+  "properties": {
+    "schema_id": {"const": "nexus.budget_account"},
+    "schema_version": {"const": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "limit": {"type": "integer", "minimum": 0},
+    "reserved": {"type": "integer", "minimum": 0},
+    "consumed": {"type": "integer", "minimum": 0},
+    "unit": {"type": "string", "minLength": 1},
+    "model_call_limit": {"type": "integer", "minimum": 0},
+    "tool_call_limit": {"type": "integer", "minimum": 0},
+    "child_run_limit": {"type": "integer", "minimum": 0}
+  }
+}

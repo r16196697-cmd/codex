@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.budget_reservation@1",
+  "title": "Nexus BudgetReservation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "reservation_id", "account_id", "run_id", "amount", "unit", "state", "command_id"],
+  "properties": {
+    "schema_id": {"const": "nexus.budget_reservation"},
+    "schema_version": {"const": 1},
+    "reservation_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "amount": {"type": "integer", "minimum": 0},
+    "unit": {"type": "string", "minLength": 1},
+    "model_calls": {"type": "integer", "minimum": 0},
+    "tool_calls": {"type": "integer", "minimum": 0},
+    "child_runs": {"type": "integer", "minimum": 0},
+    "state": {"enum": ["RESERVED", "CONSUMED", "RELEASED"]},
+    "command_id": {"type": "string", "minLength": 1}
+  }
+}

@@ -9,7 +9,6 @@ import re
 import sqlite3
 import tempfile
 import threading
-import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,20 +52,25 @@ class ObjectStore:
     the in-process lock also serializes payload rename and barrier checks.
     """
 
-    def __init__(self, data_root: str | Path, schema_dir: str | Path | None = None):
+    def __init__(self, data_root: str | Path, schema_dir: str | Path | None = None, policy: dict[str, Any] | None = None):
         self.data_root = Path(data_root).expanduser().resolve()
         self.data_root.mkdir(parents=True, exist_ok=True)
         self.blob_root = self.data_root / "objects" / "sha256"
         self.blob_root.mkdir(parents=True, exist_ok=True)
         self.database_path = self.data_root / "nexus.sqlite"
+        self._format_checker = FormatChecker()
         project_root = Path(__file__).resolve().parents[2]
         self.schema_dir = Path(schema_dir).resolve() if schema_dir else project_root / "schemas"
+        policy_path = project_root / "policies" / "default-policy.json"
+        self.policy = json.loads(json.dumps(policy)) if policy is not None else json.loads(policy_path.read_text(encoding="utf-8"))
+        policy_schema = json.loads((project_root / "policies" / "nexus.policy@1.schema.json").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(policy_schema)
+        Draft202012Validator(policy_schema, format_checker=self._format_checker).validate(self.policy)
         self.migrations_dir = project_root / "migrations"
         self._lock = threading.RLock()
         self._writer_lock_file = None
         self._closed = False
         self._schemas: dict[str, dict[str, Any]] = {}
-        self._format_checker = FormatChecker()
         self._acquire_writer_lock()
         try:
             self._initialize_database()
@@ -326,6 +330,7 @@ class ObjectStore:
         self,
         *,
         command_id: str,
+        object_id: str,
         payload: bytes,
         object_type: str,
         created_by_run: str,
@@ -334,10 +339,13 @@ class ObjectStore:
     ) -> str:
         if not isinstance(payload, bytes):
             raise TypeError("payload must be bytes")
+        if not isinstance(object_id, str) or not object_id:
+            raise ValueError("object_id must be a non-empty caller-generated identifier")
         digest = _sha256(payload)
         source_ids = sorted(set(derived_from))
         request = {
             "payload_integrity_hash": digest,
+            "object_id": object_id,
             "object_type": object_type,
             "created_by_run": created_by_run,
             "classification_assertion_ref": classification_assertion_ref,
@@ -352,8 +360,9 @@ class ObjectStore:
                 if replay is not None:
                     conn.commit()
                     return replay["object_id"]
+                if conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
+                    raise CommandConflict("OBJECT_ID_ALREADY_EXISTS")
                 self._assert_unbarred(conn, source_ids)
-                object_id = "obj_" + uuid.uuid4().hex
                 payload_uri = f"objects/sha256/{digest[:2]}/{digest}"
                 envelope = {
                     "schema_id": "nexus.object",
@@ -376,6 +385,41 @@ class ObjectStore:
                     "payload_state": "AVAILABLE",
                 }
                 self._validate("nexus.object_state@1.schema.json", object_state)
+                classification_row = conn.execute(
+                    "SELECT * FROM classification_assertions WHERE assertion_id=?", (classification_assertion_ref,)
+                ).fetchone()
+                if not classification_row or classification_row["subject_type"] != "OBJECT" or classification_row["subject_ref"] != object_id:
+                    raise IntegrityMismatch("CLASSIFICATION_ASSERTION_REFERENCE_INVALID")
+                if classification_row["policy_version"] != self.policy["policy_version"]:
+                    raise IntegrityMismatch("CLASSIFICATION_POLICY_VERSION_MISMATCH")
+                classification = {
+                    "schema_id": "nexus.classification_assertion",
+                    "schema_version": 1,
+                    "assertion_id": classification_row["assertion_id"],
+                    "subject_type": classification_row["subject_type"],
+                    "subject_ref": classification_row["subject_ref"],
+                    "sensitivity_level": classification_row["sensitivity_level"],
+                    "handling_tags": json.loads(classification_row["handling_tags_json"]),
+                    "policy_version": classification_row["policy_version"],
+                    "reason": classification_row["reason"],
+                    "actor_id": classification_row["actor_id"],
+                }
+                if classification_row["supersedes"]:
+                    classification["supersedes"] = classification_row["supersedes"]
+                self._validate("nexus.classification_assertion@1.schema.json", classification)
+                for source_id in source_ids:
+                    if not conn.execute("SELECT 1 FROM objects WHERE object_id=?", (source_id,)).fetchone():
+                        raise ObjectNotFound("OBJECT_NOT_FOUND")
+                    source = conn.execute(
+                        "SELECT c.sensitivity_level,c.handling_tags_json,c.policy_version FROM object_envelopes e "
+                        "JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref WHERE e.object_id=?",
+                        (source_id,),
+                    ).fetchone()
+                    if not source:
+                        raise IntegrityMismatch("SOURCE_CLASSIFICATION_MISSING")
+                    rank = self.policy["classification"]["sensitivity_rank"]
+                    if classification["policy_version"] != source["policy_version"] or rank.get(classification["sensitivity_level"], -1) < rank.get(source["sensitivity_level"], 99) or not set(json.loads(source["handling_tags_json"])).issubset(set(classification["handling_tags"])):
+                        raise IntegrityMismatch("DERIVED_CLASSIFICATION_DOWNGRADE")
                 relations = [
                     {"schema_id": "nexus.object_relation", "schema_version": 1, "from_id": object_id, "relation_type": "derived_from", "to_id": source_id}
                     for source_id in source_ids

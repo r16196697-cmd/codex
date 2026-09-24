@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 import subprocess
 import sys
@@ -27,24 +28,38 @@ class ObjectStoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-step2-")
         self.root = Path(self.temp.name)
         self.store = ObjectStore(self.root / "data")
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('test_actor','HUMAN','ACTIVE')")
 
     def tearDown(self) -> None:
         self.store.close()
         self.temp.cleanup()
 
     def put(self, command_id: str, data: bytes) -> str:
+        object_id = "obj-" + command_id
+        classification_ref = self._classify(object_id)
         return self.store.put_object(
             command_id=command_id,
+            object_id=object_id,
             payload=data,
             object_type="artifact",
             created_by_run="run_test",
-            classification_assertion_ref="class_test",
+            classification_assertion_ref=classification_ref,
         )
+
+    def _classify(self, object_id: str, level: str = "PUBLIC", tags=()) -> str:
+        assertion_id = "class-" + object_id
+        with self.store._connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES(?,?,?,?,?,?,?,?)",
+                (assertion_id, "OBJECT", object_id, level, json.dumps(list(tags)), "1", "isolated fixture", "test_actor"),
+            )
+        return assertion_id
 
     def test_payload_is_content_addressed_verified_and_idempotent(self) -> None:
         payload = b"artifact bytes\x00\xff"
         object_id = self.put("cmd-put-1", payload)
-        self.assertEqual(self.store.put_object(command_id="cmd-put-1", payload=payload, object_type="artifact", created_by_run="run_test", classification_assertion_ref="class_test"), object_id)
+        self.assertEqual(self.store.put_object(command_id="cmd-put-1", object_id="obj-cmd-put-1", payload=payload, object_type="artifact", created_by_run="run_test", classification_assertion_ref="class-obj-cmd-put-1"), object_id)
         self.assertEqual(self.store.get_payload(object_id), payload)
         metadata = self.store.get_object_metadata(object_id)
         self.assertEqual(metadata["integrity_hash"], hashlib.sha256(payload).hexdigest())
@@ -116,7 +131,8 @@ class ObjectStoreTests(unittest.TestCase):
 
     def test_missing_lineage_source_is_rejected_before_payload_write(self) -> None:
         with self.assertRaises(ObjectNotFound):
-            self.store.put_object(command_id="cmd-orphan", payload=b"orphan payload", object_type="artifact", created_by_run="run_test", classification_assertion_ref="class_test", derived_from=("missing_object",))
+            classification_ref = self._classify("obj-cmd-orphan")
+            self.store.put_object(command_id="cmd-orphan", object_id="obj-cmd-orphan", payload=b"orphan payload", object_type="artifact", created_by_run="run_test", classification_assertion_ref=classification_ref, derived_from=("missing_object",))
         payload_hash = hashlib.sha256(b"orphan payload").hexdigest()
         orphan = self.root / "data" / "objects" / "sha256" / payload_hash[:2] / payload_hash
         self.assertFalse(orphan.exists())
@@ -131,6 +147,7 @@ class ObjectStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.put_object(
                 command_id="cmd-invalid-schema",
+                object_id="obj-cmd-invalid-schema",
                 payload=payload,
                 object_type="not-a-contract-object-type",
                 created_by_run="run_test",
@@ -152,9 +169,21 @@ class ObjectStoreTests(unittest.TestCase):
             status = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier_1'").fetchone()[0]
         self.assertEqual(status, "ACTIVE")
         with self.assertRaises(PurgeBarrierActive):
-            reopened.put_object(command_id="cmd-derived-blocked", payload=b"derived", object_type="artifact", created_by_run="run_test", classification_assertion_ref="class_test", derived_from=(protected,))
+            classification_ref = self._classify("obj-cmd-derived-blocked")
+            reopened.put_object(command_id="cmd-derived-blocked", object_id="obj-cmd-derived-blocked", payload=b"derived", object_type="artifact", created_by_run="run_test", classification_assertion_ref=classification_ref, derived_from=(protected,))
         with self.assertRaises(PurgeBarrierActive):
             reopened.add_relation(command_id="cmd-relation-blocked", from_id=protected, relation_type="supports", to_id=protected)
+
+    def test_derived_object_cannot_lower_source_classification(self) -> None:
+        source_id = "obj-source-secret"
+        source_classification = self._classify(source_id, "SECRET", ["NO_EXTERNAL_EGRESS"])
+        self.store.put_object(command_id="cmd-source-secret", object_id=source_id, payload=b"secret source", object_type="evidence", created_by_run="run_test", classification_assertion_ref=source_classification)
+        derived_id = "obj-derived-public"
+        derived_classification = self._classify(derived_id, "PUBLIC", [])
+        with self.assertRaises(IntegrityMismatch):
+            self.store.put_object(command_id="cmd-derived-public", object_id=derived_id, payload=b"derived", object_type="artifact", created_by_run="run_test", classification_assertion_ref=derived_classification, derived_from=(source_id,))
+        payload_hash = hashlib.sha256(b"derived").hexdigest()
+        self.assertFalse((self.root / "data" / "objects" / "sha256" / payload_hash[:2] / payload_hash).exists())
 
     def test_only_one_writer_process_can_open_a_data_root(self) -> None:
         code = """
@@ -173,10 +202,10 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-        self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64)])
+        self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64)])
 
     def test_changed_applied_migration_is_rejected(self) -> None:
         with self.store._connection() as conn:
