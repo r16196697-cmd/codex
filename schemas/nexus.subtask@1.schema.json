@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.subtask@1",
+  "title": "Nexus Subtask v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "subtask_id", "task_id", "input_object_refs", "input_schema_id", "output_schema_id", "dependency_ids", "quality_requirement", "risk_class", "validation_method", "budget_amount", "requested_executor", "required_modalities", "created_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.subtask"},
+    "schema_version": {"const": 1},
+    "subtask_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "input_object_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "input_schema_id": {"type": "string", "minLength": 1, "description": "Schema filename validating each referenced NexusObject envelope."},
+    "output_schema_id": {"type": "string", "minLength": 1},
+    "dependency_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "quality_requirement": {"enum": ["ROUTINE", "STANDARD", "CRITICAL"]},
+    "risk_class": {"enum": ["LOW", "STANDARD", "HIGH", "CRITICAL"]},
+    "validation_method": {"enum": ["SCHEMA", "TEST", "COMPILER", "CALCULATION", "AUTHORITATIVE_SOURCE", "HUMAN"]},
+    "budget_amount": {"type": "integer", "minimum": 0},
+    "requested_executor": {"enum": ["MODEL", "TOOL"]},
+    "tool_id": {"type": "string", "minLength": 1},
+    "required_modalities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "requires_structured_output": {"type": "boolean", "default": false},
+    "requires_tool_use": {"type": "boolean", "default": false},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {"if": {"properties": {"requested_executor": {"const": "TOOL"}}, "required": ["requested_executor"]}, "then": {"required": ["tool_id"]}},
+    {"if": {"properties": {"requested_executor": {"const": "TOOL"}}, "required": ["requested_executor"]}, "then": {"properties": {"requires_tool_use": {"const": false}}}}
+  ]
+}

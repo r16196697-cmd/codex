@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 from datetime import datetime, timezone
@@ -349,6 +350,8 @@ class TraceRuntime:
                 run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 if not run:
                     raise TraceAdmissionDenied("RUN_NOT_FOUND")
+                if next_state == "READY":
+                    self._validate_ready_manifest(conn, run)
                 chain = self.authority.validate_delegation_chain(run["grant_id"])
                 if run["status"] != expected_state or next_state not in _TRANSITIONS.get(expected_state, set()):
                     raise InvalidRunTransition("INVALID_RUN_TRANSITION")
@@ -363,6 +366,16 @@ class TraceRuntime:
                     current_task = conn.execute("SELECT status FROM tasks WHERE task_id=?", (run["task_id"],)).fetchone()
                     if current_task and current_task["status"] != task_state:
                         conn.execute("UPDATE tasks SET status=? WHERE task_id=?", (task_state, run["task_id"]))
+                elif run["subtask_id"]:
+                    subtask = conn.execute("SELECT status,scheduled_run_id FROM subtasks WHERE subtask_id=? AND task_id=?", (run["subtask_id"], run["task_id"])).fetchone()
+                    if subtask:
+                        if subtask["scheduled_run_id"] != run_id:
+                            raise InvalidRunTransition("SUBTASK_RUN_BINDING_MISMATCH")
+                        subtask_state = {"READY": "READY", "RUNNING": "RUNNING", "WAITING": "WAITING", "SUCCEEDED": "SUCCEEDED", "FAILED": "FAILED", "CANCELLED": "CANCELLED"}.get(next_state)
+                        if subtask_state:
+                            cursor = conn.execute("UPDATE subtasks SET status=? WHERE subtask_id=? AND status=?", (subtask_state, run["subtask_id"], subtask["status"]))
+                            if cursor.rowcount != 1:
+                                raise InvalidRunTransition("SUBTASK_STATE_RACE")
                 self._insert_event(conn, event)
                 result = {"run_id": run_id, "status": next_state, "event_id": event_id, "seq_no": seq_no}
                 self.store._record_command(conn, command_id, operation, request_hash, result)
@@ -378,6 +391,146 @@ class TraceRuntime:
         if not row:
             raise TraceAdmissionDenied("RUN_NOT_FOUND")
         return row["task_id"]
+
+    def _validate_ready_manifest(self, conn, run) -> None:
+        if not run["manifest_ref"]:
+            raise TraceAdmissionDenied("RUN_READY_REQUIRES_BOUND_MANIFEST")
+        row = conn.execute(
+            "SELECT e.object_type,e.created_by_run,e.payload_uri,e.integrity_hash,e.classification_assertion_ref,s.lifecycle,s.validity,s.payload_state "
+            "FROM object_envelopes e JOIN object_states s USING(object_id) WHERE e.object_id=?",
+            (run["manifest_ref"],),
+        ).fetchone()
+        if not row or row["object_type"] != "run_manifest" or row["created_by_run"] != run["run_id"] or row["lifecycle"] != "ACTIVE" or row["validity"] != "VALID" or row["payload_state"] != "AVAILABLE":
+            raise TraceAdmissionDenied("RUN_READY_MANIFEST_OBJECT_INVALID")
+        try:
+            manifest = json.loads(self.store.get_payload(run["manifest_ref"]).decode("utf-8"))
+            self.store._validate("nexus.run_manifest@1.schema.json", manifest)
+        except Exception as exc:
+            raise TraceAdmissionDenied("RUN_READY_MANIFEST_INTEGRITY_OR_SCHEMA_INVALID") from exc
+        boundary = json.loads(run["data_boundary_json"])
+        if manifest["executor_kind"] != run["executor_kind"] or manifest["authority_grant_ref"] != run["grant_id"] or manifest["data_boundary"] != boundary or manifest["classification_assertion_ref"] != run["classification_assertion_ref"] or manifest.get("budget_reservation_ref") != run["budget_reservation_ref"]:
+            raise TraceAdmissionDenied("RUN_READY_MANIFEST_BINDING_MISMATCH")
+        run_class = conn.execute("SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?", (run["classification_assertion_ref"],)).fetchone()
+        ranks = self.authority.policy["classification"]["sensitivity_rank"]
+        if not run_class:
+            raise TraceAdmissionDenied("RUN_READY_CLASSIFICATION_MISSING")
+        manifest_class = conn.execute("SELECT subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version FROM classification_assertions WHERE assertion_id=?", (row["classification_assertion_ref"],)).fetchone()
+        if not manifest_class or manifest_class["subject_type"] != "OBJECT" or manifest_class["subject_ref"] != run["manifest_ref"] or manifest_class["policy_version"] != self.authority.policy["policy_version"]:
+            raise TraceAdmissionDenied("RUN_READY_MANIFEST_CLASSIFICATION_INVALID")
+        if ranks.get(manifest_class["sensitivity_level"], -1) < ranks.get(run_class["sensitivity_level"], 99) or not set(json.loads(run_class["handling_tags_json"])).issubset(set(json.loads(manifest_class["handling_tags_json"]))):
+            raise TraceAdmissionDenied("RUN_READY_MANIFEST_CLASSIFICATION_DOWNGRADE")
+        checked_refs = set(manifest["input_object_refs"])
+        if run["executor_kind"] == "MODEL" and not set(manifest["context_object_refs"]).issubset(checked_refs):
+            raise TraceAdmissionDenied("MODEL_CONTEXT_NOT_BOUND_AS_MANIFEST_INPUT")
+        if run["executor_kind"] == "TOOL" and manifest["input_ref"] not in checked_refs:
+            raise TraceAdmissionDenied("TOOL_INPUT_NOT_BOUND_AS_MANIFEST_INPUT")
+        for object_id in checked_refs:
+            obj = conn.execute("SELECT e.classification_assertion_ref,s.lifecycle,s.validity,s.payload_state FROM object_envelopes e JOIN object_states s USING(object_id) WHERE e.object_id=?", (object_id,)).fetchone()
+            if not obj or obj["lifecycle"] != "ACTIVE" or obj["validity"] != "VALID" or obj["payload_state"] != "AVAILABLE":
+                raise TraceAdmissionDenied("RUN_READY_INPUT_OBJECT_UNAVAILABLE")
+            object_class = conn.execute("SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?", (obj["classification_assertion_ref"],)).fetchone()
+            if not object_class or object_class["sensitivity_level"] not in boundary["allowed_classifications"] or not set(json.loads(object_class["handling_tags_json"])).issubset(set(boundary["handling_tags"])):
+                raise TraceAdmissionDenied("RUN_READY_INPUT_OUTSIDE_DATA_BOUNDARY")
+            if ranks.get(object_class["sensitivity_level"], -1) > ranks.get(run_class["sensitivity_level"], -1) or not set(json.loads(object_class["handling_tags_json"])).issubset(set(json.loads(run_class["handling_tags_json"]))):
+                raise TraceAdmissionDenied("RUN_READY_CLASSIFICATION_NOT_INHERITED")
+            try:
+                self.store.get_payload(object_id)
+            except Exception as exc:
+                raise TraceAdmissionDenied("RUN_READY_INPUT_INTEGRITY_FAILURE") from exc
+        if run["parent_run_id"] is not None:
+            reservation = conn.execute("SELECT r.run_id,r.amount,r.model_calls,r.tool_calls,r.child_runs,r.state,a.task_id FROM budget_reservations r JOIN budget_accounts a USING(account_id) WHERE r.reservation_id=?", (run["budget_reservation_ref"],)).fetchone() if run["budget_reservation_ref"] else None
+            expected_model_calls = 1 if run["executor_kind"] == "MODEL" else 0
+            expected_tool_calls = 1 if run["executor_kind"] == "TOOL" else 0
+            if not reservation or reservation["run_id"] != run["run_id"] or reservation["task_id"] != run["task_id"] or reservation["state"] != "RESERVED" or reservation["model_calls"] != expected_model_calls or reservation["tool_calls"] != expected_tool_calls or reservation["child_runs"] != 1:
+                raise TraceAdmissionDenied("CHILD_RUN_BUDGET_RESERVATION_INVALID")
+            parent = conn.execute("SELECT grant_id FROM runs WHERE run_id=?", (run["parent_run_id"],)).fetchone()
+            if not parent:
+                raise TraceAdmissionDenied("CHILD_RUN_PARENT_MISSING")
+            child_chain = self.authority.validate_delegation_chain(run["grant_id"])
+            parent_chain = self.authority.validate_delegation_chain(parent["grant_id"])
+            if len(child_chain) <= len(parent_chain) or [grant["grant_id"] for grant in child_chain[:len(parent_chain)]] != [grant["grant_id"] for grant in parent_chain]:
+                raise TraceAdmissionDenied("CHILD_RUN_AUTHORITY_NOT_DESCENDED_FROM_PARENT")
+        if run["executor_kind"] == "ORCHESTRATOR":
+            if any(key in manifest for key in ("model_id", "provider", "model_class", "prompt_version")):
+                raise TraceAdmissionDenied("ROOT_RUN_MANIFEST_HAS_MODEL_FIELDS")
+            ref = conn.execute("SELECT current_object_id FROM logical_refs WHERE ref_id=? AND ref_type='task_contract'", (f"task-contract:{run['task_id']}",)).fetchone()
+            if not ref or ref["current_object_id"] != manifest["task_contract_ref"]:
+                raise TraceAdmissionDenied("ROOT_RUN_MANIFEST_TASK_CONTRACT_MISMATCH")
+            contract_meta = conn.execute("SELECT e.object_type,e.created_by_run,e.classification_assertion_ref,s.lifecycle,s.validity,s.payload_state FROM object_envelopes e JOIN object_states s USING(object_id) WHERE e.object_id=?", (manifest["task_contract_ref"],)).fetchone()
+            if not contract_meta or contract_meta["object_type"] != "task_contract" or contract_meta["created_by_run"] != run["run_id"] or contract_meta["lifecycle"] != "ACTIVE" or contract_meta["validity"] != "VALID" or contract_meta["payload_state"] != "AVAILABLE":
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_CONTRACT_OBJECT_INVALID")
+            contract_class = self._assert_classification(conn, contract_meta["classification_assertion_ref"], "OBJECT", manifest["task_contract_ref"], boundary)
+            chain_principals = {identity for grant in self.authority.validate_delegation_chain(run["grant_id"]) for identity in (grant["issued_by"], grant["granted_to"])}
+            if contract_class["actor_id"] not in chain_principals:
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_CONTRACT_CLASSIFICATION_ACTOR_OUTSIDE_AUTHORITY_CHAIN")
+            if ranks.get(contract_class["sensitivity_level"], -1) < ranks.get(run_class["sensitivity_level"], 99) or not set(json.loads(run_class["handling_tags_json"])).issubset(set(contract_class["handling_tags"])):
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_CONTRACT_CLASSIFICATION_DOWNGRADE")
+            try:
+                contract_doc = json.loads(self.store.get_payload(manifest["task_contract_ref"]).decode("utf-8"))
+                self.store._validate("nexus.task_contract@1.schema.json", contract_doc)
+            except Exception as exc:
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_CONTRACT_INTEGRITY_OR_SCHEMA_INVALID") from exc
+            if contract_doc["task_id"] != run["task_id"]:
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_CONTRACT_IDENTITY_MISMATCH")
+            account = conn.execute("SELECT task_id FROM budget_accounts WHERE account_id=?", (contract_doc["budget_account_ref"],)).fetchone()
+            if not account or account["task_id"] != run["task_id"]:
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_BUDGET_ACCOUNT_MISMATCH")
+            if manifest["input_object_refs"] != contract_doc.get("input_object_refs", []):
+                raise TraceAdmissionDenied("ROOT_RUN_TASK_INPUT_REFS_MISMATCH")
+            dag = conn.execute("SELECT root_run_id,dag_version,graph_hash,node_count FROM task_dags WHERE task_id=?", (run["task_id"],)).fetchone()
+            dag_nodes = [json.loads(item[0]) for item in conn.execute("SELECT node_json FROM subtasks WHERE task_id=? ORDER BY node_index", (run["task_id"],)).fetchall()]
+            dag_edges = {(item[0], item[1]) for item in conn.execute("SELECT dependency_id,dependent_id FROM subtask_edges WHERE task_id=?", (run["task_id"],)).fetchall()}
+            graph_hash = hashlib.sha256(json.dumps(dag_nodes, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+            expected_edges = {(dependency, node["subtask_id"]) for node in dag_nodes for dependency in node["dependency_ids"]}
+            if not dag or dag["root_run_id"] != run["run_id"] or dag["dag_version"] != manifest["dag_version"] or manifest["scheduler_version"] != "1" or dag["node_count"] != len(dag_nodes) or dag["graph_hash"] != graph_hash or dag_edges != expected_edges:
+                raise TraceAdmissionDenied("ROOT_RUN_DAG_OR_SCHEDULER_VERSION_MISMATCH")
+        elif run["executor_kind"] == "MODEL":
+            route = conn.execute("SELECT decision_json,subtask_id FROM route_decisions WHERE decision_object_id=?", (manifest["route_decision_ref"],)).fetchone()
+            if route:
+                decision = json.loads(route["decision_json"])
+                self.store._validate("nexus.route_decision@1.schema.json", decision)
+                route_ok = run["subtask_id"] == route["subtask_id"] and decision["run_or_subtask_id"] == run["subtask_id"] and decision["selected_model_id"] == manifest["model_id"] and decision["selected_model_class"] == manifest["model_class"]
+                profile_version = decision["selected_model_profile_version"]
+            else:
+                route_ok = False
+                profile_version = None
+            profile = conn.execute("SELECT profile_json FROM model_profiles WHERE model_id=? AND version=?", (manifest["model_id"], profile_version)).fetchone()
+            if not route_ok or not profile:
+                raise TraceAdmissionDenied("MODEL_RUN_ROUTE_OR_PROFILE_UNAVAILABLE")
+            route_object = conn.execute("SELECT e.object_type,e.classification_assertion_ref,s.lifecycle,s.validity,s.payload_state FROM object_envelopes e JOIN object_states s USING(object_id) WHERE e.object_id=?", (manifest["route_decision_ref"],)).fetchone()
+            if not route_object or route_object["object_type"] != "artifact" or route_object["lifecycle"] != "ACTIVE" or route_object["validity"] != "VALID" or route_object["payload_state"] != "AVAILABLE":
+                raise TraceAdmissionDenied("MODEL_ROUTE_OBJECT_UNAVAILABLE")
+            route_class = conn.execute("SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?", (route_object["classification_assertion_ref"],)).fetchone()
+            if not route_class or route_class["sensitivity_level"] not in boundary["allowed_classifications"] or ranks.get(route_class["sensitivity_level"], -1) > ranks.get(run_class["sensitivity_level"], -1) or not set(json.loads(route_class["handling_tags_json"])).issubset(set(json.loads(run_class["handling_tags_json"]))):
+                raise TraceAdmissionDenied("MODEL_ROUTE_CLASSIFICATION_NOT_INHERITED")
+            try:
+                route_payload = json.loads(self.store.get_payload(manifest["route_decision_ref"]).decode("utf-8"))
+                self.store._validate("nexus.route_decision@1.schema.json", route_payload)
+                if route_payload != decision:
+                    raise TraceAdmissionDenied("MODEL_ROUTE_PAYLOAD_PROJECTION_MISMATCH")
+            except TraceAdmissionDenied:
+                raise
+            except Exception as exc:
+                raise TraceAdmissionDenied("MODEL_ROUTE_OBJECT_INTEGRITY_FAILURE") from exc
+            profile_doc = json.loads(profile["profile_json"])
+            if not profile_doc["available"] or profile_doc["model_adapter_version"] != manifest["model_adapter_version"] or profile_doc["provider"] != manifest["provider"] or profile_doc["model_class"] != manifest["model_class"]:
+                raise TraceAdmissionDenied("MODEL_RUN_PROFILE_BINDING_MISMATCH")
+            reservation = conn.execute("SELECT amount FROM budget_reservations WHERE reservation_id=?", (run["budget_reservation_ref"],)).fetchone()
+            if not reservation or reservation["amount"] != profile_doc["cost_profile"]["estimated_cost"]:
+                raise TraceAdmissionDenied("MODEL_RUN_BUDGET_ESTIMATE_MISMATCH")
+        elif run["executor_kind"] == "TOOL":
+            descriptor = conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (manifest["tool_id"], manifest["tool_descriptor_version"])).fetchone()
+            if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED" or json.loads(descriptor["descriptor_json"])["effect_class"] != "READ_ONLY":
+                raise TraceAdmissionDenied("TOOL_RUN_DESCRIPTOR_UNAVAILABLE")
+            descriptor_doc = json.loads(descriptor["descriptor_json"])
+            effective = self.authority.compute_effective_authority(run["grant_id"])
+            if not set(descriptor_doc["required_authority"]).issubset(effective["action_scope"]):
+                raise TraceAdmissionDenied("TOOL_RUN_REQUIRED_AUTHORITY_NOT_GRANTED")
+            input_class = conn.execute("SELECT c.sensitivity_level FROM object_envelopes e JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref WHERE e.object_id=?", (manifest["input_ref"],)).fetchone()
+            if not input_class or input_class["sensitivity_level"] not in descriptor_doc["required_classifications"]:
+                raise TraceAdmissionDenied("TOOL_RUN_INPUT_CLASSIFICATION_NOT_DECLARED")
+        else:
+            raise TraceAdmissionDenied("RUN_EXECUTOR_KIND_INVALID")
 
     def replay_run(self, run_id: str) -> dict[str, Any]:
         with self.store._connection() as conn:

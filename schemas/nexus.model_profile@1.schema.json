@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.model_profile@1",
+  "title": "Nexus ModelProfile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "model_id", "provider", "model_class", "modalities", "context_limit", "structured_output_support", "tool_use_support", "local_or_cloud", "allowed_classifications", "provider_policy_ref", "cost_profile", "latency_profile", "local_eval_status", "version", "model_adapter_version", "available"],
+  "properties": {
+    "schema_id": {"const": "nexus.model_profile"},
+    "schema_version": {"const": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "provider": {"type": "string", "minLength": 1},
+    "model_class": {"enum": ["E0", "E1", "E2", "specialist", "local_private"]},
+    "modalities": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "context_limit": {"type": "integer", "minimum": 1},
+    "structured_output_support": {"type": "boolean"},
+    "tool_use_support": {"type": "boolean"},
+    "local_or_cloud": {"enum": ["LOCAL", "CLOUD"]},
+    "allowed_classifications": {"type": "array", "items": {"enum": ["PUBLIC", "PERSONAL", "PROJECT_PRIVATE", "CONFIDENTIAL", "SECRET"]}, "uniqueItems": true},
+    "provider_policy_ref": {"type": "string", "minLength": 1},
+    "cost_profile": {"type": "object", "additionalProperties": false, "required": ["unit", "estimated_cost"], "properties": {"unit": {"type": "string", "minLength": 1}, "estimated_cost": {"type": "integer", "minimum": 0}}},
+    "latency_profile": {"type": "object", "additionalProperties": false, "required": ["estimated_ms"], "properties": {"estimated_ms": {"type": "integer", "minimum": 0}}},
+    "local_eval_status": {"enum": ["NOT_EVALUATED", "PASSED", "FAILED"]},
+    "version": {"type": "string", "minLength": 1},
+    "model_adapter_version": {"type": "string", "minLength": 1},
+    "available": {"type": "boolean"}
+  }
+}

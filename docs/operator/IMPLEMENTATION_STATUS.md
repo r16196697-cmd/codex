@@ -1,19 +1,19 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 4 — PASS
+Current implementation step: Step 6 — NOT_STARTED
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `59f077179c5f895c8dc3e28b5ac292ce3eeb775b` / `nexus-v2-runtime`
-Schema version: `nexus.* @1`; SQLite migration version `3` (isolated tests)
+Git commit / branch: `1338b0080b55f0faa2183c5828e91d526c8bf8fb` / `nexus-v2-runtime`
+Schema version: `nexus.* @1`; SQLite migration version `4` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
-Database version: `3` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `4` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
 Step 2: PASS
 Step 3: PASS
 Step 4: PASS
-Step 5: NOT_STARTED  
+Step 5: PASS
 Step 6: NOT_STARTED  
 Step 7: NOT_STARTED  
 Step 8: NOT_STARTED  
@@ -33,12 +33,16 @@ Tests passed:
 - Step 4: 38 contract/integration tests pass. Task/Root Run creation and state transitions commit atomically with append-only Trace sequence and CommandLedger; replay after reopen matches Run and Task projections; retry after simulated response loss returns the original event result; a forced Trace insert failure rolls back state and ledger together.
 - Step 4 security/admission: only allowlisted event types and event-specific scalar metadata are admitted; secret-pattern, payload-like key, nested metadata, forged transition and wrong-actor attempts leave no Trace rows; high-classification objects cannot be downgraded and Trace contains refs rather than payload bytes.
 - Step 4 static checks: all 25 JSON Schemas and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass.
+- Step 5: 41 contract/integration tests pass, including deterministic DAG routing/scheduling for ORCHESTRATOR, MODEL and TOOL identities; E0/E1/E2 quality floors, locality/provider/classification/context/budget hard gates; exact child Manifest binding before READY; TaskContract/LogicalRef and schema-bound inputs; authority-descended Run grants; atomic budget reservations; scheduler command replay; dependency gating; Trace-backed Subtask replay; and rejection/no persistence of an unreviewed external-write descriptor.
+- Step 5 static checks: all 30 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass. Targeted Step 5 + Trace suite: 9 passed.
+- Environment note corrected to match the observed source layout (`kernel/`, `adapters/`, `schemas/`, `migrations/`, `tests/`); no source was moved.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
 - Step 2 first integration runs exposed a hash-profile FK mismatch, open test handles, migration trigger parsing, and a child-process test harness issue; these were corrected. An early Step 2 test also expected an orphan payload for a missing lineage source; after enforcing validation before payload write, the test was updated to assert no payload or metadata is persisted.
 - Step 3 first runs exposed a policy-schema directory assumption and a stale test expectation for a single migration; both were corrected. A classification egress test initially supplied an assertion ID rather than an object ID; the API was tightened to derive classification only from persisted object envelopes. A final immutable-ledger test initially queried the losing concurrent reservation ID; it now selects the actual winning ledger command. The final 32-test suite passes.
 - Step 4 initial tests caught event creation ordering, schema-version expectation, high-classification fixture wiring, and the need to rollback Run state if Trace append fails; fixes are covered by the final 38-test suite.
+- Step 5 development tests exposed composite DAG-edge identity, scheduling preflight ordering, child Manifest/schema constraints, and projection recovery details; these were corrected and the final 41-test suite passes.
 
 Open blockers:
 - Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
@@ -47,9 +51,9 @@ Open blockers:
 Known UNKNOWN Effects: None; Nexus runtime/data not initialized.  
 Pending Purge: None.  
 Pending migration: None.  
-Rollback point: clean base commit `ac61316178d7e145ed420de2fbb9ee0273067263`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.  
-Last verified state: 2026-09-24 Step 4 suite (38 tests); branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
-Next allowed action: checkpoint Step 4, then begin Step 5 only after using its Step Card below.
+Rollback point: Step 4 checkpoint `1338b0080b55f0faa2183c5828e91d526c8bf8fb`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Last verified state: 2026-09-24 Step 5 full suite (41 tests) and static checks; Step 5 checkpoint commit is being recorded; branch `nexus-v2-runtime`; no persistent Nexus runtime data initialized.
+Next allowed action: create the Step 5 checkpoint, then begin only Step 6 Effect Gate after recording its Step Card and rollback point.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -247,7 +251,7 @@ Rollback point:
 Next:
 STEP 5 — Deterministic Runtime
 
-## IMPLEMENTATION STEP 5 — NOT_STARTED
+## IMPLEMENTATION STEP 5 — PASS
 
 Goal:
 Build the deterministic Task/Root scheduler and acyclic subtask DAG, executor-specific RunManifest binding, and simple fail-closed node-level routing without executing any real Model or Tool.
@@ -256,7 +260,7 @@ Inputs:
 Committed Steps 1–4 schemas, object/classification store, authority/budget services, Task/Run/Trace replay, and disposable fixtures.
 
 Allowed files:
-`kernel/runtime/`, a new `migrations/0004_runtime.sql`, new Step 5 schemas in `schemas/`, `adapters/storage/sqlite_store.py` only for invariant enforcement, `tests/contract/`, `tests/integration/`, and this status file.
+`kernel/runtime/`, a new `migrations/0004_runtime.sql`, new Step 5 schemas in `schemas/`, `schemas/nexus.task_contract@1.schema.json` for backward-compatible TaskContract input-object refs only, `kernel/run/service.py` for manifest-before-READY and replay-linked Subtask state invariants, `adapters/storage/sqlite_store.py` only for invariant enforcement, `tests/contract/`, `tests/integration/`, `docs/operator/environment.md` for correcting the audited source layout, and this status file.
 
 Forbidden files:
 Migrations `0001`–`0003`; global or business-project `AGENTS.md`; global Skills/config; user databases; secrets; real Trace/payload; real model/tool/search adapters; network egress; and changes to the five Foundation Contract semantics or `executor_kind` values.
@@ -274,10 +278,45 @@ FAIL handling:
 Fix only Step 5 runtime/schema/tests; do not connect real adapters before Step 4 replay and fake execution pass.
 
 Rollback point:
-Step 4 checkpoint to be committed before Step 5 modifications; Step 0 snapshot recorded above.
+Step 4 checkpoint `1338b0080b55f0faa2183c5828e91d526c8bf8fb`; Step 0 snapshot recorded above.
 
 Do NOT:
 - Implement Learned Router, model SDK, real tool, SearchProvider or external writes.
 - Let Root Run execute inference or tool code.
 - Replace Task budget with recursive parent/child accounts.
 - Bind manifests by mutating their payloads.
+
+## STEP 5 — IMPLEMENTATION REPORT
+
+Implemented:
+- TaskContract NexusObject and Task-scoped LogicalRef CAS; validation of input-object integrity/classification and contract-to-Task/Budget identity.
+- Immutable, cycle-free, indexed Task DAG with schema-bound typed inputs/outputs, dependency edge integrity, declared validation method, executor choice, quality/risk constraints and per-node budget bounds.
+- ORCHESTRATOR Root Run owns DAG/scheduling; MODEL/TOOL Runs are descendants with executor-specific immutable manifests, budget reservations and authority chains. Run cannot enter READY without a valid manifest and all bound objects.
+- Deterministic node-level E0/E1/E2 routing with hard provider/locality/network/modality/privacy/context/output-mode/budget constraints, persisted RouteDecision and no confidence-only downgrade. Only reviewed READ_ONLY ToolDescriptors are admitted in Step 5.
+- Idempotent schedule command/recovery and dependency gating; Run transitions and Subtask projections update transactionally and can be checked by Trace replay.
+- Corrected the Step 0 environment note about source placement without moving any files.
+
+Tests executed:
+- `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 41 passed.
+- `.venv\Scripts\python.exe -m unittest tests.integration.test_deterministic_runtime tests.integration.test_trace_state -v` — 9 passed.
+- `.venv\Scripts\python.exe -m pip check` — no broken requirements.
+- `.venv\Scripts\python.exe -m compileall -q adapters kernel tests` — passed.
+- All 29 schema files plus the policy schema passed Draft 2020-12 validation; default policy validates.
+- `git diff --check` — passed (only Git LF→CRLF informational warnings); secret-pattern scan — no matches.
+
+Evidence:
+- All tests use isolated temporary SQLite databases and synthetic identities/objects. Migration v4 is exercised only in tests; no persistent runtime database, model/provider/tool invocation, network call, external effect, or secret access occurred.
+- An external-write descriptor was rejected before registration; query confirmed no row was persisted.
+- No fake executor output was generated: this step schedules/records deterministic Run manifests only. Actual fake execution/output handling belongs to later governed runtime work and is not claimed here.
+
+Files changed:
+- `kernel/runtime/`, Step 5 migration and schemas, `kernel/run/service.py`, backward-compatible TaskContract schema additions, integration fixtures/tests, `docs/operator/environment.md`, and this status file.
+
+Known limitations:
+- No execution adapter is invoked. No real model, tool, SearchProvider, or external write path is enabled. Credential Broker/key-store decision remains a required precondition before Step 8.
+
+Rollback point:
+- Step 4 commit `1338b0080b55f0faa2183c5828e91d526c8bf8fb`; Step 0 snapshot recorded above. The Step 5 checkpoint commit is the next repository operation.
+
+Next:
+STEP 6 — Effect Gate

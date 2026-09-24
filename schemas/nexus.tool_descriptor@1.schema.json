@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.tool_descriptor@1",
+  "title": "Nexus ToolDescriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "tool_id", "version", "input_schema_id", "output_schema_id", "effect_class", "required_authority", "required_classifications", "idempotency_support", "reconciliation_capability", "compensation_capability", "network_egress", "risk_tags", "review_status"],
+  "properties": {
+    "schema_id": {"const": "nexus.tool_descriptor"},
+    "schema_version": {"const": 1},
+    "tool_id": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "input_schema_id": {"type": "string", "minLength": 1},
+    "output_schema_id": {"type": "string", "minLength": 1},
+    "effect_class": {"enum": ["READ_ONLY", "LOCAL_MUTATION", "EXTERNAL_REVERSIBLE", "EXTERNAL_IRREVERSIBLE"]},
+    "required_authority": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "required_classifications": {"type": "array", "items": {"enum": ["PUBLIC", "PERSONAL", "PROJECT_PRIVATE", "CONFIDENTIAL", "SECRET"]}, "uniqueItems": true},
+    "idempotency_support": {"type": "boolean"},
+    "reconciliation_capability": {"type": "string", "minLength": 1},
+    "compensation_capability": {"type": "string", "minLength": 1},
+    "network_egress": {"type": "boolean"},
+    "risk_tags": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "review_status": {"enum": ["UNREVIEWED", "APPROVED", "REJECTED"]}
+  }
+}

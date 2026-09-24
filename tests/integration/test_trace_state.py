@@ -7,7 +7,9 @@ from pathlib import Path
 
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
+from kernel.budget import BudgetService
 from kernel.run import InvalidRunTransition, TraceAdmissionDenied, TraceRuntime
+from kernel.runtime import DeterministicRuntime
 
 
 class TraceStateTests(unittest.TestCase):
@@ -19,12 +21,15 @@ class TraceStateTests(unittest.TestCase):
         self.policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
         self.policy["trust_anchors"] = ["human-root"]
         self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
         self.runtime = TraceRuntime(self.store, self.authority)
+        self.deterministic = DeterministicRuntime(self.store, self.authority, self.budget, self.runtime)
         self._principal("human-root", "HUMAN")
         self._principal("agent", "SERVICE")
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-1", "principal_id": "human-root", "policy_ref": "1"}, "cmd-anchor")
         self._grant()
         self.runtime.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "status": "CREATED", "created_at": self._now(), "command_id": "cmd-task"})
+        self.budget.create_account(command_id="cmd-budget-account", account_id="budget-task-1", task_id="task-1", amount_limit=100, unit="credits", model_call_limit=10, tool_call_limit=10, child_run_limit=10)
         self._classify("class-run-1", "RUN", "run-1")
         self._classify("class-event-created", "TRACE_EVENT", "evt-cmd-create-run")
         self.run_event_class_ref = "class-event-created"
@@ -39,7 +44,7 @@ class TraceStateTests(unittest.TestCase):
 
     def _grant(self):
         now = datetime.now(timezone.utc)
-        grant = {"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": ["run-1"], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now.replace(year=now.year + 1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}
+        grant = {"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": ["run-1"], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE", "OBJECT_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now.replace(year=now.year + 1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}
         self.authority.create_grant(grant, "cmd-grant")
 
     def _classify(self, assertion_id, subject_type, subject_ref, level="PUBLIC", tags=(), actor="agent"):
@@ -55,8 +60,20 @@ class TraceStateTests(unittest.TestCase):
     def _create_run(self):
         return self.runtime.create_run(self.run, command_id="cmd-create-run", event_classification_assertion_ref=self.run_event_class_ref)
 
+    def _prepare_manifest(self):
+        contract_id = "contract-task-1"
+        self._classify("class-contract-task-1", "OBJECT", contract_id)
+        contract = {"schema_id": "nexus.task_contract", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "goal": "test goal", "constraints": [], "success_criteria": ["pass"], "risk_class": "STANDARD", "budget_account_ref": "budget-task-1", "routing_constraints": {"allowed_providers": [], "forbidden_providers": [], "locality": "ANY", "network_required": False, "modalities": ["text"]}, "routing_preferences": {"optimize_for": "BALANCED"}, "created_at": self._now()}
+        self.deterministic.bind_task_contract(command_id="cmd-bind-contract", root_run_id="run-1", contract_object_id=contract_id, classification_assertion_ref="class-contract-task-1", contract=contract)
+        self.deterministic.create_dag(command_id="cmd-empty-dag", task_id="task-1", root_run_id="run-1", nodes=[])
+        manifest_id = "manifest-run-1"
+        self._classify("class-manifest-run-1", "OBJECT", manifest_id)
+        manifest = {"schema_id": "nexus.run_manifest", "schema_version": 1, "executor_kind": "ORCHESTRATOR", "runtime_version": "0.1", "policy_version": "1", "schema_versions": {"nexus.run_manifest": 1}, "input_object_refs": [], "authority_grant_ref": "grant-root", "data_boundary": self.run["data_boundary"], "classification_assertion_ref": self.run["classification_assertion_ref"], "task_contract_ref": contract_id, "dag_version": "1", "scheduler_version": "1"}
+        self.deterministic.bind_manifest(command_id="cmd-bind-manifest", run_id="run-1", manifest_object_id=manifest_id, manifest_classification_assertion_ref="class-manifest-run-1", manifest=manifest)
+
     def test_transition_retry_returns_recorded_result_before_stale_state_check(self):
         self.assertEqual(self._create_run()["seq_no"], 1)
+        self._prepare_manifest()
         ready_class = self._event_classification("cmd-ready")
         result = self.runtime.transition_run(command_id="cmd-ready", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_class)
         self.assertEqual(result["seq_no"], 2)
@@ -76,8 +93,17 @@ class TraceStateTests(unittest.TestCase):
         self.runtime.transition_run(command_id="cmd-waiting", run_id="run-1", expected_state="RUNNING", next_state="WAITING", classification_assertion_ref=paused_class)
         self.assertEqual(self.runtime.replay_task("task-1"), {"task_id": "task-1", "status": "WAITING", "root_run_id": "run-1"})
 
+    def test_run_cannot_enter_ready_without_bound_manifest(self):
+        self._create_run()
+        classification = self._event_classification("cmd-ready-without-manifest")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RUN_READY_REQUIRES_BOUND_MANIFEST"):
+            self.runtime.transition_run(command_id="cmd-ready-without-manifest", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=classification)
+        self.assertEqual(self.runtime.replay_run("run-1")["status"], "CREATED")
+        self.assertEqual(self._event_count(), 1)
+
     def test_state_and_trace_rollback_together_when_event_insert_fails(self):
         self._create_run()
+        self._prepare_manifest()
         assertion = self._event_classification("cmd-fail-mid-commit")
         with self.store._connection() as conn:
             conn.execute("CREATE TRIGGER test_fail_trace_insert BEFORE INSERT ON trace_events WHEN NEW.event_type='nexus.run.transitioned' BEGIN SELECT RAISE(ABORT,'SIMULATED_CRASH'); END")
@@ -144,6 +170,7 @@ class TraceStateTests(unittest.TestCase):
 
     def test_reopen_replay_reconstructs_run_projection(self):
         self._create_run()
+        self._prepare_manifest()
         ready_class = self._event_classification("cmd-ready")
         self.runtime.transition_run(command_id="cmd-ready", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_class)
         self.store.close()
@@ -151,6 +178,8 @@ class TraceStateTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.runtime = TraceRuntime(self.store, self.authority)
+        self.budget = BudgetService(self.store)
+        self.deterministic = DeterministicRuntime(self.store, self.authority, self.budget, self.runtime)
         self.assertEqual(self.runtime.replay_run("run-1")["status"], "READY")
 
     def _event_count(self):

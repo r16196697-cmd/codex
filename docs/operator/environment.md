@@ -26,7 +26,7 @@ Python 已安装模块抽查：`PyYAML` 可导入；`pydantic`、`cryptography` 
 - 初始工作区干净，仅有 `README.md` 与 `.gitattributes`；没有项目 `AGENTS.md`、Nexus 源码、同名数据库或忽略规则。
 - 已按部署手册创建分支 `nexus-v2-runtime`；当前仍以同一 HEAD 为回滚基线，未改动 `main`。
 - `.git` 元数据受到沙箱只读拒绝规则保护。创建分支经受控审批成功；后续提交也需要相同受控写入流程。
-- 当前计划把源码放在仓库 `nexus/`；生产数据必须单独 gitignore，真实凭证/Trace/payload 不提交。
+- Nexus v2 源码当前位于仓库的 `kernel/`、`adapters/`、`schemas/`、`migrations/` 和 `tests/`；生产数据必须单独 gitignore，真实凭证/Trace/payload 不提交。
 
 ## 既有 Codex 系统（只读审计）
 
@@ -53,4 +53,3 @@ Python 已安装模块抽查：`PyYAML` 可导入；`pydantic`、`cryptography` 
 1. 系统发行版名称和 Windows Credential Broker 的使用状态因权限/未读取凭证值而未知；不得以推测填补。
 2. 系统与捆绑运行时无 JSON Schema 验证库。Step 1 必须使用成熟验证器；若无法通过可审计依赖安装获得它，Step 1 标记 BLOCKED，不得自造子集验证器。
 3. 当前用户级 `.codex` 目录为只读沙箱范围；本任务仅使用已审批的快照恢复点，不修改旧系统。
-
