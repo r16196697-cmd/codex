@@ -63,6 +63,7 @@ class OperatorClientTests(unittest.TestCase):
             authority.register_principal({"schema_id":"nexus.principal","schema_version":1,"principal_id":"operator","principal_type":"SERVICE","status":"ACTIVE"}, "cli-operator")
             authority.register_trust_anchor({"schema_id":"nexus.trust_anchor","schema_version":1,"anchor_id":"cli-anchor","principal_id":"human-root","policy_ref":"1"}, "cli-anchor")
             authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"cli-grant","issued_by":"human-root","granted_to":"operator","task_scope":["cli-task"],"resource_scope":["runtime-mode:instance","cli-run","evt-cli-run-create","evt-cli-mode-safe"],"action_scope":["RUN_CREATE","RUNTIME_CONFIGURE","TRACE_APPEND","CLASSIFY"],"audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "cli-grant-create")
+            authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"cli-inspect","issued_by":"human-root","granted_to":"operator","task_scope":["cli-task"],"resource_scope":["task:cli-task"],"action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "cli-inspect-create")
             trace = TraceRuntime(store, authority)
             trace.create_task({"schema_id":"nexus.task","schema_version":1,"task_id":"cli-task","requester_id":"human-root","status":"CREATED","created_at":now.isoformat(),"command_id":"cli-task-create"})
             for assertion_id, subject_type, subject_ref in (("cli-run-class", "RUN", "cli-run"), ("cli-run-event-class", "TRACE_EVENT", "evt-cli-run-create")):
@@ -77,6 +78,14 @@ class OperatorClientTests(unittest.TestCase):
             self.assertEqual(exit_code, 0, output.getvalue())
             result = json.loads(output.getvalue())
             self.assertEqual(result["trace_event_id"], "evt-cli-mode-safe")
+            inspect_output = io.StringIO()
+            with contextlib.redirect_stdout(inspect_output):
+                inspect_exit = main(["--data-root", str(root), "--policy", str(policy_path), "inspect", "task", "cli-task", "--grant-id", "cli-inspect"])
+            self.assertEqual(inspect_exit, 0, inspect_output.getvalue())
+            task_projection = json.loads(inspect_output.getvalue())
+            self.assertEqual(task_projection["task"]["task_id"], "cli-task")
+            self.assertEqual(task_projection["runs"][0]["executor_kind"], "ORCHESTRATOR")
+            self.assertNotIn("payload", task_projection["runs"][0])
             reopened = ObjectStore(root, policy=policy)
             self.assertEqual(reopened._current_runtime_mode(), "SAFE")
             with reopened._connection() as conn:
