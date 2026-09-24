@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.purge_record@1",
+  "title": "Nexus PurgeRecord v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "record_id", "plan_id", "plan_hash", "barrier_id", "status", "unresolved_items", "started_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.purge_record"}, "schema_version": {"const": 1}, "record_id": {"type": "string", "minLength": 1},
+    "plan_id": {"type": "string", "minLength": 1}, "plan_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "barrier_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["PLANNED", "RUNNING", "COMPLETED", "PARTIAL", "FAILED"]},
+    "unresolved_items": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "started_at": {"type": "string", "format": "date-time"}, "completed_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {"if": {"properties": {"status": {"const": "COMPLETED"}}, "required": ["status"]}, "then": {"required": ["completed_at"]}},
+    {"if": {"properties": {"status": {"const": "PARTIAL"}}, "required": ["status"]}, "then": {"properties": {"unresolved_items": {"minItems": 1}}}}
+  ]
+}

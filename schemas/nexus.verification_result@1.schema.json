@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.verification_result@1",
+  "title": "Nexus VerificationResult v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "verification_id", "target_ref", "verdict", "verifier_kind", "evidence_used", "missing_evidence", "conflicts", "independence", "rationale_summary", "run_id", "policy_version"],
+  "properties": {
+    "schema_id": {"const": "nexus.verification_result"}, "schema_version": {"const": 1},
+    "verification_id": {"type": "string", "minLength": 1}, "target_ref": {"type": "string", "minLength": 1},
+    "verdict": {"enum": ["PASS", "FAIL", "INCONCLUSIVE"]}, "verifier_kind": {"enum": ["T1_DETERMINISTIC", "T2_AUTHORITATIVE", "T3_HUMAN_OR_DOMAIN", "T4_EVIDENCE_CONSTRAINED_MODEL", "T5_SELF_CHECK"]},
+    "evidence_used": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "missing_evidence": {"type": "array", "items": {"type": "string", "maxLength": 256}},
+    "conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "independence": {"type": "object", "additionalProperties": false, "required": ["generator_independence", "evidence_independence", "method_independence"], "properties": {"generator_independence": {"enum": ["INDEPENDENT", "DEPENDENT", "UNKNOWN", "NOT_APPLICABLE"]}, "evidence_independence": {"enum": ["INDEPENDENT", "DEPENDENT", "UNKNOWN", "NOT_APPLICABLE"]}, "method_independence": {"enum": ["INDEPENDENT", "DEPENDENT", "UNKNOWN", "NOT_APPLICABLE"]}}},
+    "rationale_summary": {"type": "string", "maxLength": 1024}, "run_id": {"type": "string", "minLength": 1}, "policy_version": {"type": "string", "minLength": 1},
+    "attester_principal_id": {"type": "string", "minLength": 1}, "approval_ref": {"type": "string", "minLength": 1}
+  }
+}

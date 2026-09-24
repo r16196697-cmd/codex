@@ -1,12 +1,12 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 6 — PASS
+Current implementation step: Step 7 — PASS
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `ac208477d70d623ebb7deb44b0dd55dc2` / `nexus-v2-runtime`
-Schema version: `nexus.* @1`; SQLite migration version `5` (isolated tests)
+Git commit / branch: `0fbc795943c166894d31ca8beca9456f05028729` / `nexus-v2-runtime`
+Schema version: `nexus.* @1`; SQLite migration version `6` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
-Database version: `5` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `6` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
@@ -15,7 +15,7 @@ Step 3: PASS
 Step 4: PASS
 Step 5: PASS
 Step 6: PASS
-Step 7: NOT_STARTED  
+Step 7: PASS
 Step 8: NOT_STARTED  
 Step 9: NOT_STARTED  
 Step 10: NOT_STARTED
@@ -38,6 +38,9 @@ Tests passed:
 - Environment note corrected to match the observed source layout (`kernel/`, `adapters/`, `schemas/`, `migrations/`, `tests/`); no source was moved.
 - Step 6: 43 contract/integration tests pass. Fake dispatcher response loss becomes UNKNOWN, same-command retry does not redispatch, the configured authoritative fake channel resolves using evidence, and budget settlement is bounded/idempotent. A separate compensation Effect and COMPENSATES relation commits without changing the original COMMITTED fact. Payload-hash-mismatched ApprovalDecision and revoked parent Grant both prevent dispatch.
 - Step 6 static checks: all 30 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check`, and secret-pattern scan pass.
+- Step 7: 47 contract/integration tests pass. T1 SHA-256 integrity results are not treated as semantic truth and remain quarantined; T3 human/domain verification requires an ApprovalDecision bound to exact target/evidence integrity hashes. Only independent evidence/method plus approval enters Admitted Memory. Raw History and Admitted Memory use separate FTS5 indexes; SQLite backing rows keep refs/classification/expiry only, while indexed result text is loaded from the immutable filesystem object. Run action/resource, data classification/handling tags, retention expiry, and purge barriers gate search and indexing.
+- Step 7 Purge: plan hash binds a persisted plan and ApprovalDecision; external append-only hash-chained journal is outside the data root. RunManifest input refs are persisted as immutable input bindings and derived-from lineage; new bindings to protected inputs fail, and a previously-created but unstarted Run cannot enter READY while its input is barriered or PURGED. An active Run (even if a quiescence callback falsely reports success) or UNKNOWN Effect leaves Purge PARTIAL and barrier active. A positive barrier/quiescence/purge path deletes the payload, redacts envelope/hash/path and removes both index entries. Old-backup restore first reinstalls the barrier, replays all independent ledger events, deletes restored payloads, clears/rebuilds the contentless FTS indexes, and does not expose purged content. Restoring a PARTIAL journal state retains the barrier and does not falsely delete payloads.
+- Step 7 static checks: all 33 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check` pass. Test DBs are disposable; no persistent database, external provider, real history, secret, or network was used.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
@@ -46,17 +49,18 @@ Tests failed:
 - Step 4 initial tests caught event creation ordering, schema-version expectation, high-classification fixture wiring, and the need to rollback Run state if Trace append fails; fixes are covered by the final 38-test suite.
 - Step 5 development tests exposed composite DAG-edge identity, scheduling preflight ordering, child Manifest/schema constraints, and projection recovery details; these were corrected and the final 41-test suite passes.
 - Step 6 development tests exposed the Step 5 read-only Descriptor scheduling boundary, migration-version expectations, commit-in-progress DB constraints and fixture identity bindings; these were corrected and the final 43-test suite passes.
+- Step 7 development tests caught a PurgePlan insert placeholder/FK ordering error, invalid connection-context handling, duplicate command-ledger writes on PARTIAL/COMPLETED, a dynamic closure-query parameter mismatch, and SQLite 3.38's lack of the newer FTS contentless-delete option. Fixes now use validated transaction paths, barrier-aware RunManifest input guards, and contentless FTS with safe purge-time rebuild; all cases are covered by the final 47-test suite.
 
 Open blockers:
 - Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
-- `.git` write requires controlled approval for checkpoint commits; branch creation was approved and succeeded.
+- Step 7 checkpoint commit is pending; branch `nexus-v2-runtime` already exists and prior stage checkpoints are committed.
 
 Known UNKNOWN Effects: None; Nexus runtime/data not initialized.  
 Pending Purge: None.  
-Pending migration: `0005_effect_gate.sql` is test-applied only; there is no persistent runtime database to migrate.
-Rollback point: Step 5 checkpoint `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-24 Step 6 full suite (43 tests), static checks and synthetic Effect recovery paths; branch `nexus-v2-runtime`; no persistent Nexus runtime database initialized. Step 6 checkpoint is being recorded.
-Next allowed action: commit the Step 6 checkpoint, then prepare only Step 7's Implementation Step Card.
+Pending migration: `0006_memory_purge.sql` is test-applied only; there is no persistent runtime database to migrate.
+Rollback point: Step 6 checkpoint `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Last verified state: 2026-09-25 Step 7 full suite (47 tests), static checks, synthetic T3 approval, PARTIAL barrier, purge and old-backup recovery; branch `nexus-v2-runtime`; no persistent Nexus runtime database initialized.
+Next allowed action: commit Step 7 checkpoint, then begin only Step 8 after recording its Step Card.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -393,3 +397,70 @@ Rollback point:
 
 Next:
 STEP 7 — Verifier + Memory Admission + FTS + Purge
+
+## IMPLEMENTATION STEP 7 — RUNNING
+
+Goal:
+Implement deterministic verification/truth metadata, governed Memory Candidate admission with quarantine and separate raw/admitted FTS indexes, plus PurgePlan/Execution barrier/recovery that cannot resurrect purged data.
+
+Inputs:
+Committed Steps 1–6, SHA-256 immutable Objects/lineage, Task classifications, Trace replay, durable PurgeBarrier/PurgeLedger foundation and Effect UNKNOWN gate. Synthetic objects and temporary SQLite data only.
+
+Allowed files:
+`kernel/verification/`, `kernel/memory/`, `kernel/purge/`; a new forward migration `migrations/0006_memory_purge.sql`; new schemas for VerificationResult, MemoryCandidate/Record, PurgePlan/PurgeRecord only where no frozen v1 schema already defines the required semantics; `adapters/storage/sqlite_store.py` only for barrier-governed payload lifecycle/FTS maintenance; Step 7 policy additions only if compatible with frozen defaults and recorded as a new policy version; `tests/contract/`, `tests/integration/`, and this status file.
+
+Forbidden files:
+Migrations `0001`–`0005`; existing frozen Effect, Approval, Grant, Object, Trace, PurgeBarrier/PurgeLedger, Run and Task contracts; global/business `AGENTS.md`; global Skills/config; user data/DB; real retained conversations; secrets; real model, search, network or external write adapters; vector DB/graph/learned memory; and any change that treats a generator model swap as independent evidence.
+
+Expected outputs:
+Deterministic VerificationResult separated from Truth State and recording generator/evidence/method independence; candidate/evidence lineage and expiry/review metadata; quarantined candidate excluded from normal grounding; retention-bound raw-history and admitted-memory FTS5 virtual tables with authorization/classification/purge filters; PurgePlan hash bound to lineage revision; atomic barrier install, active Run quiescence and in-flight Effect handling, closure verification, governed payload/index/derived-ID deletion, PurgeLedger replay and restore validation; PARTIAL retains its barrier and is never reported as complete.
+
+Exact tests:
+`.venv\Scripts\python.exe -m unittest discover -s tests -v`; targeted T1 verifier/admission (deterministic evidence and three independence axes), T6 object lineage/classification propagation, T9 purge barrier blocks derived-object and both-index writes, active Run/UNKNOWN Effect does not get falsely quiesced, PARTIAL retains barrier, crash/reopen/rebuild indexes, restore replays PurgeLedger and confirms deleted payload/search results remain unavailable; all-schema/default-policy validation, `pip check`, `compileall`, `git diff --check`, secret-pattern scan.
+
+PASS criteria:
+Only independently supported or policy-approved candidates enter normal grounding; conflicting/insufficient candidates are UNKNOWN/INCONCLUSIVE or quarantined, never auto-promoted; Purge target/descendant/index scope is stable under a revision-checked barrier; active runs and UNKNOWN Effects prevent false completion; after payload and both indexes are purged, restoring an old test backup and replaying ledger/barrier cannot make the item visible; all checks pass in disposable data only.
+
+FAIL handling:
+Fix only Step 7 and its disposable fixtures; if safe quiescence, lineage closure, identifier governance or restore replay cannot be demonstrated, keep the barrier and mark FAIL/PARTIAL, do not enter Step 8.
+
+Rollback point:
+Step 6 checkpoint `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot recorded above.
+
+Do NOT:
+- Install a vector DB, graph store, learned memory or real Search Provider.
+- Allow quarantine into normal grounding or purge during unresolved Effects/active Runs.
+- Release a barrier while deletion/restore verification is incomplete.
+
+## STEP 7 — IMPLEMENTATION REPORT
+
+Implemented:
+- Added deterministic SHA-256 VerificationResult and a payload-hash-bound human/domain attestation path. T1 integrity alone cannot assert semantic truth or admit memory.
+- Added a separate Truth Policy gate for Memory Candidate admission; T1-only, unknown, conflicting, or insufficiently independent candidates remain QUARANTINED and excluded from normal grounding. T3 verification is re-authorized when used for admission.
+- Added separately governed Raw History and Admitted Memory FTS5 indexes. FTS is contentless; SQLite backing tables contain object refs, classification, and expiry metadata rather than duplicate payload bodies. Retrieval checks run action/resource authority, classification level/tags, expiry and purge barrier.
+- Added immutable Candidate/evidence records, expiry normalization, candidate status transitions, independent verifier axes, and purge deletion across payload, FTS, and sensitive object envelope metadata.
+- Added revision-bound persisted PurgePlan, approval bound to exact plan hash, independent external hash-chained purge journal, immutable RunManifest input bindings/lineage, database enforcement against starting newly-created Runs on barriered or purged inputs, Run quiescence recheck, UNKNOWN Effect blocking, PARTIAL barrier retention, and old-backup PurgeLedger replay.
+
+Tests executed:
+- `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 47 passed.
+- `.venv\Scripts\python.exe -m pip check` — no broken requirements.
+- `.venv\Scripts\python.exe -m compileall -q adapters kernel tests` — passed.
+- All 33 JSON schemas and the default policy validate; migration v6 applies to disposable SQLite databases with FTS5.
+- `git diff --check` — passed; Step 7 recovery tests confirm both successful purge and held PARTIAL replay.
+
+Evidence:
+- Disposable synthetic SQLite/filesystem only. No persistent Nexus DB or user history initialized, no real provider/search/tool/network used, no secrets committed.
+- T3 approval payload mismatch denied; T1-only and false quiescence tests remained quarantined/partial. Restore from a pre-purge test backup replays installed/released PurgeLedger events, leaves barrier RELEASED only after deleting the restored payload, and returns no raw/admitted search results.
+
+Files changed:
+- `kernel/verification/`, `kernel/memory/`, `kernel/purge/`, `migrations/0006_memory_purge.sql`, four Step 7 schemas, migration version expectation and integration tests, and this status file.
+
+Known limitations:
+- T2 authoritative external verifier, automated/provider reconciliation, real search/model/tool adapters, client modes and the complete T1–T12 acceptance suite are not implemented yet. The runtime remains DEVELOPMENT; no persistent database is initialized.
+- SQLite 3.38 lacks `contentless_delete`; purge therefore clears and safely rebuilds contentless indexes from available, verified objects while the barrier is active.
+
+Rollback point:
+- Step 6 commit `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+
+Next:
+STEP 8 — one real Model Adapter, one reviewed read-only Tool, and one Search Provider (subject to Credential Broker blocker).

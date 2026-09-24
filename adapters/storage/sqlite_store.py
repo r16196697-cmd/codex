@@ -342,7 +342,15 @@ class ObjectStore:
         if not isinstance(object_id, str) or not object_id:
             raise ValueError("object_id must be a non-empty caller-generated identifier")
         digest = _sha256(payload)
-        source_ids = sorted(set(derived_from))
+        manifest_inputs: list[str] = []
+        if object_type == "run_manifest":
+            try:
+                manifest_doc = json.loads(payload.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise IntegrityMismatch("RUN_MANIFEST_PAYLOAD_INVALID") from exc
+            self._validate("nexus.run_manifest@1.schema.json", manifest_doc)
+            manifest_inputs = sorted(set(manifest_doc["input_object_refs"]))
+        source_ids = sorted(set(derived_from) | set(manifest_inputs))
         request = {
             "payload_integrity_hash": digest,
             "object_id": object_id,
@@ -363,6 +371,15 @@ class ObjectStore:
                 if conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
                     raise CommandConflict("OBJECT_ID_ALREADY_EXISTS")
                 self._assert_unbarred(conn, source_ids)
+                if object_type == "run_manifest":
+                    if not conn.execute("SELECT 1 FROM runs WHERE run_id=?", (created_by_run,)).fetchone():
+                        raise ObjectNotFound("RUN_MANIFEST_RUN_NOT_FOUND")
+                    for input_id in manifest_inputs:
+                        state = conn.execute("SELECT s.payload_state,s.validity,s.lifecycle FROM objects o JOIN object_states s USING(object_id) WHERE o.object_id=?", (input_id,)).fetchone()
+                        if not state:
+                            raise ObjectNotFound("RUN_MANIFEST_INPUT_NOT_FOUND")
+                        if state["payload_state"] != "AVAILABLE" or state["validity"] != "VALID" or state["lifecycle"] != "ACTIVE":
+                            raise IntegrityMismatch("RUN_MANIFEST_INPUT_UNAVAILABLE")
                 payload_uri = f"objects/sha256/{digest[:2]}/{digest}"
                 envelope = {
                     "schema_id": "nexus.object",
@@ -442,6 +459,8 @@ class ObjectStore:
                 )
                 for source_id in source_ids:
                     conn.execute("INSERT INTO object_relations(from_id,relation_type,to_id) VALUES(?,?,?)", (object_id, "derived_from", source_id))
+                if object_type == "run_manifest":
+                    conn.executemany("INSERT INTO run_manifest_inputs(run_id,manifest_object_id,input_object_id) VALUES(?,?,?)", ((created_by_run, object_id, input_id) for input_id in manifest_inputs))
                 result = {"object_id": object_id}
                 self._record_command(conn, command_id, operation, request_hash, result)
                 conn.commit()

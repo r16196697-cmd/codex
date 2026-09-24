@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.memory_candidate@1",
+  "title": "Nexus MemoryCandidate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "candidate_id", "claim_ref", "evidence_refs", "conflicts", "truth_state", "owner", "classification_assertion_ref", "verification_ref", "status", "review_trigger"],
+  "properties": {
+    "schema_id": {"const": "nexus.memory_candidate"}, "schema_version": {"const": 1},
+    "candidate_id": {"type": "string", "minLength": 1}, "claim_ref": {"type": "string", "minLength": 1},
+    "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "conflicts": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "truth_state": {"enum": ["VERIFIED", "SUPPORTED", "INFERRED", "HYPOTHESIS", "UNKNOWN"]},
+    "owner": {"type": "string", "minLength": 1}, "classification_assertion_ref": {"type": "string", "minLength": 1},
+    "verification_ref": {"type": "string", "minLength": 1}, "status": {"enum": ["PENDING", "ADMITTED", "QUARANTINED", "REJECTED", "PURGED"]},
+    "expires_at": {"type": "string", "format": "date-time"}, "review_trigger": {"type": "string", "minLength": 1, "maxLength": 256}
+  }
+}
