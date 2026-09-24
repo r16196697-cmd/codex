@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from kernel.authority.errors import AuthorizationDenied
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.modes import RuntimeModeService
 
 
 def _now() -> str:
@@ -36,10 +37,12 @@ class DeterministicEffectService:
 
     def __init__(self, store, authority, trace, budget, *, dispatchers: dict[str, Dispatcher] | None = None, reconciliation_ports: dict[str, ReconciliationPort] | None = None):
         self.store, self.authority, self.trace, self.budget = store, authority, trace, budget
+        self.modes = RuntimeModeService(store, authority)
         self.dispatchers = dispatchers or {}
         self.reconciliation_ports = reconciliation_ports or {}
 
     def register_descriptor(self, *, command_id: str, grant_id: str, task_id: str, descriptor: dict[str, Any]) -> None:
+        self.modes.require("core_write")
         self.store._validate("nexus.tool_descriptor@1.schema.json", descriptor)
         if descriptor["review_status"] != "APPROVED" or descriptor["effect_class"] == "READ_ONLY":
             raise RuntimeDenied("EFFECT_DESCRIPTOR_MUST_BE_REVIEWED_MUTATING_TOOL")
@@ -67,6 +70,7 @@ class DeterministicEffectService:
                 conn.rollback(); raise
 
     def create_effect(self, *, command_id: str, effect: dict[str, Any], payload_object_ref: str, classification_assertion_ref: str, compensates_effect_id: str | None = None) -> None:
+        self.modes.require("core_write")
         self.store._validate("nexus.effect@1.schema.json", effect)
         if effect["execution_state"] != "DECLARED" or effect["effect_outcome"] != "UNDETERMINED" or effect["reconciliation_status"] != "NOT_REQUIRED":
             raise RuntimeDenied("EFFECT_MUST_START_DECLARED")
@@ -146,14 +150,17 @@ class DeterministicEffectService:
                 conn.rollback(); raise
 
     def prepare(self, *, command_id: str, effect_id: str, classification_assertion_ref: str) -> dict[str, str]:
+        self.modes.require("core_write")
         return self._transition(command_id, effect_id, "DECLARED", "PREPARED", "nexus.effect.prepared", {"effect_id": effect_id, "execution_state": "PREPARED"}, classification_assertion_ref, "EFFECT_PREPARE")
 
     def authorize(self, *, command_id: str, effect_id: str, classification_assertion_ref: str) -> dict[str, str]:
+        self.modes.require("core_write")
         row = self._get(effect_id)
         self._authorize(row["grant_id"], self._task_id(row["run_id"]), row["target_ref"], "EFFECT_COMMIT", command_id + "-authorize")
         return self._transition(command_id, effect_id, "PREPARED", "AUTHORIZED", "nexus.effect.authorized", {"effect_id": effect_id, "execution_state": "AUTHORIZED"}, classification_assertion_ref, "EFFECT_COMMIT")
 
     def commit(self, *, command_id: str, effect_id: str, classification_assertion_ref: str, start_classification_assertion_ref: str) -> dict[str, str]:
+        self.modes.require("core_write")
         operation = "commit_effect"
         request = {"effect_id": effect_id, "classification_assertion_ref": classification_assertion_ref, "start_classification_assertion_ref": start_classification_assertion_ref}
         request_hash = self.store._request_hash(operation, request)
@@ -164,6 +171,7 @@ class DeterministicEffectService:
             return prior
         preflight = self._get(effect_id)
         preflight_descriptor = self._descriptor(preflight["tool_id"], preflight["tool_descriptor_version"])
+        self.modes.require("effect_commit", effect_class=preflight_descriptor["effect_class"])
         if preflight_descriptor["network_egress"]:
             self.authority.authorize_egress(grant_id=preflight["grant_id"], task_id=self._task_id(preflight["run_id"]), destination=preflight["target_ref"], audience="nexus-runtime", object_ids=[preflight["payload_object_ref"]], command_id=command_id + "-egress")
         dispatch = None
@@ -220,6 +228,7 @@ class DeterministicEffectService:
         return result
 
     def reconcile(self, *, command_id: str, effect_id: str, classification_assertion_ref: str) -> dict[str, str]:
+        self.modes.require("core_write")
         row = self._get(effect_id)
         operation = "reconcile_effect"
         request = {"effect_id": effect_id, "classification_assertion_ref": classification_assertion_ref}
@@ -385,6 +394,7 @@ class DeterministicEffectService:
         return set(actions).issubset(scopes)
 
     def _get(self, effect_id):
+        self.modes.require("core_read")
         with self.store._connection() as conn:
             row = conn.execute("SELECT * FROM effects WHERE effect_id=?", (effect_id,)).fetchone()
         if not row: raise RuntimeDenied("EFFECT_NOT_FOUND")

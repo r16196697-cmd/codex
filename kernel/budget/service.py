@@ -20,6 +20,7 @@ class BudgetService:
         self.store = store
 
     def create_account(self, *, command_id: str, account_id: str, task_id: str, amount_limit: int, unit: str, model_call_limit: int, tool_call_limit: int, child_run_limit: int) -> None:
+        self.store._require_mode("core_write")
         limits = {"amount": amount_limit, "model_calls": model_call_limit, "tool_calls": tool_call_limit, "child_runs": child_run_limit}
         if not account_id or not task_id or not unit or any(type(value) is not int or value < 0 for value in limits.values()):
             raise ValueError("invalid budget account limit")
@@ -43,6 +44,7 @@ class BudgetService:
                 raise
 
     def reserve(self, *, command_id: str, account_id: str, run_id: str, amount: int, model_calls: int = 0, tool_calls: int = 0, child_runs: int = 0) -> str:
+        self.store._require_mode("core_write")
         values = {"amount": amount, "model_calls": model_calls, "tool_calls": tool_calls, "child_runs": child_runs}
         if not account_id or not run_id or any(type(value) is not int or value < 0 for value in values.values()):
             raise ValueError("invalid reservation")
@@ -78,9 +80,11 @@ class BudgetService:
                 raise
 
     def settle(self, *, command_id: str, reservation_id: str, actual_amount: int) -> None:
+        self.store._require_mode("core_write")
         self._finish(command_id=command_id, reservation_id=reservation_id, actual_amount=actual_amount, action="CONSUMED")
 
     def release(self, *, command_id: str, reservation_id: str) -> None:
+        self.store._require_mode("core_write")
         self._finish(command_id=command_id, reservation_id=reservation_id, actual_amount=0, action="RELEASED")
 
     def _finish(self, *, command_id: str, reservation_id: str, actual_amount: int, action: str) -> None:

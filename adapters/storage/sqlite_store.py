@@ -9,7 +9,7 @@ import re
 import sqlite3
 import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -31,6 +31,8 @@ from kernel.object.errors import (
 
 _LINEAGE_TYPES = ("derived_from", "generated_from", "supersedes")
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
+_MEMORY_TABLES = {"raw_history_rows", "admitted_memory_rows", "memory_candidates", "memory_candidate_evidence"}
+_MEMORY_INDEX_PREFIXES = ("raw_history_fts", "admitted_memory_fts")
 
 
 def _utc_now() -> str:
@@ -70,11 +72,20 @@ class ObjectStore:
         self._lock = threading.RLock()
         self._writer_lock_file = None
         self._closed = False
+        self._mode_cache = self._detect_startup_mode()
+        self._recovery_local = threading.local()
         self._schemas: dict[str, dict[str, Any]] = {}
         self._acquire_writer_lock()
         try:
-            self._initialize_database()
-            self._cleanup_orphan_payloads()
+            if self._mode_cache != "NORMAL":
+                self._validate_recovery_database()
+            else:
+                self._initialize_database()
+                self._mode_cache = self._read_persisted_mode()
+                if self._mode_cache == "NORMAL":
+                    self._cleanup_orphan_payloads()
+                else:
+                    self._validate_recovery_database()
         except Exception:
             self.close()
             raise
@@ -139,7 +150,70 @@ class ObjectStore:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 10000")
         conn.execute("PRAGMA synchronous = FULL")
+        conn.set_authorizer(self._sqlite_authorizer)
         return conn
+
+    def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
+        if self._mode_cache != "RECOVERY" or getattr(self._recovery_local, "depth", 0) > 0:
+            if self._mode_cache not in {"SAFE", "STATELESS"}:
+                return sqlite3.SQLITE_OK
+            is_memory_table = bool(arg1 and (arg1 in _MEMORY_TABLES or arg1.startswith(_MEMORY_INDEX_PREFIXES)))
+            is_memory_write = action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}
+            if is_memory_table and (is_memory_write or self._mode_cache == "STATELESS" and action == sqlite3.SQLITE_READ):
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_SELECT:
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ and arg1 == "runtime_mode_state":
+            return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY
+
+    def _detect_startup_mode(self) -> str:
+        if not self.database_path.exists():
+            return "NORMAL"
+        try:
+            with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+                exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_mode_state'").fetchone()
+                if not exists:
+                    return "NORMAL"
+                row = conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()
+        except sqlite3.DatabaseError as exc:
+            raise MigrationError("Cannot safely read Runtime mode during startup.") from exc
+        if not row or row[0] not in {"NORMAL", "SAFE", "STATELESS", "RECOVERY"}:
+            raise MigrationError("Runtime mode state is corrupt; startup denied.")
+        return row[0]
+
+    def _read_persisted_mode(self) -> str:
+        with self._connection() as conn:
+            row = conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()
+        if not row or row[0] not in {"NORMAL", "SAFE", "STATELESS", "RECOVERY"}:
+            raise MigrationError("Runtime mode state is corrupt; startup denied.")
+        return row[0]
+
+    def _validate_recovery_database(self) -> None:
+        """Read-only compatibility check; Recovery startup never applies migrations or cleans files."""
+        migrations = {path.name: path.read_bytes() for path in self.migrations_dir.glob("*.sql")}
+        with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+            rows = conn.execute("SELECT version,name,checksum FROM schema_migrations ORDER BY version").fetchall()
+            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise MigrationError("Recovery database integrity check failed.")
+        if user_version != len(rows):
+            raise MigrationError("Recovery database migration state is inconsistent.")
+        for version, name, checksum in rows:
+            if name not in migrations or _sha256(migrations[name]) != checksum:
+                raise MigrationError("Recovery database migration checksum mismatch.")
+
+    @contextmanager
+    def _recovery_maintenance(self):
+        if self._mode_cache != "RECOVERY":
+            raise MigrationError("Recovery maintenance is available only in RECOVERY mode.")
+        self._recovery_local.depth = getattr(self._recovery_local, "depth", 0) + 1
+        try:
+            yield
+        finally:
+            self._recovery_local.depth -= 1
 
     @contextmanager
     def _connection(self):
@@ -148,6 +222,22 @@ class ObjectStore:
             yield conn
         finally:
             conn.close()
+
+    def _current_runtime_mode(self) -> str:
+        """Read persisted mode without exposing the raw setting to clients."""
+        try:
+            with self._connection() as conn:
+                row = conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()
+        except sqlite3.OperationalError:
+            return "NORMAL"
+        if not row:
+            raise MigrationError("Runtime mode state is missing.")
+        return row["mode"]
+
+    def _require_mode(self, capability: str) -> None:
+        from kernel.runtime.modes import require_mode_permission
+
+        require_mode_permission(self._current_runtime_mode(), capability)
 
     def _initialize_database(self) -> None:
         migrations: list[tuple[int, Path, bytes]] = []
@@ -337,6 +427,7 @@ class ObjectStore:
         classification_assertion_ref: str,
         derived_from: Iterable[str] = (),
     ) -> str:
+        self._require_mode("core_write")
         if not isinstance(payload, bytes):
             raise TypeError("payload must be bytes")
         if not isinstance(object_id, str) or not object_id:
@@ -470,6 +561,7 @@ class ObjectStore:
                 raise
 
     def add_relation(self, *, command_id: str, from_id: str, relation_type: str, to_id: str) -> dict[str, str]:
+        self._require_mode("core_write")
         relation = {"schema_id": "nexus.object_relation", "schema_version": 1, "from_id": from_id, "relation_type": relation_type, "to_id": to_id}
         self._validate("nexus.object_relation@1.schema.json", relation)
         operation = "add_relation"
@@ -498,6 +590,7 @@ class ObjectStore:
     def create_logical_ref(
         self, *, command_id: str, ref_id: str, ref_type: str, object_id: str, updated_by_run: str
     ) -> int:
+        self._require_mode("core_write")
         operation = "create_logical_ref"
         request = {"ref_id": ref_id, "ref_type": ref_type, "object_id": object_id, "updated_by_run": updated_by_run}
         request_hash = self._request_hash(operation, request)
@@ -536,6 +629,7 @@ class ObjectStore:
         new_object_id: str,
         updated_by_run: str,
     ) -> int:
+        self._require_mode("core_write")
         operation = "compare_and_swap_ref"
         request = {"ref_id": ref_id, "expected_revision": expected_revision, "new_object_id": new_object_id, "updated_by_run": updated_by_run}
         request_hash = self._request_hash(operation, request)
@@ -581,6 +675,7 @@ class ObjectStore:
         protected_refs: Iterable[str],
         lineage_revision: int,
     ) -> None:
+        self._require_mode("core_write")
         refs = sorted(set(protected_refs))
         operation = "install_purge_barrier"
         request = {"barrier_id": barrier_id, "plan_id": plan_id, "protected_refs": refs, "lineage_revision": lineage_revision}
@@ -611,6 +706,7 @@ class ObjectStore:
                 raise
 
     def get_lineage(self, object_id: str) -> dict[str, list[str]]:
+        self._require_mode("core_read")
         with self._connection() as conn:
             if not conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
                 raise ObjectNotFound("OBJECT_NOT_FOUND")
@@ -634,6 +730,7 @@ class ObjectStore:
         return {"sources": [row[0] for row in sources], "derived": [row[0] for row in descendants]}
 
     def get_object_metadata(self, object_id: str) -> dict[str, Any]:
+        self._require_mode("core_read")
         with self._connection() as conn:
             row = conn.execute(
                 "SELECT e.*,s.revision,s.lifecycle,s.validity,s.payload_state FROM objects o "
@@ -647,6 +744,7 @@ class ObjectStore:
         return dict(row)
 
     def get_payload(self, object_id: str) -> bytes:
+        self._require_mode("core_read")
         metadata = self.get_object_metadata(object_id)
         if metadata.get("payload_state") == "PURGED":
             raise PurgedObject("PURGED_OBJECT")
@@ -664,6 +762,7 @@ class ObjectStore:
         return payload
 
     def verify_object(self, object_id: str) -> bool:
+        self._require_mode("core_read")
         self.get_payload(object_id)
         return True
 

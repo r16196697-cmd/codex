@@ -12,6 +12,8 @@ from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.run import TraceRuntime
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.inspect import InspectService
+from kernel.runtime.modes import RuntimeModeService
 
 
 _QUALITY_FLOOR = {"ROUTINE": 0, "STANDARD": 1, "CRITICAL": 2}
@@ -36,11 +38,43 @@ class DeterministicRuntime:
         self.authority = authority
         self.budget = budget
         self.trace = trace
+        self.modes = RuntimeModeService(store, authority)
+        self.inspector = InspectService(store, authority)
+
+    def current_mode(self) -> dict[str, Any]:
+        """Return the persisted instance mode; this is a non-mutating Core API."""
+        return self.modes.current()
+
+    def set_mode(self, *, command_id: str, grant_id: str, task_id: str, mode: str) -> dict[str, Any]:
+        """Change mode through authority, policy, and CommandLedger checks."""
+        return self.modes.set_mode(command_id=command_id, grant_id=grant_id, task_id=task_id, mode=mode)
+
+    def complete_validated_recovery(self, *, command_id: str, purge_service) -> dict[str, Any]:
+        return self.modes.complete_validated_recovery(command_id=command_id, purge_service=purge_service)
+
+    def inspect_task(self, *, grant_id: str, task_id: str) -> dict[str, Any]:
+        return self.inspector.task(grant_id=grant_id, task_id=task_id)
+
+    def inspect_effect(self, *, grant_id: str, task_id: str, effect_id: str) -> dict[str, Any]:
+        return self.inspector.effect(grant_id=grant_id, task_id=task_id, effect_id=effect_id)
+
+    def inspect_approval(self, *, grant_id: str, task_id: str, approval_id: str, include_payload_hash: bool = False) -> dict[str, Any]:
+        return self.inspector.approval(grant_id=grant_id, task_id=task_id, approval_id=approval_id, include_payload_hash=include_payload_hash)
+
+    def inspect_route(self, *, grant_id: str, task_id: str, route_id: str) -> dict[str, Any]:
+        return self.inspector.route(grant_id=grant_id, task_id=task_id, route_id=route_id)
+
+    def inspect_object(self, *, grant_id: str, task_id: str, object_id: str, include_integrity_hash: bool = False) -> dict[str, Any]:
+        return self.inspector.object_metadata(grant_id=grant_id, task_id=task_id, object_id=object_id, include_integrity_hash=include_integrity_hash)
+
+    def inspect_purge(self, *, grant_id: str, task_id: str, plan_id: str) -> dict[str, Any]:
+        return self.inspector.purge(grant_id=grant_id, task_id=task_id, plan_id=plan_id)
 
     def _authorize(self, grant_id: str, task_id: str, resource: str, action: str, command_id: str) -> None:
         self.authority.evaluate_authorization(grant_id, {"task": task_id, "resource": resource, "action": action, "audience": "nexus-runtime"}, command_id)
 
     def bind_task_contract(self, *, command_id: str, root_run_id: str, contract_object_id: str, classification_assertion_ref: str, contract: dict[str, Any], expected_revision: int | None = None) -> int:
+        self.modes.require("core_write")
         self.store._validate("nexus.task_contract@1.schema.json", contract)
         operation = "bind_task_contract"
         request = {"root_run_id": root_run_id, "contract_object_id": contract_object_id, "classification_assertion_ref": classification_assertion_ref, "contract": contract, "expected_revision": expected_revision}
@@ -94,6 +128,7 @@ class DeterministicRuntime:
         return revision
 
     def create_dag(self, *, command_id: str, task_id: str, root_run_id: str, nodes: list[dict[str, Any]]) -> list[str]:
+        self.modes.require("core_write")
         if not isinstance(nodes, list):
             raise RuntimeDenied("DAG_MUST_BE_A_LIST")
         for node in nodes:
@@ -183,6 +218,7 @@ class DeterministicRuntime:
                 raise
 
     def register_model_profile(self, *, command_id: str, grant_id: str, task_id: str, profile: dict[str, Any]) -> None:
+        self.modes.require("learning_write")
         self.store._validate("nexus.model_profile@1.schema.json", profile)
         if profile["available"] and profile["local_eval_status"] != "PASSED":
             raise RuntimeDenied("AVAILABLE_PROFILE_REQUIRES_LOCAL_EVALUATION")
@@ -207,6 +243,7 @@ class DeterministicRuntime:
                 raise
 
     def register_tool_descriptor(self, *, command_id: str, grant_id: str, task_id: str, descriptor: dict[str, Any]) -> None:
+        self.modes.require("learning_write")
         self.store._validate("nexus.tool_descriptor@1.schema.json", descriptor)
         for schema_name in (descriptor["input_schema_id"], descriptor["output_schema_id"]):
             if Path(schema_name).name != schema_name or not schema_name.endswith(".schema.json"):
@@ -235,6 +272,7 @@ class DeterministicRuntime:
                 raise
 
     def bind_manifest(self, *, command_id: str, run_id: str, manifest_object_id: str, manifest_classification_assertion_ref: str, manifest: dict[str, Any]) -> None:
+        self.modes.require("core_write")
         self.store._validate("nexus.run_manifest@1.schema.json", manifest)
         operation = "bind_run_manifest"
         request = {"run_id": run_id, "manifest_object_id": manifest_object_id, "manifest": manifest}
@@ -351,6 +389,7 @@ class DeterministicRuntime:
         return {"account_id": account_id, "unit": row["unit"], "limit": row["amount_limit"], "reserved": row["reserved"], "consumed": row["consumed"], "remaining": row["amount_limit"] - row["reserved"] - row["consumed"], "model_calls_remaining": row["model_call_limit"] - row["model_calls_reserved"] - row["model_calls_consumed"], "tool_calls_remaining": row["tool_call_limit"] - row["tool_calls_reserved"] - row["tool_calls_consumed"], "child_runs_remaining": row["child_run_limit"] - row["child_runs_reserved"] - row["child_runs_consumed"]}
 
     def replay_subtask(self, subtask_id: str) -> dict[str, Any]:
+        self.modes.require("core_read")
         with self.store._connection() as conn:
             row = conn.execute("SELECT task_id,status,scheduled_run_id,node_json FROM subtasks WHERE subtask_id=?", (subtask_id,)).fetchone()
             if not row:
@@ -448,6 +487,7 @@ class DeterministicRuntime:
         return decision, selected
 
     def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str) -> dict[str, Any]:
+        self.modes.require("run_execute")
         operation = "schedule_subtask"
         request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref}
         request_hash = self.store._request_hash(operation, request)

@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from adapters.client.operator import OperatorClient
 from kernel.authority import AuthorityService
-from kernel.authority.errors import ApprovalDenied, InvalidDelegation
+from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, InvalidDelegation
 from kernel.budget import BudgetService
 from kernel.run import TraceAdmissionDenied, TraceRuntime
 from kernel.effect import AmbiguousDispatch, DeterministicEffectService
 from kernel.runtime import DeterministicRuntime
+from kernel.runtime.inspect import InspectService
 from kernel.runtime.errors import RuntimeDenied
 
 
@@ -192,9 +194,30 @@ class DeterministicRuntimeTests(unittest.TestCase):
         effects.create_effect(command_id="cmd-effect-create", effect=effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-effect-create", "tool-agent"))
         effects.prepare(command_id="cmd-effect-prepare", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-prepare", "tool-agent"))
         effects.authorize(command_id="cmd-effect-authorize", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-authorize", "tool-agent"))
+        mode_time = datetime.now(timezone.utc)
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"mode-config-grant","issued_by":"human-root","granted_to":"agent","task_scope":["task-1"],"resource_scope":["runtime-mode:instance"],"action_scope":["RUNTIME_CONFIGURE"],"audience_scope":["nexus-runtime"],"issued_at":mode_time.isoformat(),"expires_at":(mode_time+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "cmd-mode-config-grant")
+        self.runtime.set_mode(command_id="cmd-mode-safe", grant_id="mode-config-grant", task_id="task-1", mode="SAFE")
+        with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_MODE_DENIED"):
+            effects.commit(command_id="cmd-effect-safe-denied", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-safe-denied-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-safe-denied-start", "tool-agent"))
+        self.runtime.set_mode(command_id="cmd-mode-normal", grant_id="mode-config-grant", task_id="task-1", mode="NORMAL")
         original = effects.commit(command_id="cmd-effect-commit", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-commit-start", "tool-agent"))
         self.assertEqual(original["effect_outcome"], "UNKNOWN")
         self.assertEqual(dispatcher.calls, 1)
+        now = datetime.now(timezone.utc)
+        for grant_id, actions in (("inspect-reader", ["INSPECT"]), ("inspect-protected-reader", ["INSPECT", "INSPECT_PROTECTED"])):
+            self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":grant_id,"issued_by":"human-root","granted_to":"agent","task_scope":["task-1"],"resource_scope":["effect:effect-original","approval:approve-effect-original","approval:approve-effect-original:payload-integrity"],"action_scope":actions,"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "cmd-" + grant_id)
+        inspector = InspectService(self.store, self.authority)
+        effect_view = inspector.effect(grant_id="inspect-reader", task_id="task-1", effect_id="effect-original")
+        self.assertEqual((effect_view["execution_state"], effect_view["effect_outcome"], effect_view["reconciliation_status"]), ("FINISHED", "UNKNOWN", "PENDING"))
+        self.assertEqual(effect_view["reconciliation_capability"], "fake-authoritative")
+        client_effect_view = OperatorClient(self.runtime).inspect_effect(grant_id="inspect-reader", task_id="task-1", effect_id="effect-original")
+        self.assertIn("do not retry commit", client_effect_view["display_state"])
+        approval_view = inspector.approval(grant_id="inspect-reader", task_id="task-1", approval_id="approve-effect-original")
+        self.assertEqual(approval_view["payload_integrity_hash"], "REDACTED")
+        with self.assertRaises(AuthorizationDenied):
+            inspector.approval(grant_id="inspect-reader", task_id="task-1", approval_id="approve-effect-original", include_payload_hash=True)
+        protected_approval = inspector.approval(grant_id="inspect-protected-reader", task_id="task-1", approval_id="approve-effect-original", include_payload_hash=True)
+        self.assertEqual(protected_approval["payload_integrity_hash"], digest)
         replay = effects.commit(command_id="cmd-effect-commit", effect_id="effect-original", classification_assertion_ref=self._event_class("cmd-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-effect-commit-start", "tool-agent"))
         self.assertEqual(replay, original)
         self.assertEqual(dispatcher.calls, 1)

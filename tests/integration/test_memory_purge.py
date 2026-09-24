@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from adapters.client.operator import OperatorClient
 from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import PurgedObject, PurgeBarrierActive
 from kernel.authority import AuthorityService
@@ -14,6 +15,7 @@ from kernel.memory import MemoryService
 from kernel.purge import PurgeService
 from kernel.runtime.errors import RuntimeDenied
 from kernel.verification import VerificationService
+from kernel.runtime.inspect import InspectService
 
 
 class MemoryPurgeTests(unittest.TestCase):
@@ -136,6 +138,19 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(outcome["status"], "PARTIAL")
         self.assertIn("UNKNOWN_EFFECT:effect-unknown-7", outcome["unresolved_items"])
         self.assertTrue(any(item.startswith("ACTIVE_RUN:") for item in outcome["unresolved_items"]))
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"inspect-purge-7","issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["purge:plan-7"],"action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "inspect-purge-grant-7")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+        purge_view = InspectService(self.store, self.authority).purge(grant_id="inspect-purge-7", task_id="task-7", plan_id="plan-7")
+        self.assertEqual(purge_view["executions"][0]["status"], "PARTIAL")
+        self.assertIn("UNKNOWN_EFFECT:effect-unknown-7", purge_view["executions"][0]["unresolved"])
+        self.assertEqual(purge_view["barriers"][0]["status"], "PARTIAL")
+        class PurgeInspectRuntime:
+            def inspect_purge(inner_self, **kwargs):
+                return InspectService(self.store, self.authority).purge(**kwargs)
+        client_purge_view = OperatorClient(PurgeInspectRuntime()).inspect_purge(grant_id="inspect-purge-7", task_id="task-7", plan_id="plan-7")
+        self.assertIn("PARTIAL", client_purge_view["display_state"])
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
             with self.assertRaises(sqlite3.IntegrityError):

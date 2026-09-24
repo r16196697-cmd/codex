@@ -1,0 +1,274 @@
+"""Authorized, read-only projections for the local operator/client surface."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any
+
+from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.modes import RuntimeModeService
+
+
+class InspectService:
+    """Expose bounded metadata without giving clients a SQLite handle.
+
+    Every projection is authorized against an exact resource and the stored
+    Run classification/data boundary. Payload bytes are never returned here.
+    """
+
+    def __init__(self, store, authority):
+        self.store = store
+        self.authority = authority
+        self.modes = RuntimeModeService(store, authority)
+
+    def _authorize(self, grant_id: str, task_id: str, resource: str, action: str = "INSPECT") -> None:
+        self.modes.require("inspect")
+        self.authority.evaluate_authorization(
+            grant_id,
+            {"task": task_id, "resource": resource, "action": action, "audience": "nexus-inspect"},
+            "inspect-denial-" + uuid.uuid4().hex,
+        )
+
+    @staticmethod
+    def _classification_visible(row, boundary=None) -> bool:
+        boundary = boundary or json.loads(row["data_boundary_json"])
+        level = row["sensitivity_level"]
+        tags = set(json.loads(row["handling_tags_json"]))
+        return level in set(boundary["allowed_classifications"]) and tags.issubset(set(boundary["handling_tags"]))
+
+    def _task_context(self, task_id: str):
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT t.task_id,t.status,t.created_at,t.root_run_id,r.data_boundary_json,"
+                "c.sensitivity_level,c.handling_tags_json "
+                "FROM tasks t LEFT JOIN runs r ON r.run_id=t.root_run_id "
+                "LEFT JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
+                "WHERE t.task_id=?",
+                (task_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if not row["root_run_id"] or not row["data_boundary_json"] or not row["sensitivity_level"]:
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_UNAVAILABLE")
+        if not self._classification_visible(row):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        return row
+
+    def task(self, *, grant_id: str, task_id: str) -> dict[str, Any]:
+        self._authorize(grant_id, task_id, f"task:{task_id}")
+        task = self._task_context(task_id)
+        with self.store._connection() as conn:
+            dag = conn.execute("SELECT dag_version,graph_hash,node_count FROM task_dags WHERE task_id=?", (task_id,)).fetchone()
+            subtasks = [dict(row) for row in conn.execute(
+                "SELECT subtask_id,node_index,status,scheduled_run_id FROM subtasks WHERE task_id=? ORDER BY node_index", (task_id,)
+            )]
+            runs = [dict(row) for row in conn.execute(
+                "SELECT r.run_id,r.executor_kind,r.status,r.parent_run_id,r.manifest_ref,r.budget_reservation_ref,"
+                "c.sensitivity_level,c.handling_tags_json,r.data_boundary_json "
+                "FROM runs r JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
+                "WHERE r.task_id=? ORDER BY r.created_at,r.run_id", (task_id,)
+            )]
+            account = conn.execute("SELECT * FROM budget_accounts WHERE task_id=?", (task_id,)).fetchone()
+            reservations = [dict(row) for row in conn.execute(
+                "SELECT br.reservation_id,br.run_id,br.amount,br.model_calls,br.tool_calls,br.child_runs,br.state "
+                "FROM budget_reservations br JOIN budget_accounts ba USING(account_id) WHERE ba.task_id=? ORDER BY br.created_at", (task_id,)
+            )]
+            verifications = [dict(row) for row in conn.execute(
+                "SELECT verification_id,target_ref,verdict,verifier_kind,run_id,created_at FROM verification_results WHERE run_id IN (SELECT run_id FROM runs WHERE task_id=?) ORDER BY created_at", (task_id,)
+            )]
+            artifacts = [dict(row) for row in conn.execute(
+                "SELECT e.object_id,e.object_type,e.schema_id,e.schema_version,s.payload_state,s.lifecycle,s.validity,"
+                "c.sensitivity_level,c.handling_tags_json,e.created_by_run "
+                "FROM object_envelopes e JOIN object_states s USING(object_id) "
+                "JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
+                "WHERE e.created_by_run IN (SELECT run_id FROM runs WHERE task_id=?) ORDER BY e.created_at", (task_id,)
+            )]
+        visible_runs = []
+        for run in runs:
+            if not self._classification_visible(run, json.loads(task["data_boundary_json"])):
+                raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+            run.pop("data_boundary_json", None)
+            run.pop("handling_tags_json", None)
+            visible_runs.append(run)
+        visible_artifacts = []
+        for artifact in artifacts:
+            if artifact["sensitivity_level"] in set(json.loads(task["data_boundary_json"])["allowed_classifications"]) and set(json.loads(artifact["handling_tags_json"])).issubset(set(json.loads(task["data_boundary_json"])["handling_tags"])):
+                artifact.pop("handling_tags_json", None)
+                visible_artifacts.append(artifact)
+        budget = dict(account) if account else None
+        return {
+            "task": {"task_id": task_id, "status": task["status"], "created_at": task["created_at"]},
+            "dag": dict(dag) if dag else None,
+            "subtasks": subtasks,
+            "runs": visible_runs,
+            "artifacts": visible_artifacts,
+            "verifications": verifications,
+            "budget_account": budget,
+            "reservations": reservations,
+        }
+
+    def effect(self, *, grant_id: str, task_id: str, effect_id: str) -> dict[str, Any]:
+        self.modes.require("inspect")
+        self._authorize(grant_id, task_id, f"effect:{effect_id}")
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT e.*,r.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
+                "FROM effects e JOIN runs r ON r.run_id=e.run_id "
+                "JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref WHERE e.effect_id=?",
+                (effect_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if row["task_id"] != task_id:
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+        task_context = self._task_context(task_id)
+        if not self._classification_visible(row, json.loads(task_context["data_boundary_json"])):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        with self.store._connection() as conn:
+            descriptor_row = conn.execute(
+                "SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?",
+                (row["tool_id"], row["tool_descriptor_version"]),
+            ).fetchone()
+            relations = [dict(item) for item in conn.execute(
+                "SELECT from_effect_id,relation_type,to_effect_id,created_at FROM effect_relations WHERE from_effect_id=? OR to_effect_id=? ORDER BY created_at",
+                (effect_id, effect_id),
+            )]
+            attempts = [dict(item) for item in conn.execute(
+                "SELECT attempt_no,channel_id,observation,authoritative_evidence_ref,created_at FROM effect_reconciliation_attempts WHERE effect_id=? ORDER BY attempt_no",
+                (effect_id,),
+            )]
+        return {
+            "effect_id": effect_id,
+            "task_id": row["task_id"],
+            "execution_state": row["execution_state"],
+            "effect_outcome": row["effect_outcome"],
+            "reconciliation_status": row["reconciliation_status"],
+            "tool_id": row["tool_id"],
+            "action_type": row["action_type"],
+            "target_ref": row["target_ref"],
+            "approval_ref": row["approval_ref"],
+            "reconciliation_capability": json.loads(descriptor_row["descriptor_json"])["reconciliation_capability"] if descriptor_row else "DESCRIPTOR_MISSING",
+            "relations": relations,
+            "reconciliation_attempts": attempts,
+        }
+
+    def approval(self, *, grant_id: str, task_id: str, approval_id: str, include_payload_hash: bool = False) -> dict[str, Any]:
+        self.modes.require("inspect")
+        self._authorize(grant_id, task_id, f"approval:{approval_id}")
+        self._task_context(task_id)
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT a.*,e.run_id,r.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
+                "FROM approval_decisions a LEFT JOIN effects e ON e.effect_id=a.effect_id "
+                "LEFT JOIN runs r ON r.run_id=e.run_id "
+                "LEFT JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
+                "WHERE a.approval_id=?",
+                (approval_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if row["task_id"] and row["task_id"] != task_id:
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+        if row["sensitivity_level"] and not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        result = {
+            "approval_id": approval_id,
+            "approver_principal_id": row["approver_principal_id"],
+            "target_type": row["target_type"],
+            "target_ref": row["target_ref"],
+            "effect_id": row["effect_id"],
+            "decision": row["decision"],
+            "approved_scope": json.loads(row["approved_scope_json"]),
+            "policy_version": row["policy_version"],
+            "issued_at": row["issued_at"],
+            "expires_at": row["expires_at"],
+        }
+        if include_payload_hash:
+            self._authorize(grant_id, task_id, f"approval:{approval_id}:payload-integrity", "INSPECT_PROTECTED")
+            result["payload_integrity_hash"] = row["payload_integrity_hash"]
+        else:
+            result["payload_integrity_hash"] = "REDACTED"
+        return result
+
+    def route(self, *, grant_id: str, task_id: str, route_id: str) -> dict[str, Any]:
+        self.modes.require("inspect")
+        self._authorize(grant_id, task_id, f"route:{route_id}")
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT d.decision_json,s.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
+                "FROM route_decisions d JOIN subtasks s ON s.subtask_id=d.subtask_id "
+                "JOIN task_dags g ON g.task_id=s.task_id JOIN runs r ON r.run_id=g.root_run_id "
+                "JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref WHERE d.route_decision_id=?",
+                (route_id,),
+            ).fetchone()
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if row["task_id"] != task_id:
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+        if not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        return json.loads(row["decision_json"])
+
+    def object_metadata(self, *, grant_id: str, task_id: str, object_id: str, include_integrity_hash: bool = False) -> dict[str, Any]:
+        self.modes.require("inspect")
+        self._authorize(grant_id, task_id, f"object:{object_id}")
+        self._task_context(task_id)
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT e.object_id,e.object_type,e.schema_id,e.schema_version,e.integrity_hash,e.created_by_run,"
+                "s.lifecycle,s.validity,s.payload_state,r.task_id,r.data_boundary_json,"
+                "c.sensitivity_level,c.handling_tags_json "
+                "FROM objects o LEFT JOIN object_envelopes e USING(object_id) "
+                "JOIN object_states s USING(object_id) LEFT JOIN runs r ON r.run_id=e.created_by_run "
+                "LEFT JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
+                "WHERE o.object_id=?", (object_id,)
+            ).fetchone()
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if row["task_id"] and row["task_id"] != task_id:
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+        if row["sensitivity_level"] and not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        result = {key: row[key] for key in ("object_id", "object_type", "schema_id", "schema_version", "created_by_run", "lifecycle", "validity", "payload_state")}
+        result["integrity_hash"] = "REDACTED"
+        if include_integrity_hash:
+            self._authorize(grant_id, task_id, f"object:{object_id}:integrity", "INSPECT_PROTECTED")
+            result["integrity_hash"] = row["integrity_hash"]
+        return result
+
+    def purge(self, *, grant_id: str, task_id: str, plan_id: str) -> dict[str, Any]:
+        self.modes.require("inspect")
+        self._authorize(grant_id, task_id, f"purge:{plan_id}")
+        task_context = self._task_context(task_id)
+        with self.store._connection() as conn:
+            row = conn.execute("SELECT plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
+            executions = [dict(item) for item in conn.execute(
+                "SELECT record_id,barrier_id,status,unresolved_json,started_at,completed_at FROM purge_execution_records WHERE plan_id=? ORDER BY started_at", (plan_id,)
+            )]
+            barriers = [dict(item) for item in conn.execute(
+                "SELECT b.barrier_id,b.status,b.lineage_revision,b.created_at,COUNT(r.object_id) AS protected_object_count "
+                "FROM purge_barriers b LEFT JOIN purge_barrier_refs r USING(barrier_id) WHERE b.plan_id=? GROUP BY b.barrier_id ORDER BY b.created_at", (plan_id,)
+            )]
+            ledger = [dict(item) for item in conn.execute(
+                "SELECT l.action,l.created_at,b.status FROM purge_ledger l JOIN purge_barriers b USING(barrier_id) WHERE b.plan_id=? ORDER BY l.ledger_seq", (plan_id,)
+            )]
+        if not row:
+            raise RuntimeDenied("INSPECT_NOT_FOUND")
+        plan = json.loads(row["plan_json"])
+        # A PurgePlan stores object references but has no task field. Verify
+        # every referenced object is within the authorized Task boundary.
+        with self.store._connection() as conn:
+            refs = set(plan["target_refs"]) | set(plan["descendant_refs"])
+            object_rows = conn.execute(
+                "SELECT e.object_id,r.task_id,c.sensitivity_level,c.handling_tags_json "
+                "FROM object_envelopes e JOIN runs r ON r.run_id=e.created_by_run "
+                "JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
+                "WHERE e.object_id IN (" + ",".join("?" for _ in refs) + ")", tuple(refs)
+            ).fetchall() if refs else []
+        boundary = json.loads(task_context["data_boundary_json"])
+        if any(item["task_id"] != task_id for item in object_rows):
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+        if any(item["sensitivity_level"] not in set(boundary["allowed_classifications"]) or not set(json.loads(item["handling_tags_json"])).issubset(set(boundary["handling_tags"])) for item in object_rows):
+            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        return {"plan": {"plan_id": plan_id, "plan_hash": plan["plan_hash"], "target_count": len(plan["target_refs"]), "descendant_count": len(plan["descendant_refs"]), "affected_indexes": plan["affected_indexes"], "planned_actions": plan["planned_actions"]}, "executions": [{**{key: value for key, value in item.items() if key != "unresolved_json"}, "unresolved": json.loads(item["unresolved_json"])} for item in executions], "barriers": barriers, "ledger": ledger}

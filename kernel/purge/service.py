@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,7 @@ class PurgeService:
         self.journal = IndependentPurgeJournal(independent_journal_path, store.data_root)
 
     def plan(self, *, command_id: str, plan_id: str, target_refs: list[str]) -> dict:
+        self.store._require_mode("core_write")
         targets = sorted(set(target_refs))
         if not targets:
             raise RuntimeDenied("PURGE_TARGETS_REQUIRED")
@@ -52,6 +54,7 @@ class PurgeService:
                 raise
 
     def execute(self, *, command_id: str, record_id: str, barrier_id: str, plan: dict, grant_id: str, task_id: str, approval_id: str, quiesce_run=None) -> dict:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.purge_plan@1.schema.json", plan)
         body = dict(plan)
         claimed_hash = body.pop("plan_hash")
@@ -102,6 +105,13 @@ class PurgeService:
         return self._release(command_id, record_id, barrier_id, plan, protected, digest)
 
     def replay_independent_journal(self) -> dict:
+        if self.store._current_runtime_mode() not in {"NORMAL", "RECOVERY"}:
+            raise RuntimeDenied("PURGE_RECOVERY_REQUIRES_NORMAL_OR_RECOVERY_MODE")
+        maintenance = self.store._recovery_maintenance() if self.store._current_runtime_mode() == "RECOVERY" else nullcontext()
+        with maintenance:
+            return self._replay_independent_journal()
+
+    def _replay_independent_journal(self) -> dict:
         journal = self.journal.read()
         latest = {}
         for row in journal:

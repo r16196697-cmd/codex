@@ -10,6 +10,7 @@ from typing import Any
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
 from kernel.run.errors import InvalidRunTransition, TraceAdmissionDenied
+from kernel.runtime.modes import RuntimeModeService
 
 
 _TRANSITIONS = {
@@ -56,10 +57,12 @@ class TraceRuntime:
     def __init__(self, store: ObjectStore, authority: AuthorityService):
         self.store = store
         self.authority = authority
+        self.modes = RuntimeModeService(store, authority)
         if authority.store is not store:
             raise ValueError("TraceRuntime and AuthorityService must share one ObjectStore")
 
     def create_task(self, task: dict[str, Any]) -> None:
+        self.modes.require("core_write")
         self.store._validate("nexus.task@1.schema.json", task)
         if task["status"] != "CREATED" or "root_run_id" in task:
             raise TraceAdmissionDenied("TASK_MUST_START_CREATED_WITHOUT_ROOT")
@@ -83,6 +86,7 @@ class TraceRuntime:
                 raise
 
     def create_run(self, run: dict[str, Any], *, command_id: str, event_classification_assertion_ref: str) -> dict[str, Any]:
+        self.modes.require("core_write")
         self.store._validate("nexus.run@1.schema.json", run)
         if run["status"] != "CREATED":
             raise TraceAdmissionDenied("RUN_MUST_START_CREATED")
@@ -299,6 +303,7 @@ class TraceRuntime:
         conn.execute("INSERT INTO trace_events(event_id,run_id,seq_no,event_type,occurred_at,actor_id,event_json) VALUES(?,?,?,?,?,?,?)", (event["event_id"], event["run_id"], event["seq_no"], event["event_type"], event["occurred_at"], event["actor_id"], _canonical(event)))
 
     def append_trace_event(self, *, command_id: str, run_id: str, event_type: str, classification_assertion_ref: str, typed_metadata: dict[str, Any], object_refs: list[str] | None = None, effect_refs: list[str] | None = None, policy_refs: list[str] | None = None, authority_refs: list[str] | None = None, actor_id: str | None = None) -> dict[str, Any]:
+        self.modes.require("trace_write", event_type=event_type)
         if event_type != "nexus.object.created":
             raise TraceAdmissionDenied("TRACE_EVENT_TYPE_RESERVED_FOR_KERNEL")
         event_id = "evt-" + command_id
@@ -336,6 +341,7 @@ class TraceRuntime:
                 raise
 
     def transition_run(self, *, command_id: str, run_id: str, expected_state: str, next_state: str, classification_assertion_ref: str) -> dict[str, Any]:
+        self.modes.require("trace_write", event_type="nexus.run.transitioned")
         operation = "transition_run"
         request = {"run_id": run_id, "expected_state": expected_state, "next_state": next_state, "classification_assertion_ref": classification_assertion_ref}
         request_hash = self.store._request_hash(operation, request)
@@ -540,6 +546,7 @@ class TraceRuntime:
             raise TraceAdmissionDenied("RUN_EXECUTOR_KIND_INVALID")
 
     def replay_run(self, run_id: str) -> dict[str, Any]:
+        self.modes.require("core_read")
         with self.store._connection() as conn:
             run = conn.execute("SELECT status,task_id,executor_kind FROM runs WHERE run_id=?", (run_id,)).fetchone()
             if not run:
@@ -574,6 +581,7 @@ class TraceRuntime:
         return {"run_id": run_id, "status": state, "last_seq": expected_seq - 1, "event_count": len(rows)}
 
     def replay_task(self, task_id: str) -> dict[str, Any]:
+        self.modes.require("core_read")
         with self.store._connection() as conn:
             task = conn.execute("SELECT status,root_run_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
             if not task:

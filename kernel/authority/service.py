@@ -43,6 +43,7 @@ class AuthorityService:
         Draft202012Validator(policy_schema, format_checker=self.store._format_checker).validate(self.policy)
 
     def register_principal(self, principal: dict[str, Any], command_id: str) -> None:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.principal@1.schema.json", principal)
         operation = "register_principal"
         request_hash = self.store._request_hash(operation, principal)
@@ -60,6 +61,7 @@ class AuthorityService:
                 raise
 
     def register_trust_anchor(self, anchor: dict[str, Any], command_id: str) -> None:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.trust_anchor@1.schema.json", anchor)
         if anchor["principal_id"] not in self.policy["trust_anchors"]:
             raise InvalidDelegation("TRUST_ANCHOR_NOT_CONFIGURED_BY_POLICY")
@@ -86,6 +88,7 @@ class AuthorityService:
                 raise
 
     def create_grant(self, grant: dict[str, Any], command_id: str) -> None:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.delegation_grant@1.schema.json", grant)
         self._validate_grant_shape(grant)
         operation = "create_grant"
@@ -146,12 +149,15 @@ class AuthorityService:
         conn.execute("INSERT INTO authority_events(command_id,grant_id,event_type,reason_code,created_at) VALUES(?,?,?,?,?)", (command_id, grant_id, event_type, reason_code, _now().isoformat().replace("+00:00", "Z")))
 
     def activate_grant(self, grant_id: str, command_id: str) -> None:
+        self.store._require_mode("core_write")
         self._transition_grant(grant_id, command_id, "PROPOSED", "ACTIVE", "GRANT_ACTIVATED")
 
     def revoke_grant(self, grant_id: str, command_id: str) -> None:
+        self.store._require_mode("core_write")
         self._transition_grant(grant_id, command_id, "ACTIVE", "REVOKED", "GRANT_REVOKED")
 
     def revoke_principal(self, principal_id: str, command_id: str) -> None:
+        self.store._require_mode("core_write")
         operation = "revoke_principal"
         request = {"principal_id": principal_id, "target_status": "REVOKED"}
         request_hash = self.store._request_hash(operation, request)
@@ -173,6 +179,7 @@ class AuthorityService:
                 raise
 
     def _transition_grant(self, grant_id: str, command_id: str, expected: str, target: str, event: str) -> None:
+        self.store._require_mode("core_write")
         operation = "transition_grant"
         request = {"grant_id": grant_id, "expected": expected, "target": target}
         request_hash = self.store._request_hash(operation, request)
@@ -195,6 +202,7 @@ class AuthorityService:
                 raise
 
     def validate_delegation_chain(self, grant_id: str) -> list[dict[str, Any]]:
+        self.store._require_mode("core_read")
         with self.store._connection() as conn:
             chain: list[dict[str, Any]] = []
             current_id: str | None = grant_id
@@ -249,10 +257,12 @@ class AuthorityService:
                     raise InvalidDelegation("DELEGATION_SCOPE_EXPANSION")
 
     def compute_effective_authority(self, grant_id: str) -> dict[str, set[str]]:
+        self.store._require_mode("core_read")
         chain = self.validate_delegation_chain(grant_id)
         return {key: set(chain[-1][key]) for key in ("task_scope", "resource_scope", "action_scope", "audience_scope")}
 
     def evaluate_authorization(self, grant_id: str, request: dict[str, str], command_id: str, approval_id: str | None = None, payload_integrity_hash: str | None = None) -> bool:
+        self.store._require_mode("core_read")
         try:
             effective = self.compute_effective_authority(grant_id)
             required = {"task": "task_scope", "resource": "resource_scope", "action": "action_scope", "audience": "audience_scope"}
@@ -267,6 +277,7 @@ class AuthorityService:
             raise AuthorizationDenied(str(exc)) from exc
 
     def _validate_approval(self, approval_id: str, grant_id: str, request: dict[str, str], payload_hash: str | None) -> None:
+        self.store._require_mode("core_read")
         with self.store._connection() as conn:
             approval = conn.execute("SELECT * FROM approval_decisions WHERE approval_id=?", (approval_id,)).fetchone()
             grant = conn.execute("SELECT granted_to FROM delegation_grants WHERE grant_id=?", (grant_id,)).fetchone()
@@ -292,6 +303,7 @@ class AuthorityService:
             raise ApprovalDenied("APPROVAL_SCOPE_MISMATCH")
 
     def create_approval(self, approval: dict[str, Any], command_id: str) -> None:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.approval_decision@1.schema.json", approval)
         if approval["policy_version"] != self.policy["policy_version"]:
             raise ApprovalDenied("APPROVAL_POLICY_VERSION_MISMATCH")
@@ -334,6 +346,7 @@ class AuthorityService:
                 raise
 
     def record_classification_assertion(self, assertion: dict[str, Any], *, grant_id: str, task_id: str, audience: str, command_id: str, approval_id: str | None = None) -> None:
+        self.store._require_mode("core_write")
         self.store._validate("nexus.classification_assertion@1.schema.json", assertion)
         if assertion["policy_version"] != self.policy["policy_version"]:
             raise AuthorizationDenied("CLASSIFICATION_POLICY_VERSION_MISMATCH")
@@ -381,6 +394,7 @@ class AuthorityService:
                 raise
 
     def effective_classification(self, assertion_ids: list[str]) -> tuple[str, set[str]] | None:
+        self.store._require_mode("core_read")
         if not assertion_ids:
             return None
         with self.store._connection() as conn:
@@ -398,6 +412,7 @@ class AuthorityService:
         return level, tags
 
     def evaluate_egress(self, destination: str, object_ids: list[str]) -> bool:
+        self.store._require_mode("egress")
         if not object_ids:
             return False
         assertion_ids: list[str] = []
@@ -424,6 +439,7 @@ class AuthorityService:
         return maximum is not None and actual <= maximum and set(handling_tags).issubset(set(rule.get("accepted_tags", [])))
 
     def authorize_egress(self, *, grant_id: str, task_id: str, destination: str, audience: str, object_ids: list[str], command_id: str) -> bool:
+        self.store._require_mode("egress")
         request = {"task": task_id, "resource": destination, "action": "EGRESS", "audience": audience}
         self.evaluate_authorization(grant_id, request, command_id)
         if not self.evaluate_egress(destination, object_ids):

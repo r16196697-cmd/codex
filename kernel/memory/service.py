@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.modes import RuntimeModeService
 
 
 def _now():
@@ -28,8 +29,10 @@ def _expiry(value):
 class MemoryService:
     def __init__(self, store, authority, verifier):
         self.store, self.authority, self.verifier = store, authority, verifier
+        self.modes = RuntimeModeService(store, authority)
 
     def retain_raw(self, *, command_id: str, object_id: str, run_id: str, expires_at: str | None = None) -> None:
+        self.modes.require("memory_write")
         expires_at = _expiry(expires_at)
         run = self._run(run_id)
         metadata = self.store.get_object_metadata(object_id)
@@ -57,6 +60,7 @@ class MemoryService:
                 conn.rollback(); raise
 
     def create_candidate(self, *, command_id: str, candidate_id: str, claim_ref: str, evidence_refs: list[str], owner: str, classification_assertion_ref: str, verification_ref: str, review_trigger: str, expires_at: str | None = None, conflicts: list[str] | None = None) -> dict:
+        self.modes.require("memory_write")
         expires_at = _expiry(expires_at)
         verification = self.verifier.get(verification_ref)
         refs = sorted(set(evidence_refs))
@@ -114,6 +118,7 @@ class MemoryService:
         return self._search("admitted_memory_fts", "admitted_memory_rows", query, run_id, limit)
 
     def _search(self, fts, backing, query, run_id, limit):
+        self.modes.require("memory_read")
         if not query.strip() or not 1 <= limit <= 100: raise RuntimeDenied("MEMORY_QUERY_INVALID")
         with self.store._lock, self.store._connection() as conn:
             run = conn.execute("SELECT task_id,grant_id,data_boundary_json FROM runs WHERE run_id=?", (run_id,)).fetchone()

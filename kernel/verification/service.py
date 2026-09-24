@@ -19,6 +19,7 @@ class VerificationService:
         self.store, self.authority = store, authority
 
     def verify_object_integrity(self, *, verification_id: str, target_ref: str, evidence_refs: list[str], run_id: str, independence: dict[str, str] | None = None) -> dict:
+        self.store._require_mode("core_write")
         evidence = sorted(set(evidence_refs))
         if not evidence:
             raise RuntimeDenied("VERIFIER_REQUIRES_EVIDENCE_REFS")
@@ -61,6 +62,7 @@ class VerificationService:
                 conn.rollback(); raise
 
     def record_human_verification(self, *, verification_id: str, target_ref: str, evidence_refs: list[str], run_id: str, approval_id: str, attester_principal_id: str, independence: dict[str, str]) -> dict:
+        self.store._require_mode("core_write")
         evidence = sorted(set(evidence_refs))
         if not evidence:
             raise RuntimeDenied("VERIFIER_REQUIRES_EVIDENCE_REFS")
@@ -98,11 +100,13 @@ class VerificationService:
                 conn.rollback(); raise
 
     def human_payload_hash(self, *, verification_id: str, target_ref: str, evidence_refs: list[str], run_id: str, independence: dict[str, str]) -> str:
+        self.store._require_mode("core_read")
         refs = sorted(set([target_ref, *evidence_refs]))
         bindings = {"verification_id": verification_id, "target_ref": target_ref, "evidence_used": sorted(set(evidence_refs)), "integrity_hashes": {ref: self.store.get_object_metadata(ref)["integrity_hash"] for ref in refs}, "run_id": run_id, "verdict": "PASS", "independence": independence}
         return hashlib.sha256(json.dumps(bindings, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
     def get(self, verification_id: str) -> dict:
+        self.store._require_mode("core_read")
         with self.store._connection() as conn:
             row = conn.execute("SELECT result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
         if not row: raise RuntimeDenied("VERIFICATION_NOT_FOUND")

@@ -1,26 +1,35 @@
 # Nexus v2 Implementation Status
 
 Nexus version: `v0.1-development`  
-Current implementation step: Step 7 — PASS
+Current implementation step: Step 8 — RUNNING (Codex-hosted attachment integration remains incomplete)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Git commit / branch: `0fbc795943c166894d31ca8beca9456f05028729` / `nexus-v2-runtime`
-Schema version: `nexus.* @1`; SQLite migration version `6` (isolated tests)
+Git commit / branch: `09550fb7cb6db1bb3d9b2defccdbf09567f9e425` / `nexus-v2-runtime`
+Schema version: `nexus.* @1`; SQLite migration version `7` (isolated tests)
 Policy version: `1` (fail-closed default policy)  
-Database version: `6` exercised only in isolated integration databases; persistent runtime database not initialized
+Database version: `7` exercised only in isolated integration databases; persistent runtime database not initialized
 
 Step 0: PASS  
 Step 1: PASS  
 Step 2: PASS
 Step 3: PASS
 Step 4: PASS
-Step 5: PASS
+Step 5: PASS (corrective four-mode Runtime gates and controlled inspect APIs; 65-test regression passed)
 Step 6: PASS
 Step 7: PASS
-Step 8: NOT_STARTED  
-Step 9: NOT_STARTED  
-Step 10: NOT_STARTED
+Step 8: RUNNING (Codex-hosted attachment integration; standalone Provider/Broker cases DEFERRED / NOT_CONFIGURED)
+Step 9: PARTIAL (authorized inspect projections and thin CLI exist; mode TraceEvent linkage and persistent-runtime use remain open)
+Step 10: NOT_STARTED (full manual acceptance suite gated; affected regression tests rerun, acceptance matrix recorded below)
 
 Tests passed:
+- 2026-09-25 corrective mode/inspect + client run: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 65 passed; `compileall`, `pip check`, `git diff --check`, CLI `--help` passed. The only `git diff --check` output was Git's LF→CRLF advisory, not whitespace errors.
+- Four modes: authorized/idempotent/persistent switches; SAFE blocks external reversible Effect commit, memory writes and learning/profile/descriptor changes; STATELESS blocks Memory service reads/writes, disallowed Trace classes and the SQLite Memory table/index access path while preserving allowlisted traces; Recovery blocks Core/inspect, skips startup migration/cleanup, rejects ordinary exit, and exits only after SQLite integrity/migration, Purge Ledger, object SHA-256, index and deletion checks. Pending Purge barrier and corrupted payload tests remain in RECOVERY.
+- Inspect: valid Task projection succeeds under exact `INSPECT` task/resource/audience scope; unauthorized Grant and RECOVERY calls deny; Approval hash is redacted unless a distinct `INSPECT_PROTECTED` scope is present; real synthetic Effect UNKNOWN and Purge PARTIAL facts pass through Core inspect APIs and remain UNKNOWN/PARTIAL in the client presentation.
+- CLI: `python -m adapters.client --help` passes; absent data roots are refused without creating `nexus.sqlite`; client facade contains no database query code.
+- Rollback point before corrective implementation: Step 7 commit `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`. Modified pre-existing files received same-directory timestamp backups; status backup `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-013510` SHA-256 verified.
+- Deployment shape remains **Nexus v0.1 — Codex-hosted / Attached**. Independent Model/Search Provider adapters and actual Credential Broker secret resolution remain `DEFERRED / NOT_CONFIGURED`, not PASS and not Core failures.
+- No persistent runtime database exists; all new migration, mode, Recovery, inspect and effect/purge displays were tested in isolated temporary roots only.
+- Known Step 9 gap: handbook example requires mode changes to be recorded in Trace. Current command records are immutable `runtime_mode_events` + CommandLedger, but there is no honest TraceEvent binding in the mode command surface. No Trace binding was fabricated; Step 9 remains PARTIAL.
+- Known Step 8 / Step 10 blockers: the live Codex host is not connected to a running Nexus data root/ingestion bridge, and full old-snapshot→Recovery→Purge Ledger→index rebuild→NORMAL drill has not been run. Existing fake/core tests do not establish those release gates.
 - Environment audit: Python, Git, SQLite, SQLite FTS5 detected.
 - Step 0 snapshot: core global AGENTS/Skill/config files hash-match; config parses; 7 SQLite backup copies pass `PRAGMA integrity_check`.
 - Existing Nexus runtime/data: none found in the audited target workspace.
@@ -41,6 +50,10 @@ Tests passed:
 - Step 7: 47 contract/integration tests pass. T1 SHA-256 integrity results are not treated as semantic truth and remain quarantined; T3 human/domain verification requires an ApprovalDecision bound to exact target/evidence integrity hashes. Only independent evidence/method plus approval enters Admitted Memory. Raw History and Admitted Memory use separate FTS5 indexes; SQLite backing rows keep refs/classification/expiry only, while indexed result text is loaded from the immutable filesystem object. Run action/resource, data classification/handling tags, retention expiry, and purge barriers gate search and indexing.
 - Step 7 Purge: plan hash binds a persisted plan and ApprovalDecision; external append-only hash-chained journal is outside the data root. RunManifest input refs are persisted as immutable input bindings and derived-from lineage; new bindings to protected inputs fail, and a previously-created but unstarted Run cannot enter READY while its input is barriered or PURGED. An active Run (even if a quiescence callback falsely reports success) or UNKNOWN Effect leaves Purge PARTIAL and barrier active. A positive barrier/quiescence/purge path deletes the payload, redacts envelope/hash/path and removes both index entries. Old-backup restore first reinstalls the barrier, replays all independent ledger events, deletes restored payloads, clears/rebuilds the contentless FTS indexes, and does not expose purged content. Restoring a PARTIAL journal state retains the barrier and does not falsely delete payloads.
 - Step 7 static checks: all 33 JSON Schema documents and default policy validate; `pip check`, `compileall`, `git diff --check` pass. Test DBs are disposable; no persistent database, external provider, real history, secret, or network was used.
+- Step 8 stop-gate revalidation (no adapter/provider code changed): the committed Steps 1–7 baseline reran with 47 tests passed; `pip check`, `compileall`, and `git diff --check` passed. These checks do not satisfy Step 8's real-provider/T10/T11 acceptance criteria.
+- Operator disposition: current deployment is **Nexus v0.1 — Codex-hosted / Attached**. Codex is the current AI Executor/Host; Nexus owns governed local state. Independent Model/Search Provider adapters, paid API credentials, and the Credential Broker's real-secret path are `DEFERRED / NOT_CONFIGURED`, not PASS and not a Core failure.
+- Step 8 must still prove the Hosted bridge: verified executor/capability facts and results enter Task/Run/Artifact/Evidence/Verification/Trace without fabricating unavailable underlying model/provider identifiers. Existing v1 model schema currently requires such identifiers on MODEL manifests; this compatibility gap is under evaluation and must be resolved without weakening frozen semantics.
+- Step 9/10 continuation audit: 47 existing contract/integration tests reran and passed; `pip check`, `compileall`, 33 schema + default-policy validation passed. `git diff --check` initially caught trailing whitespace in the newly edited status line; this line is removed in this update. This suite is not the manual's recorded T1–T12 Acceptance Suite.
 
 Tests failed:
 - Step 1 first contract run had 4 errors because the initial cross-file schema references attempted network retrieval and `allOf` rejected common fields. Replaced with local self-contained references and `unevaluatedProperties`; final 11-test suite passes.
@@ -52,15 +65,18 @@ Tests failed:
 - Step 7 development tests caught a PurgePlan insert placeholder/FK ordering error, invalid connection-context handling, duplicate command-ledger writes on PARTIAL/COMPLETED, a dynamic closure-query parameter mismatch, and SQLite 3.38's lack of the newer FTS contentless-delete option. Fixes now use validated transaction paths, barrier-aware RunManifest input guards, and contentless FTS with safe purge-time rebuild; all cases are covered by the final 47-test suite.
 
 Open blockers:
-- Exact Credential Broker / OS key-store policy is unknown; required before Step 8 real model/provider connection.
-- Step 7 checkpoint commit is pending; branch `nexus-v2-runtime` already exists and prior stage checkpoints are committed.
+- Independent real Model/Search Providers and Credential Broker are intentionally deferred by operator decision. Current deployment shape is **Codex-hosted Nexus**: Codex supplies the client/model execution environment; Nexus provides local governance, state, Trace, Memory, verification and integrity. This is not a Core failure and is not Step 8 PASS.
+- Step 8 hosted bridge is not implemented/connected: current Codex session tools cannot be shown to ingest a real Host execution into a running Nexus Task/Run/Artifact/Evidence/Trace here; exact underlying model identifiers must remain absent rather than guessed. This specific Hosted integration remains open; independent Provider APIs remain deferred.
+- Step 9 is **PARTIAL**, not blocked on its former Runtime safety prerequisite: four-mode gates, authorized inspect APIs and a thin client CLI now exist and have isolated tests. The handbook's mode-change TraceEvent linkage is still absent (mode changes are recorded only in immutable `runtime_mode_events`/CommandLedger), and no persistent runtime database is initialized for end-to-end CLI validation.
+- Step 10 formal Kernel Acceptance is **NOT_STARTED**. The 65-test regression mapping in `eval/regression/2026-09-25-mode-inspect-regression.md` is evidence, not a full T1–T12 acceptance run. T2/T5/T9/T12 remain PARTIAL; required old-snapshot recovery drill has not been performed against a deployed root.
+- Existing `auth.json` / `.env` files remain unread and are not Nexus credential sources. No persistent runtime database or real records exist. Prior Steps 0–7 checkpoints are committed on `nexus-v2-runtime`.
 
 Known UNKNOWN Effects: None; Nexus runtime/data not initialized.  
 Pending Purge: None.  
-Pending migration: `0006_memory_purge.sql` is test-applied only; there is no persistent runtime database to migrate.
-Rollback point: Step 6 checkpoint `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: 2026-09-25 Step 7 full suite (47 tests), static checks, synthetic T3 approval, PARTIAL barrier, purge and old-backup recovery; branch `nexus-v2-runtime`; no persistent Nexus runtime database initialized.
-Next allowed action: commit Step 7 checkpoint, then begin only Step 8 after recording its Step Card.
+Pending migration: `0007_runtime_modes.sql` is test-applied only; there is no persistent runtime database to migrate.
+Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Last verified state: 2026-09-25 full 65-test regression and static checks; mode/inspect correction passes in isolated stores; branch `nexus-v2-runtime`; persistent Nexus runtime database not initialized; deployment remains DEVELOPMENT.
+Next allowed action: resolve the mode TraceEvent linkage without changing frozen Contracts, implement/connect the Codex-host execution-to-Nexus bridge with only verifiable host facts, then complete Step 9 and run the full Step 10 T1–T12/recovery acceptance. Provider work remains deferred until a standalone or multi-model deployment is explicitly requested.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
@@ -452,6 +468,41 @@ Evidence:
 - Disposable synthetic SQLite/filesystem only. No persistent Nexus DB or user history initialized, no real provider/search/tool/network used, no secrets committed.
 - T3 approval payload mismatch denied; T1-only and false quiescence tests remained quarantined/partial. Restore from a pre-purge test backup replays installed/released PurgeLedger events, leaves barrier RELEASED only after deleting the restored payload, and returns no raw/admitted search results.
 
+## IMPLEMENTATION STEP 8 — RUNNING (CODEX-HOSTED / ATTACHED)
+
+Goal:
+Integrate the actual Codex Host as an attached executor: Host-produced MODEL/TOOL/Search results can be accepted into Nexus Task/Run/Artifact/Evidence/Verification/Trace with truthful provenance and existing authority/classification/effect gates. Do not recreate reasoning, planning, a model provider, or a search provider inside Nexus.
+
+Inputs:
+Committed Steps 1–7; Codex Host supplies actual execution; any reported host/model/capability identifiers must be supplied by an authoritative runtime interface and not inferred. Independent paid Model/Search Providers and real Credential Broker use are explicitly deferred until a future standalone Local Service or multi-model deployment.
+
+Allowed files:
+`adapters/client/` for the attached Codex bridge; narrowly scoped Step 8 tests under `tests/contract/`, `tests/integration/`, or `tests/recovery/`; versioned schema additions only if required to represent a host-attached execution truthfully and compatibly; and this status file. Do not modify Kernel policy ceilings or frozen contracts. Do not touch global/business `AGENTS.md`, global Skills/config, existing credentials, user data, persistent databases, or unrelated adapters.
+
+Forbidden files:
+Five Foundation Contract semantics; authorization/policy upper bounds; prior migrations or persisted history; real user payloads/secrets; existing auth/env files; any external-write adapter; client/UI/CLI; network or provider calls before a reviewed profile, egress grant and approved credential reference exist; provider selection inferred from the current Codex host or ambient credentials.
+
+Expected outputs:
+Small attached-host bridge which records host execution facts/results through controlled Core APIs; exact capability/ToolDescriptor association for a safe read-only operation; Search results with source URLs captured as Evidence; real artifact verification and trace linkage. If the existing MODEL schema cannot represent a genuinely unavailable model identifier without guessing, keep that exact ModelProfile/RouteDecision/standalone-provider subcase `DEFERRED` and do not synthesize an identifier.
+
+Exact tests:
+Run `.venv\\Scripts\\python.exe -m unittest discover -s tests -v`; targeted attached-host result ingestion, ToolDescriptor/authority boundary, provenance/source URL, integrity/verification, Trace and classification tests; mapped T10/T11 Hosted subcases; all-schema/default-policy validation; `pip check`; `compileall`; `git diff --check`; and secret-pattern scan. Do not run a real independent Provider call or resolve secrets.
+
+PASS criteria:
+Representative Hosted execution results must be persisted as Nexus Objects/Evidence and linked to Task/Run Trace under authority and classification checks; a reviewed read-only capability must be proven not to exceed its descriptor/grant; source URLs and integrity must be verifiable; no unknown model/provider identifiers may be fabricated. Independent Provider/Broker cases remain `DEFERRED / NOT_CONFIGURED`, not PASS.
+
+FAIL handling:
+If host identity or schema fields cannot be truthfully established, record only verifiable host facts and defer the exact unsupported subcase; do not modify frozen semantics or invent IDs. Independent provider work stays deferred.
+
+Rollback point:
+Step 7 commit `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`. Status-file pre-edit backup: `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-002245` (SHA-256 matched original before editing).
+
+Do NOT:
+- Guess a Provider from Codex host configuration or inspect secret values to find one.
+- Implement real model/search adapters against unselected providers.
+- Install hooks or frameworks, alter Kernel contracts/policy ceilings, or add real external-write tools.
+- Mark the stage PASS on fake-only tests or source inspection.
+
 Files changed:
 - `kernel/verification/`, `kernel/memory/`, `kernel/purge/`, `migrations/0006_memory_purge.sql`, four Step 7 schemas, migration version expectation and integration tests, and this status file.
 
@@ -463,4 +514,82 @@ Rollback point:
 - Step 6 commit `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
 
 Next:
-STEP 8 — one real Model Adapter, one reviewed read-only Tool, and one Search Provider (subject to Credential Broker blocker).
+STEP 9 — only after the documented Runtime mode and controlled inspect API prerequisites are resolved.
+
+## IMPLEMENTATION STEP 9 — FAIL (PRE-IMPLEMENTATION PREREQUISITE AUDIT)
+
+Goal:
+Deliver a client/user operation surface over controlled APIs for status, Approval, Effect UNKNOWN/reconciliation, PurgePlan/PARTIAL, and the four operating modes. The UI must not access SQLite directly; modes must be enforced by Runtime as required by the manual.
+
+Inputs:
+Committed Steps 1–7; Step 8 deferred as `DEFERRED / NOT_CONFIGURED`; existing Core services and disposable test fixtures.
+
+Allowed files:
+`adapters/client/`, `docs/user/`, and this status file, per the manual's Step 9 boundary. No direct SQLite access from the UI.
+
+Forbidden files:
+Foundation Contract changes; direct DB reads/writes from client code; provider/secret setup; external writes; modifications to Kernel/Runtime, policies, migrations, test truth, production data or global/business configuration during this Step 9 card.
+
+Expected outputs:
+Read-only status/Approval/Effect/Purge views backed by controlled Core APIs; explicit pending-action and PARTIAL rendering; Runtime-enforced NORMAL/SAFE/STATELESS/RECOVERY matrix; user documentation and T7/T9/T12 client acceptance evidence.
+
+Exact tests:
+The manual-mapped `nexus test acceptance` equivalent must verify T7 approval target/hash display and post-revocation denial, T9 PARTIAL presentation without completion claim, and T12 four-mode enforcement and recovery. Existing suite baseline: `.venv\Scripts\python.exe -m unittest discover -s tests -v` (47 passed), `pip check`, `compileall`, all-schema/default-policy validation, and `git diff --check`.
+
+PASS criteria:
+No boolean-only approval; no client direct DB access; users can see pending approvals, three-axis UNKNOWN state and PARTIAL purge; Runtime—not prompts/client presentation—enforces the mode matrix; applicable T7/T9/T12 tests pass.
+
+FAIL handling:
+Audit found no mode-state/enforcement API in `kernel/runtime/` and no authorized inspect/read APIs for Approval, Effect, PurgePlan or instance status. A client-only gate would violate the manual. No Step 9 source files were changed and Step 10 is not started because the sequential gate failed. Resolve the missing prerequisite under an explicitly authorized corrective step, preserving frozen Contracts, then rerun this card.
+
+Rollback point:
+Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; no Step 9 source changes exist. Status-file backups with verified SHA-256 include `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-003856` and `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-004019`.
+
+Do NOT:
+- Simulate mode security solely in CLI/client code.
+- Read SQLite directly from a UI/client or expose protected Approval hash metadata without authorization.
+- Advance to Step 10 or claim T1–T12 acceptance on the strength of the existing 47 tests.
+- Enable independent real providers or change Foundation Contracts.
+
+Files changed:
+- Only `docs/operator/IMPLEMENTATION_STATUS.md`; no Step 9 runtime/client code was changed.
+
+Known limitations:
+- No `adapters/client/`, `docs/user/`, or `eval/regression/` directory is present. There is no CLI `nexus test acceptance` command.
+- Existing tests cover significant Core contracts but do not establish Step 9 T7/T9 presentation or T12 mode/recovery acceptance. Provider-specific real adapter tests remain deferred.
+
+Next:
+## CORRECTIVE IMPLEMENTATION — RESTORE OMITTED MODE / INSPECT PREREQUISITES
+
+Goal:
+Implement the handbook's `set_mode(mode, command_id)` semantics and Runtime-enforced behavior for NORMAL/SAFE/STATELESS/RECOVERY, plus authorized read-only APIs needed by the Step 9 client. This is a corrective return to omitted Core/Runtime prerequisites; it does not alter any Foundation Contract.
+
+Inputs:
+Committed Steps 1–7; handbook §6.2, §7.2, §9 Step 9 and T7/T9/T12; disposable test data only; Step 8 provider work deferred.
+
+Allowed files:
+`kernel/runtime/`, narrowly required gates in `kernel/memory/`, `kernel/run/`, `kernel/effect/`, `kernel/purge/`, `adapters/storage/`, additive `migrations/`, and new focused tests under `tests/integration/` / `tests/recovery/`, plus this status file. Back up every existing file before editing it; additive migration only; no edits to applied migrations.
+
+Forbidden files:
+Five Foundation Contract semantics/schema compatibility; existing applied migrations; production data, secrets, provider configuration, global/business AGENTS or Skills; weakening policy, approval, classification, Trace, Effect, or Purge gates; changing old tests to make them pass.
+
+Expected outputs:
+Persisted, idempotent mode command and audit event; fail-closed Runtime gates matching the handbook's exact four-mode matrix across Memory, Trace, effects, and egress; no v2-core writes in RECOVERY; authority-scoped read-only projections for task/run, Approval, Effect (three axes), PurgePlan/PurgeRecord/barrier and instance health; protected Approval hash only returned when authorized. All clients remain service/API-only, never DB-direct.
+
+Exact tests:
+New isolated mode contract tests for the complete handbook matrix, command replay/conflict, unauthorized mode change, Memory gates, Trace minimum facts, SAFE effect restrictions, STATELESS isolation, RECOVERY bypass/no Core persistence, and mode persistence across reopen. Read APIs must be non-mutating, deny unauthorized/hash disclosure, and accurately surface UNKNOWN/PARTIAL. Then run `.venv\Scripts\python.exe -m unittest discover -s tests -v`, schema/policy validation, `pip check`, `compileall`, `git diff --check`, and secret scan. T7/T9/T12 are rerun in Step 9/10 after this correction passes.
+
+PASS criteria:
+Runtime—not UI or prompt—enforces every row in §7.2; persisted mode survives reopen; command ledger retry is idempotent; no unauthorized reads; no trace/payload or purge barrier bypass; all new and existing tests pass in disposable data.
+
+FAIL handling:
+Keep Step 5 reopened and Step 9/10 gated. Repair only the violated invariant; never ship a client-side imitation or default-open fallback.
+
+Rollback point:
+Committed Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; status pre-edit backup `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-004316` SHA-256 verified. No Core data exists.
+
+Do NOT:
+- Add a sixth Foundation Contract or rewrite existing v1 schemas/migrations.
+- Treat client display as the security boundary.
+- Connect independent providers, retrieve secrets, or enable external writes.
+- Move to Step 9 until this card passes.
