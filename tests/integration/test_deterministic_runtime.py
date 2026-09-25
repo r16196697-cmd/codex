@@ -1,6 +1,8 @@
 import json
+import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -537,6 +539,27 @@ class DeterministicRuntimeTests(unittest.TestCase):
                 self.runtime.schedule_node(**args)
             with self.store._connection() as conn:
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (run_id,)).fetchone()[0], 1)
+
+        # Existing kernel recovery Trace/classification is valid v13 history.
+        # Only ordinary Grant/Trust Anchor/Task use of this identity is blocked.
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        with closing(sqlite3.connect(data_root / "nexus.sqlite")) as legacy:
+            for trigger in ("kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"):
+                legacy.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            legacy.execute("DELETE FROM schema_migrations WHERE version>=14")
+            legacy.execute("PRAGMA user_version=13")
+            legacy.commit()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.trace = TraceRuntime(self.store, AuthorityService(self.store, self.policy))
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE actor_id='nexus-core-recovery'").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery' AND subject_type='TRACE_EVENT'").fetchone()[0], 2)
+        for run_id in ("run-e0", "run-e1"):
+            self.assertEqual(self.trace.replay_run(run_id)["status"], "CANCELLED")
 
     def _exercise_kernel_recovery_release_crash_window(self, release_mode):
         command_id = "cmd-recovery-release-" + release_mode

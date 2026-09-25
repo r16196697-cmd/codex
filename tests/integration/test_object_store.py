@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -233,10 +234,10 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64), (13, "0013_kernel_recovery_principal.sql", 64), (14, "0014_kernel_recovery_identity_isolation.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64), (13, "0013_kernel_recovery_principal.sql", 64), (14, "0014_kernel_recovery_identity_isolation.sql", 64), (15, "0015_kernel_recovery_identity_preexisting_guard.sql", 64)])
             self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
             kernel = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id='nexus-core-recovery'").fetchone()
             self.assertEqual(tuple(kernel), ("SERVICE", "ACTIVE"))
@@ -248,7 +249,7 @@ raise SystemExit(0)
 
     def test_v14_database_guards_recovery_identity_from_ordinary_authority_rows(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
             grant_values = ("direct-recovery-grant", None, "test_actor", "nexus-core-recovery", "[]", "[]", "[]", "[]", "2026-09-26T00:00:00Z", "2026-09-27T00:00:00Z", "ACTIVE", "1", None)
             sql = "INSERT INTO delegation_grants(grant_id,parent_grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version,credential_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
@@ -260,33 +261,70 @@ raise SystemExit(0)
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
                 conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('direct-recovery-task','nexus-core-recovery','CREATED','2026-09-26T00:00:00Z','direct-recovery-task-command',NULL)")
 
-    def test_persisted_v13_database_applies_v14_identity_guards(self) -> None:
+    def _restore_persisted_v13(self) -> Path:
         database_path = self.store.database_path
         self.store.close()
         legacy = sqlite3.connect(database_path)
         try:
             for trigger in ("kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"):
                 legacy.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-            legacy.execute("DELETE FROM schema_migrations WHERE version=14")
+            legacy.execute("DELETE FROM schema_migrations WHERE version>=14")
             legacy.execute("PRAGMA user_version=13")
             legacy.commit()
         finally:
             legacy.close()
+        return database_path
+
+    def test_persisted_v13_database_applies_v14_and_v15_identity_guards(self) -> None:
+        self._restore_persisted_v13()
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=14").fetchone()[0], "0014_kernel_recovery_identity_isolation.sql")
+            self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=15").fetchone()[0], "0015_kernel_recovery_identity_preexisting_guard.sql")
             triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
             self.assertTrue({"kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"}.issubset(triggers))
+
+    def _assert_v13_contamination_rejected(self, table: str, statement: str) -> None:
+        database_path = self._restore_persisted_v13()
+        with closing(sqlite3.connect(database_path)) as legacy:
+            legacy.execute(statement)
+            original = legacy.execute(f"SELECT * FROM {table} WHERE rowid=(SELECT MAX(rowid) FROM {table})").fetchone()
+            legacy.commit()
+        reopened = None
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                reopened = ObjectStore(self.root / "data")
+        finally:
+            if reopened is not None:
+                reopened.close()
+        with closing(sqlite3.connect(database_path)) as unchanged:
+            self.assertEqual(unchanged.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(unchanged.execute("SELECT name FROM schema_migrations WHERE version=14").fetchone()[0], "0014_kernel_recovery_identity_isolation.sql")
+            self.assertIsNone(unchanged.execute("SELECT 1 FROM schema_migrations WHERE version=15").fetchone())
+            self.assertEqual(unchanged.execute(f"SELECT * FROM {table} WHERE rowid=(SELECT MAX(rowid) FROM {table})").fetchone(), original)
+            self.assertEqual(unchanged.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+    def test_v13_recovery_grant_issuer_contamination_fails_closed(self) -> None:
+        self._assert_v13_contamination_rejected("delegation_grants", "INSERT INTO delegation_grants(grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version) VALUES('contaminated-grant','nexus-core-recovery','test_actor','[]','[]','[]','[]','2026-09-26T00:00:00Z','2026-09-27T00:00:00Z','ACTIVE','1')")
+
+    def test_v13_recovery_grant_recipient_contamination_fails_closed(self) -> None:
+        self._assert_v13_contamination_rejected("delegation_grants", "INSERT INTO delegation_grants(grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version) VALUES('contaminated-grant','test_actor','nexus-core-recovery','[]','[]','[]','[]','2026-09-26T00:00:00Z','2026-09-27T00:00:00Z','ACTIVE','1')")
+
+    def test_v13_recovery_trust_anchor_contamination_fails_closed(self) -> None:
+        self._assert_v13_contamination_rejected("trust_anchors", "INSERT INTO trust_anchors(anchor_id,principal_id,policy_ref) VALUES('contaminated-anchor','nexus-core-recovery','1')")
+
+    def test_v13_recovery_task_requester_contamination_fails_closed(self) -> None:
+        self._assert_v13_contamination_rejected("tasks", "INSERT INTO tasks(task_id,requester_id,status,created_at,command_id) VALUES('contaminated-task','nexus-core-recovery','CREATED','2026-09-26T00:00:00Z','contaminated-task-command')")
 
     def test_runtime_mode_lookup_failure_does_not_assume_normal(self) -> None:
         with mock.patch.object(self.store, "_connection", side_effect=sqlite3.OperationalError("mode table unavailable")):
             with self.assertRaisesRegex(MigrationError, "could not be read safely"):
                 self.store._require_mode("core_write")
 
-    def test_v6_snapshot_replays_v7_through_v14_migrations_deterministically(self) -> None:
+    def test_v6_snapshot_replays_v7_through_v15_migrations_deterministically(self) -> None:
         database_path = self.root / "data" / "nexus.sqlite"
         self.store.close()
         legacy_conn = sqlite3.connect(database_path)
@@ -352,9 +390,9 @@ raise SystemExit(0)
 
         self.store = ObjectStore(self.root / "data")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (14, "0014_kernel_recovery_identity_isolation.sql"))
+            self.assertEqual(tuple(row), (15, "0015_kernel_recovery_identity_preexisting_guard.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
@@ -395,7 +433,7 @@ raise SystemExit(0)
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 14)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             self.assertIsNone(migrated["task_id"])
