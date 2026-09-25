@@ -387,17 +387,20 @@ class TraceRuntime:
                     if subtask:
                         attempt = conn.execute("SELECT attempt_id,outcome FROM subtask_attempts WHERE run_id=? AND subtask_id=?", (run_id, run["subtask_id"])).fetchone()
                         # Legacy single-run rows are represented by the migration backfill.
-                        if not attempt:
+                        if not attempt and not (run["status"] == "CREATED" and next_state == "CANCELLED"):
                             raise InvalidRunTransition("SUBTASK_ATTEMPT_BINDING_MISMATCH")
-                        if subtask["final_attempt_id"] is not None and subtask["final_attempt_id"] != attempt["attempt_id"]:
+                        # A setup Run can be cancelled before it is bound as a DAG
+                        # attempt. Preserve that Run/Trace fact without finalizing
+                        # the logical Node, which remains eligible for scheduling.
+                        if attempt and subtask["final_attempt_id"] is not None and subtask["final_attempt_id"] != attempt["attempt_id"]:
                             raise InvalidRunTransition("SUBTASK_ALREADY_FINALIZED_BY_OTHER_ATTEMPT")
                         attempt_outcome = {"READY": "READY", "RUNNING": "RUNNING", "WAITING": "RUNNING", "VERIFYING": "RUNNING", "SUCCEEDED": "SUCCEEDED", "FAILED": "FAILED", "CANCELLED": "CANCELLED"}.get(next_state)
-                        if attempt_outcome and attempt["outcome"] != attempt_outcome:
+                        if attempt and attempt_outcome and attempt["outcome"] != attempt_outcome:
                             conn.execute("UPDATE subtask_attempts SET outcome=? WHERE attempt_id=?", (attempt_outcome, attempt["attempt_id"]))
                         # A failed attempt is not a failed logical Node until the coordinator
                         # explicitly finalizes it; this is what permits a governed retry.
                         subtask_state = {"READY": "READY", "RUNNING": "RUNNING", "WAITING": "WAITING", "SUCCEEDED": "SUCCEEDED", "FAILED": "WAITING", "CANCELLED": "CANCELLED"}.get(next_state)
-                        if subtask_state:
+                        if attempt and subtask_state:
                             if next_state in {"SUCCEEDED", "CANCELLED"}:
                                 final_outcome = next_state
                                 cursor = conn.execute("UPDATE subtasks SET status=?,final_attempt_id=?,final_outcome=?,finalized_at=? WHERE subtask_id=? AND status=? AND final_attempt_id IS NULL", (subtask_state, attempt["attempt_id"], final_outcome, datetime.now(timezone.utc).isoformat(), run["subtask_id"], subtask["status"]))

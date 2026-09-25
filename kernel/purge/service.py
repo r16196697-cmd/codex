@@ -23,8 +23,10 @@ class PurgeService:
         self.store, self.authority, self.memory = store, authority, memory
         self.journal = IndependentPurgeJournal(independent_journal_path, store.data_root)
 
-    def plan(self, *, command_id: str, plan_id: str, target_refs: list[str]) -> dict:
+    def plan(self, *, command_id: str, plan_id: str, task_id: str, target_refs: list[str]) -> dict:
         self.store._require_mode("core_write")
+        if not task_id:
+            raise RuntimeDenied("PURGE_TASK_REQUIRED")
         targets = sorted(set(target_refs))
         if not targets:
             raise RuntimeDenied("PURGE_TARGETS_REQUIRED")
@@ -35,9 +37,10 @@ class PurgeService:
         if existing != set(targets):
             raise RuntimeDenied("PURGE_TARGET_NOT_FOUND")
         closure = self._closure(targets)
-        body = {"schema_id": "nexus.purge_plan", "schema_version": 1, "plan_id": plan_id, "target_refs": targets, "descendant_refs": sorted(set(closure) - set(targets)), "affected_indexes": ["raw_history", "admitted_memory"], "planned_actions": ["QUIESCE_RUNS", "RECONCILE_EFFECTS", "DELETE_PAYLOADS", "DELETE_INDEX_ROWS", "REDACT_DERIVED_METADATA", "VERIFY_UNAVAILABLE"], "lineage_revision": self._lineage_revision(), "created_at": _now(), "policy_version": self.authority.policy["policy_version"]}
+        self._assert_refs_belong_to_task(task_id, closure)
+        body = {"schema_id": "nexus.purge_plan", "schema_version": 2, "plan_id": plan_id, "task_id": task_id, "target_refs": targets, "descendant_refs": sorted(set(closure) - set(targets)), "affected_indexes": ["raw_history", "admitted_memory"], "planned_actions": ["QUIESCE_RUNS", "RECONCILE_EFFECTS", "DELETE_PAYLOADS", "DELETE_INDEX_ROWS", "REDACT_DERIVED_METADATA", "VERIFY_UNAVAILABLE"], "lineage_revision": self._lineage_revision(), "created_at": _now(), "policy_version": self.authority.policy["policy_version"]}
         body["plan_hash"] = hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()
-        self.store._validate("nexus.purge_plan@1.schema.json", body)
+        self.store._validate("nexus.purge_plan@2.schema.json", body)
         digest = self.store._request_hash("create_purge_plan", body)
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -46,7 +49,7 @@ class PurgeService:
                     conn.commit()
                     return body
                 self.store._record_command(conn, command_id, "create_purge_plan", digest, {"plan_id": plan_id, "plan_hash": body["plan_hash"]})
-                conn.execute("INSERT INTO purge_plan_records VALUES(?,?,?,?,?,?)", (plan_id, body["plan_hash"], body["lineage_revision"], _canon(body), command_id, _now()))
+                conn.execute("INSERT INTO purge_plan_records(plan_id,plan_hash,lineage_revision,plan_json,command_id,created_at,task_id) VALUES(?,?,?,?,?,?,?)", (plan_id, body["plan_hash"], body["lineage_revision"], _canon(body), command_id, _now(), task_id))
                 conn.commit()
                 return body
             except Exception:
@@ -55,16 +58,26 @@ class PurgeService:
 
     def execute(self, *, command_id: str, record_id: str, barrier_id: str, plan: dict, grant_id: str, task_id: str, approval_id: str, quiesce_run=None) -> dict:
         self.store._require_mode("core_write")
-        self.store._validate("nexus.purge_plan@1.schema.json", plan)
+        schema_version = plan.get("schema_version") if isinstance(plan, dict) else None
+        if schema_version == 1:
+            self.store._validate("nexus.purge_plan@1.schema.json", plan)
+            raise RuntimeDenied("PURGE_PLAN_TASK_UNBOUND_LEGACY")
+        self.store._validate("nexus.purge_plan@2.schema.json", plan)
         body = dict(plan)
         claimed_hash = body.pop("plan_hash")
         if hashlib.sha256(_canon(body).encode("utf-8")).hexdigest() != claimed_hash:
             raise RuntimeDenied("PURGE_PLAN_HASH_MISMATCH")
         auth_request = {"task": task_id, "resource": plan["plan_id"], "action": "PURGE_EXECUTE", "audience": "nexus-runtime", "effect_id": record_id}
         self.authority.evaluate_authorization(grant_id, auth_request, command_id + "-authorize", approval_id=approval_id, payload_integrity_hash=claimed_hash)
+        if plan["task_id"] != task_id:
+            raise RuntimeDenied("PURGE_PLAN_TASK_MISMATCH")
         with self.store._connection() as conn:
-            persisted_plan = conn.execute("SELECT plan_hash,plan_json FROM purge_plan_records WHERE plan_id=?", (plan["plan_id"],)).fetchone()
-        if not persisted_plan or persisted_plan["plan_hash"] != claimed_hash or json.loads(persisted_plan["plan_json"]) != plan:
+            persisted_plan = conn.execute("SELECT plan_hash,plan_json,task_id FROM purge_plan_records WHERE plan_id=?", (plan["plan_id"],)).fetchone()
+        if not persisted_plan or persisted_plan["task_id"] is None:
+            raise RuntimeDenied("PURGE_PLAN_TASK_UNBOUND_LEGACY")
+        if persisted_plan["task_id"] != task_id:
+            raise RuntimeDenied("PURGE_PLAN_TASK_MISMATCH")
+        if persisted_plan["plan_hash"] != claimed_hash or json.loads(persisted_plan["plan_json"]) != plan:
             raise RuntimeDenied("PURGE_PLAN_NOT_PERSISTED_OR_MISMATCHED")
         closure = self._closure(plan["target_refs"])
         if sorted(set(closure) - set(plan["target_refs"])) != plan["descendant_refs"] or self._lineage_revision() != plan["lineage_revision"]:
@@ -81,7 +94,26 @@ class PurgeService:
         if prior_execution and prior_execution["status"] == "COMPLETED":
             return {"record_id": record_id, "status": "COMPLETED", "purged_refs": protected}
         if prior_execution and prior_execution["status"] == "PARTIAL":
-            return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": json.loads(prior_execution["unresolved_json"])}
+            unresolved_prior = json.loads(prior_execution["unresolved_json"])
+            if unresolved_prior != ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"]:
+                return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
+            # Payload deletion is already durable, but the independent release
+            # journal write failed. Keep the barrier held and retry only this
+            # finalization path after rechecking its safety preconditions.
+            with self.store._connection() as conn:
+                barrier = conn.execute("SELECT plan_id,lineage_revision,status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
+            if not barrier or barrier["plan_id"] != plan["plan_id"] or barrier["lineage_revision"] != plan["lineage_revision"] or barrier["status"] not in {"ACTIVE", "PARTIAL"}:
+                raise RuntimeDenied("PURGE_RELEASE_RETRY_BARRIER_MISMATCH")
+            active_runs = self._active_runs(protected)
+            unknown_effects = self._unknown_effects(protected)
+            if active_runs or unknown_effects or self._lineage_revision() != plan["lineage_revision"] or self._closure(plan["target_refs"]) != protected:
+                return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
+            self._purge_payloads_and_indexes(protected)
+            try:
+                self.journal.append(action="BARRIER_RELEASED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected)
+            except Exception:
+                return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
+            return self._release(command_id, record_id, barrier_id, plan, protected, digest)
         if not prior_execution:
             # Journal first: a crash before the SQLite barrier only creates a conservative restore hold, never an unlogged purge.
             self.journal.append(action="BARRIER_INSTALLED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected)
@@ -267,7 +299,7 @@ class PurgeService:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                conn.execute("UPDATE purge_barriers SET status='RELEASED' WHERE barrier_id=? AND status='ACTIVE'", (barrier_id,))
+                conn.execute("UPDATE purge_barriers SET status='RELEASED' WHERE barrier_id=? AND status IN ('ACTIVE','PARTIAL')", (barrier_id,))
                 started_at = conn.execute("SELECT started_at FROM purge_execution_records WHERE record_id=?", (record_id,)).fetchone()[0]
                 completed_at = _now()
                 record = self._record_document(record_id, plan, barrier_id, "COMPLETED", [], started_at, completed_at)
@@ -346,6 +378,24 @@ class PurgeService:
             return sorted(found)
         finally:
             if own: conn.close()
+
+    def _assert_refs_belong_to_task(self, task_id, refs):
+        refs = sorted(set(refs))
+        if not refs:
+            raise RuntimeDenied("PURGE_TARGETS_REQUIRED")
+        marks = ",".join("?" for _ in refs)
+        with self.store._connection() as conn:
+            rows = conn.execute(
+                "SELECT o.object_id,r.task_id FROM objects o "
+                "LEFT JOIN object_envelopes e USING(object_id) "
+                "LEFT JOIN runs r ON r.run_id=e.created_by_run "
+                f"WHERE o.object_id IN ({marks})",
+                refs,
+            ).fetchall()
+        if len(rows) != len(refs) or any(row["task_id"] is None for row in rows):
+            raise RuntimeDenied("PURGE_PLAN_OBJECT_TASK_UNRESOLVED")
+        if any(row["task_id"] != task_id for row in rows):
+            raise RuntimeDenied("PURGE_PLAN_TASK_MISMATCH")
 
     def _lineage_revision(self, conn=None):
         own = conn is None

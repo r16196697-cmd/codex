@@ -229,10 +229,10 @@ class ObjectStore:
         try:
             with self._connection() as conn:
                 row = conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()
-        except sqlite3.OperationalError:
-            return "NORMAL"
-        if not row:
-            raise MigrationError("Runtime mode state is missing.")
+        except sqlite3.OperationalError as exc:
+            raise MigrationError("Runtime mode state could not be read safely.") from exc
+        if not row or row["mode"] not in {"NORMAL", "SAFE", "STATELESS", "RECOVERY"}:
+            raise MigrationError("Runtime mode state is missing or invalid.")
         return row["mode"]
 
     def _require_mode(self, capability: str) -> None:

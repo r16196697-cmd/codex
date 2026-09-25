@@ -332,7 +332,7 @@ class InspectService:
         self._authorize(grant_id, task_id, f"purge:{plan_id}")
         task_context = self._task_context(task_id)
         with self.store._connection() as conn:
-            row = conn.execute("SELECT plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
+            row = conn.execute("SELECT plan_json,task_id FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             executions = [dict(item) for item in conn.execute(
                 "SELECT record_id,barrier_id,status,unresolved_json,started_at,completed_at FROM purge_execution_records WHERE plan_id=? ORDER BY started_at", (plan_id,)
             )]
@@ -345,9 +345,13 @@ class InspectService:
             )]
         if not row:
             raise RuntimeDenied("INSPECT_NOT_FOUND")
+        if row["task_id"] is None:
+            raise RuntimeDenied("PURGE_PLAN_TASK_UNBOUND_LEGACY")
+        if row["task_id"] != task_id:
+            raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         plan = json.loads(row["plan_json"])
-        # A PurgePlan stores object references but has no task field. Verify
-        # every referenced object is within the authorized Task boundary.
+        # The plan is bound to this Task; also validate every still-live
+        # reference against the authorized Task boundary before projection.
         with self.store._connection() as conn:
             refs = set(plan["target_refs"]) | set(plan["descendant_refs"])
             object_rows = conn.execute(

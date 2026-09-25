@@ -74,6 +74,26 @@ class SchemaStructureTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
                 validate(schema, invalid)
 
+    def test_purge_plan_v2_binds_all_targets_to_a_task(self) -> None:
+        schema = SCHEMA_DIR / "nexus.purge_plan@2.schema.json"
+        plan = {
+            "schema_id": "nexus.purge_plan",
+            "schema_version": 2,
+            "plan_id": "purge_plan_1",
+            "task_id": "task_1",
+            "target_refs": ["object_1"],
+            "descendant_refs": [],
+            "affected_indexes": ["raw_history", "admitted_memory"],
+            "planned_actions": ["QUIESCE_RUNS", "RECONCILE_EFFECTS", "DELETE_PAYLOADS", "DELETE_INDEX_ROWS", "REDACT_DERIVED_METADATA", "VERIFY_UNAVAILABLE"],
+            "lineage_revision": 0,
+            "plan_hash": "a" * 64,
+            "created_at": "2026-09-25T12:00:00Z",
+            "policy_version": "1",
+        }
+        validate(schema, plan)
+        with self.assertRaises(ValidationError):
+            validate(schema, {key: value for key, value in plan.items() if key != "task_id"})
+
     def test_root_and_child_run_executor_invariants(self) -> None:
         path = SCHEMA_DIR / "nexus.run@1.schema.json"
         root = {"schema_id": "nexus.run", "schema_version": 1, "run_id": "run_root", "task_id": "task_1", "executor_kind": "ORCHESTRATOR", "status": "CREATED", "grant_id": "grant_1", "data_boundary": boundary(), "created_at": "2026-09-24T12:00:00Z"}

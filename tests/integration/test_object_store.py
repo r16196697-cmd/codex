@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from jsonschema import ValidationError
 
@@ -228,18 +229,26 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64)])
+            self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
 
-    def test_v6_snapshot_replays_v7_v8_v9_v10_and_v11_migrations_deterministically(self) -> None:
+    def test_runtime_mode_lookup_failure_does_not_assume_normal(self) -> None:
+        with mock.patch.object(self.store, "_connection", side_effect=sqlite3.OperationalError("mode table unavailable")):
+            with self.assertRaisesRegex(MigrationError, "could not be read safely"):
+                self.store._require_mode("core_write")
+
+    def test_v6_snapshot_replays_v7_through_v12_migrations_deterministically(self) -> None:
         database_path = self.root / "data" / "nexus.sqlite"
         self.store.close()
         legacy_conn = sqlite3.connect(database_path)
         try:
             conn = legacy_conn
             conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DROP INDEX IF EXISTS purge_plan_records_task_idx")
+            conn.execute("ALTER TABLE purge_plan_records DROP COLUMN task_id")
             conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_identity_immutable")
             conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_no_delete")
             conn.execute("DROP TRIGGER IF EXISTS subtasks_identity_immutable")
@@ -291,9 +300,9 @@ raise SystemExit(0)
 
         self.store = ObjectStore(self.root / "data")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (11, "0011_subtask_attempts.sql"))
+            self.assertEqual(tuple(row), (12, "0012_purge_plan_task_binding.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 

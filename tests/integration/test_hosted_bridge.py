@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from jsonschema.exceptions import ValidationError
@@ -90,7 +91,7 @@ class HostedBridgeTests(unittest.TestCase):
         for command in ("hosted-e2e-root-create", "hosted-e2e-trace-input", "hosted-e2e-root-ready", "hosted-e2e-root-running", "hosted-e2e-root-verifying", "hosted-e2e-root-succeeded", "hosted-search-query-trace"):
             self.resource_scope.append("evt-" + command)
         for prefix in ("hosted-model", "hosted-tool", "hosted-search"):
-            for suffix in ("create-run", "ready", "running", "output-trace-object", "close-verifying", "close-terminal"):
+            for suffix in ("create-run", "ready", "running", "setup-cancel", "output-trace-object", "close-verifying", "close-terminal"):
                 self.resource_scope.append("evt-" + prefix + "-" + suffix)
         self.resource_scope.extend(("evt-hosted-search-trace-evidence", "evt-hosted-search-evidence-trace-evidence", "evt-hosted-search-official-trace-evidence"))
         self.resource_scope.append("evt-hosted-search-injection-trace-evidence")
@@ -157,7 +158,7 @@ class HostedBridgeTests(unittest.TestCase):
             resources.extend([self.search_injection_evidence_id, "hosted-search-missing-evidence", "evt-hosted-search-injection-trace-evidence", "hosted-search-conflict-candidate", "evt-hosted-search-official-trace-evidence"])
             if self.operator_id == "human-root":
                 resources.append("hosted-model-memory-candidate")
-        commands = [command_prefix+"-create-run", command_prefix+"-ready", command_prefix+"-running", command_prefix+"-output-trace-object", "hosted-"+command_prefix.split("-")[1]+"-close-verifying", "hosted-"+command_prefix.split("-")[1]+"-close-terminal"]
+        commands = [command_prefix+"-create-run", command_prefix+"-ready", command_prefix+"-running", command_prefix+"-setup-cancel", command_prefix+"-output-trace-object", "hosted-"+command_prefix.split("-")[1]+"-close-verifying", "hosted-"+command_prefix.split("-")[1]+"-close-terminal"]
         if not tool:
             commands.append("hosted-search-trace-evidence")
         for command in commands:
@@ -177,14 +178,14 @@ class HostedBridgeTests(unittest.TestCase):
 
     def _child_event_classes(self, prefix, actor, grant_id):
         result = {}
-        for key, suffix in (("create","create-run"),("ready","ready"),("running","running")):
+        for key, suffix in (("create","create-run"),("ready","ready"),("running","running"),("cancelled","setup-cancel")):
             event_id = "evt-"+prefix+"-"+suffix
             assertion_id = "class-"+prefix+"-"+key
             self._add_class(assertion_id,"TRACE_EVENT",event_id,actor,grant_id)
             result[key]=assertion_id
         return result
 
-    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id):
+    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id, subtask_id="hosted-model-node"):
         self._child_grant(grant_id,actor,run_id,manifest_id,artifact_id,command_id,tool=kind=="TOOL")
         run_class="class-"+run_id
         manifest_class="class-"+manifest_id
@@ -192,9 +193,11 @@ class HostedBridgeTests(unittest.TestCase):
         self._add_class(manifest_class,"OBJECT",manifest_id,actor,grant_id)
         events=self._child_event_classes(command_id,actor,grant_id)
         run={"schema_id":"nexus.run","schema_version":1,"run_id":run_id,"task_id":self.task_id,
-             "subtask_id":"hosted-model-node" if kind=="MODEL" else "hosted-tool-node",
+             "subtask_id":subtask_id if kind=="MODEL" else "hosted-tool-node",
              "parent_run_id":self.root_run_id,"executor_kind":kind,"status":"CREATED","grant_id":grant_id,
              "data_boundary":self.boundary,"classification_assertion_ref":run_class,"created_at":datetime.now(timezone.utc).isoformat()}
+        if run["subtask_id"] is None:
+            run.pop("subtask_id")
         common={"runtime_version":"0.1","policy_version":"1","schema_versions":{"nexus.run_manifest":2},
                 "input_object_refs":[self.input_id,self.contract_id],"authority_grant_ref":grant_id,
                 "data_boundary":self.boundary,"classification_assertion_ref":run_class}
@@ -208,6 +211,39 @@ class HostedBridgeTests(unittest.TestCase):
         return self.bridge.create_child_run(command_id=command_id,run=run,manifest=manifest,parent_grant_id="hosted-root-grant",
             account_id="hosted-budget",estimated_units=1,manifest_object_id=manifest_id,
             manifest_classification_assertion_ref=manifest_class,event_classification_assertion_refs=events)
+
+    def test_child_setup_failure_cancels_run_and_releases_budget_reservation(self):
+        with mock.patch.object(self.runtime, "bind_manifest", side_effect=RuntimeError("injected manifest bind failure")):
+            with self.assertRaisesRegex(RuntimeError, "injected manifest bind failure"):
+                self._start_child(
+                    "MODEL", self.model_run_id, self.model_manifest_id,
+                    self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model",
+                    "hosted-model",
+                )
+        with self.store._connection() as conn:
+            reservation = conn.execute(
+                "SELECT reservation_id,state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)
+            ).fetchone()
+            self.assertIsNotNone(reservation)
+            self.assertEqual(reservation["state"], "RELEASED")
+            self.assertEqual(
+                [row[0] for row in conn.execute(
+                    "SELECT action FROM budget_ledger WHERE reservation_id=? ORDER BY ledger_seq",
+                    (reservation["reservation_id"],),
+                )],
+                ["RESERVED", "RELEASED"],
+            )
+            self.assertEqual(
+                conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0],
+                "CANCELLED",
+            )
+            subtask = conn.execute("SELECT status,final_attempt_id FROM subtasks WHERE task_id=? AND subtask_id='hosted-model-node'", (self.task_id,)).fetchone()
+            self.assertEqual((subtask["status"], subtask["final_attempt_id"]), ("PENDING", None))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 0)
+            account = conn.execute(
+                "SELECT reserved,child_runs_reserved,model_calls_reserved FROM budget_accounts WHERE account_id='hosted-budget'"
+            ).fetchone()
+            self.assertEqual(tuple(account), (0, 0, 0))
 
     def test_codex_host_model_receipt_and_real_read_only_tool_run_survive_reopen(self):
         if self.fixture_already_completed:

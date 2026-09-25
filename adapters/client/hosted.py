@@ -145,6 +145,8 @@ class CodexHostedBridge:
             raise ValueError("Hosted bridge only records child MODEL or TOOL Runs")
         if manifest.get("executor_kind") != kind:
             raise ValueError("Run and Manifest executor_kind differ")
+        if not event_classification_assertion_refs.get("cancelled"):
+            raise ValueError("Hosted child setup requires a pre-authorized cancellation classification")
         if run.get("subtask_id") and kind == "MODEL" and manifest.get("schema_version") == 2:
             manifest = {**manifest, "route_decision_ref": "route-" + run["run_id"]}
         if kind == "MODEL" and (manifest.get("execution_source") != "CODEX_HOST_DECLARED" or manifest.get("model_identity_status") != "UNAVAILABLE"):
@@ -178,42 +180,62 @@ class CodexHostedBridge:
         create_command = command_id + "-create-run"
         ready_command = command_id + "-ready"
         running_command = command_id + "-running"
-        self.trace.create_run(
-            run,
-            command_id=create_command,
-            event_classification_assertion_ref=event_classification_assertion_refs["create"],
-        )
-        self.runtime.bind_manifest(
-            command_id=command_id + "-bind-manifest",
-            run_id=run["run_id"],
-            manifest_object_id=manifest_object_id,
-            manifest_classification_assertion_ref=manifest_classification_assertion_ref,
-            manifest=manifest,
-        )
-        if run.get("subtask_id"):
-            self.runtime.bind_hosted_run_to_subtask(
-                command_id=command_id + "-bind-subtask",
-                task_id=run["task_id"],
-                root_run_id=run["parent_run_id"],
-                subtask_id=run["subtask_id"],
-                child_run_id=run["run_id"],
-                requested_capability=requested_capability,
-                attempt_reason=attempt_reason,
+        try:
+            self.trace.create_run(
+                run,
+                command_id=create_command,
+                event_classification_assertion_ref=event_classification_assertion_refs["create"],
             )
-        self.trace.transition_run(
-            command_id=ready_command,
-            run_id=run["run_id"],
-            expected_state="CREATED",
-            next_state="READY",
-            classification_assertion_ref=event_classification_assertion_refs["ready"],
-        )
-        self.trace.transition_run(
-            command_id=running_command,
-            run_id=run["run_id"],
-            expected_state="READY",
-            next_state="RUNNING",
-            classification_assertion_ref=event_classification_assertion_refs["running"],
-        )
+            self.runtime.bind_manifest(
+                command_id=command_id + "-bind-manifest",
+                run_id=run["run_id"],
+                manifest_object_id=manifest_object_id,
+                manifest_classification_assertion_ref=manifest_classification_assertion_ref,
+                manifest=manifest,
+            )
+            if run.get("subtask_id"):
+                self.runtime.bind_hosted_run_to_subtask(
+                    command_id=command_id + "-bind-subtask",
+                    task_id=run["task_id"],
+                    root_run_id=run["parent_run_id"],
+                    subtask_id=run["subtask_id"],
+                    child_run_id=run["run_id"],
+                    requested_capability=requested_capability,
+                    attempt_reason=attempt_reason,
+                )
+            self.trace.transition_run(
+                command_id=ready_command,
+                run_id=run["run_id"],
+                expected_state="CREATED",
+                next_state="READY",
+                classification_assertion_ref=event_classification_assertion_refs["ready"],
+            )
+            self.trace.transition_run(
+                command_id=running_command,
+                run_id=run["run_id"],
+                expected_state="READY",
+                next_state="RUNNING",
+                classification_assertion_ref=event_classification_assertion_refs["running"],
+            )
+        except Exception as setup_error:
+            try:
+                with self.store._connection() as conn:
+                    persisted = conn.execute("SELECT status FROM runs WHERE run_id=?", (run["run_id"],)).fetchone()
+                if persisted:
+                    if persisted["status"] in {"CREATED", "READY", "RUNNING", "WAITING", "VERIFYING"}:
+                        self.trace.transition_run(
+                            command_id=command_id + "-setup-cancel",
+                            run_id=run["run_id"],
+                            expected_state=persisted["status"],
+                            next_state="CANCELLED",
+                            classification_assertion_ref=event_classification_assertion_refs["cancelled"],
+                        )
+                    elif persisted["status"] != "CANCELLED":
+                        raise RuntimeError("HOSTED_CHILD_SETUP_REACHED_TERMINAL_RUN")
+                self.budget.release(command_id=command_id + "-budget-release", reservation_id=reservation_id)
+            except Exception as compensation_error:
+                raise RuntimeError("HOSTED_CHILD_SETUP_COMPENSATION_FAILED") from compensation_error
+            raise
         return {"run_id": run["run_id"], "executor_kind": kind, "status": "RUNNING", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id}
 
     def record_output(

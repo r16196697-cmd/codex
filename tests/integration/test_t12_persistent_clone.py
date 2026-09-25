@@ -111,7 +111,7 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         trace.transition_run(command_id="t12-root-succeeded",run_id=root_run,expected_state="VERIFYING",next_state="SUCCEEDED",classification_assertion_ref="class-t12-root-succeeded")
         journal = base / "independent" / "purge.jsonl"
         purge = PurgeService(store,authority,memory,independent_journal_path=journal)
-        plan = purge.plan(command_id="t12-plan-command",plan_id="t12-purge-plan",target_refs=[input_id])
+        plan = purge.plan(command_id="t12-plan-command",plan_id="t12-purge-plan",task_id=task_id,target_refs=[input_id])
         approval = {"schema_id":"nexus.approval_decision","schema_version":1,"approval_id":"t12-purge-approval",
             "approver_principal_id":"nexus-local-pilot-operator","target_type":"PURGE_EXECUTE","target_ref":"t12-purge-plan",
             "effect_id":"t12-purge-record","payload_integrity_hash":plan["plan_hash"],"decision":"APPROVE",
@@ -184,7 +184,7 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery_store._current_runtime_mode(),"NORMAL")
         with recovery_store._connection() as conn:
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
             self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?",(input_id,)).fetchone()[0], "PURGED")
         recovery_store.close()
         reopened = ObjectStore(restored,policy=policy)

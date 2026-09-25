@@ -140,7 +140,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.memory.create_candidate(command_id="candidate-before-partial", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
         self.assertEqual(len(self.memory.search_admitted(query="governed memory", run_id="run-7")), 1)
         self._seed_unknown_effect()
-        plan = self.purge.plan(command_id="purge-plan-partial", plan_id="plan-7", target_refs=[self.claim])
+        plan = self.purge.plan(command_id="purge-plan-partial", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         outcome = self.purge.execute(command_id="purge-execute-partial", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7", quiesce_run=lambda _: True)
         self.assertEqual(outcome["status"], "PARTIAL")
@@ -180,7 +180,7 @@ class MemoryPurgeTests(unittest.TestCase):
 
     def test_crash_after_independent_barrier_record_restores_conservative_purge_hold(self):
         self.memory.retain_raw(command_id="retain-before-journal-crash", object_id=self.claim, run_id="run-7")
-        plan = self.purge.plan(command_id="journal-crash-plan-command", plan_id="plan-7", target_refs=[self.claim])
+        plan = self.purge.plan(command_id="journal-crash-plan-command", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         with mock.patch.object(self.purge, "_install_barrier", side_effect=RuntimeError("SIMULATED_CRASH_AFTER_JOURNAL")):
             with self.assertRaisesRegex(RuntimeError, "SIMULATED_CRASH_AFTER_JOURNAL"):
@@ -213,7 +213,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.memory.retain_raw(command_id="retain-before-delete-crash", object_id=self.claim, run_id="run-7")
         verification = self._human_verification("verify-before-delete-crash")
         self.memory.create_candidate(command_id="candidate-before-delete-crash", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=verification["verification_id"], review_trigger="review")
-        plan = self.purge.plan(command_id="delete-crash-plan", plan_id="plan-7", target_refs=[self.claim])
+        plan = self.purge.plan(command_id="delete-crash-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         protected = sorted(set(plan["target_refs"]) | set(plan["descendant_refs"]))
         with self.store._connection() as conn:
@@ -250,12 +250,150 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
 
+    def test_independent_release_journal_failure_is_resumable_with_same_command(self):
+        plan = self.purge.plan(command_id="release-retry-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+
+        original_append = self.purge.journal.append
+        failed_release = False
+
+        def fail_first_release(**kwargs):
+            nonlocal failed_release
+            if kwargs.get("action") == "BARRIER_RELEASED" and not failed_release:
+                failed_release = True
+                raise OSError("injected independent journal release failure")
+            return original_append(**kwargs)
+
+        with mock.patch.object(self.purge.journal, "append", side_effect=fail_first_release):
+            first = self.purge.execute(
+                command_id="purge-release-retry", record_id="record-7", barrier_id="barrier-7",
+                plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7",
+            )
+            self.assertEqual(first["status"], "PARTIAL")
+            with self.store._connection() as conn:
+                self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
+                self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "PURGED")
+            self.store.close()
+            self.store = ObjectStore(self.data_root)
+            self.addCleanup(self.store.close)
+            self.authority = AuthorityService(self.store, self.authority.policy)
+            self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+            self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+            retried = self.purge.execute(
+                command_id="purge-release-retry", record_id="record-7", barrier_id="barrier-7",
+                plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7",
+            )
+
+        self.assertEqual(retried["status"], "COMPLETED")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='record-7'").fetchone()[0], "COMPLETED")
+            self.assertEqual(
+                [row[0] for row in conn.execute("SELECT action FROM purge_ledger WHERE barrier_id='barrier-7' ORDER BY ledger_seq")],
+                ["BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"],
+            )
+        self.assertTrue(self.purge.replay_independent_journal()["normal_allowed"])
+
+    def test_purge_execution_cannot_cross_task_boundary(self):
+        now = datetime.now(timezone.utc)
+        with self.store._connection() as conn:
+            conn.execute(
+                "INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) "
+                "VALUES('task-8','human-root','CREATED',?,'task-8',NULL)",
+                (now.isoformat(),),
+            )
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_TASK_MISMATCH"):
+            self.purge.plan(
+                command_id="purge-plan-wrong-task",
+                plan_id="plan-wrong-task",
+                task_id="task-8",
+                target_refs=[self.claim],
+            )
+        plan = self.purge.plan(
+            command_id="purge-plan-cross-task",
+            plan_id="plan-cross-task",
+            task_id="task-7",
+            target_refs=[self.claim],
+        )
+        with self.store._connection() as conn:
+            persisted = conn.execute(
+                "SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id='plan-cross-task'"
+            ).fetchone()
+            self.assertEqual(persisted["task_id"], "task-7")
+            self.assertEqual(json.loads(persisted["plan_json"])["task_id"], "task-7")
+        self.authority.create_grant(
+            {
+                "schema_id": "nexus.delegation_grant",
+                "schema_version": 1,
+                "grant_id": "grant-task-8",
+                "issued_by": "human-root",
+                "granted_to": "agent",
+                "task_scope": ["task-8"],
+                "resource_scope": ["plan-cross-task", "record-cross-task"],
+                "action_scope": ["PURGE_EXECUTE"],
+                "audience_scope": ["nexus-runtime"],
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(days=1)).isoformat(),
+                "status": "ACTIVE",
+                "policy_version": "1",
+            },
+            "grant-task-8",
+        )
+        approval_now = datetime.now(timezone.utc).isoformat()
+        self.authority.create_approval(
+            {
+                "schema_id": "nexus.approval_decision",
+                "schema_version": 1,
+                "approval_id": "approval-cross-task",
+                "approver_principal_id": "human-root",
+                "target_type": "PURGE_EXECUTE",
+                "target_ref": "plan-cross-task",
+                "effect_id": "record-cross-task",
+                "payload_integrity_hash": plan["plan_hash"],
+                "decision": "APPROVE",
+                "approved_scope": ["PURGE_EXECUTE", "plan-cross-task"],
+                "policy_version": "1",
+                "issued_at": approval_now,
+            },
+            "approval-cross-task",
+        )
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_TASK_MISMATCH"):
+            self.purge.execute(
+                command_id="purge-execute-cross-task",
+                record_id="record-cross-task",
+                barrier_id="barrier-cross-task",
+                plan=plan,
+                grant_id="grant-task-8",
+                task_id="task-8",
+                approval_id="approval-cross-task",
+            )
+
+        self.assertEqual(self.store.get_payload(self.claim), b"The synthetic Nexus fact is governed memory.")
+        with self.store._connection() as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM purge_plan_records WHERE plan_id='plan-wrong-task'").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0],
+                0,
+            )
+
     def test_purge_backup_restore_replays_external_ledger_without_resurrection(self):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")
         result = self._human_verification("verify-for-purge")
         self.memory.create_candidate(command_id="candidate-for-purge", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
         approval_id, effect_id, inspector = self._seed_purge_identifier_audit()
-        plan = self.purge.plan(command_id="purge-plan-success", plan_id="plan-7", target_refs=[self.claim])
+        plan = self.purge.plan(command_id="purge-plan-success", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         backup_root = self.root / "old-backup"
         (backup_root / "objects").mkdir(parents=True)
@@ -386,7 +524,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.memory.retain_raw(command_id="retain-for-recovery", object_id=self.claim, run_id="run-7")
         result = self._human_verification("verify-for-recovery")
         self.memory.create_candidate(command_id="candidate-for-recovery", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
-        plan = self.purge.plan(command_id="recovery-purge-plan", plan_id="plan-7", target_refs=[self.claim])
+        plan = self.purge.plan(command_id="recovery-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
 
         snapshot_root = self.root / "recovery-snapshot"
