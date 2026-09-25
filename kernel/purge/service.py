@@ -80,10 +80,39 @@ class PurgeService:
         claimed_hash = body.pop("plan_hash")
         if hashlib.sha256(_canon(body).encode("utf-8")).hexdigest() != claimed_hash:
             raise RuntimeDenied("PURGE_PLAN_HASH_MISMATCH")
-        auth_request = {"task": task_id, "resource": plan["plan_id"], "action": "PURGE_EXECUTE", "audience": "nexus-runtime", "effect_id": record_id}
-        self.authority.evaluate_authorization(grant_id, auth_request, command_id + "-authorize", approval_id=approval_id, payload_integrity_hash=claimed_hash)
         if plan["task_id"] != task_id:
             raise RuntimeDenied("PURGE_PLAN_TASK_MISMATCH")
+
+        # Revocation blocks new authority-bearing work; it does not erase a
+        # mutation already committed under valid authority. Exact replay only
+        # returns that immutable CommandLedger result and performs no purge.
+        # Keep deterministic request checks in front of replay, but do not
+        # re-evaluate mutable grants/approvals.
+        operation = "execute_purge"
+        request = {"record_id": record_id, "barrier_id": barrier_id, "plan_hash": claimed_hash}
+        digest = self.store._request_hash(operation, request)
+        protected = sorted(set(plan["target_refs"]) | set(plan["descendant_refs"]))
+        with self.store._connection() as conn:
+            prior = self.store._replay_command(conn, command_id, operation, digest)
+            prior_execution = conn.execute(
+                "SELECT record_id,plan_id,barrier_id,status,unresolved_json,record_json "
+                "FROM purge_execution_records WHERE record_id=?",
+                (record_id,),
+            ).fetchone()
+            if prior is not None:
+                if not prior_execution:
+                    raise RuntimeDenied("PURGE_EXECUTION_BINDING_MISMATCH")
+                self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
+                barrier = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
+                expected_result = {"record_id": record_id, "status": "COMPLETED", "purged_refs": protected}
+                if prior_execution["status"] != "COMPLETED" or not barrier or barrier["status"] != "RELEASED" or prior != expected_result:
+                    raise RuntimeDenied("PURGE_EXECUTION_BINDING_MISMATCH")
+                # Exact replay returns the persisted result without another
+                # authorization, journal append, or payload/index mutation.
+                return prior
+
+        auth_request = {"task": task_id, "resource": plan["plan_id"], "action": "PURGE_EXECUTE", "audience": "nexus-runtime", "effect_id": record_id}
+        self.authority.evaluate_authorization(grant_id, auth_request, command_id + "-authorize", approval_id=approval_id, payload_integrity_hash=claimed_hash)
         with self.store._connection() as conn:
             persisted_plan = conn.execute("SELECT plan_hash,plan_json,task_id FROM purge_plan_records WHERE plan_id=?", (plan["plan_id"],)).fetchone()
         if not persisted_plan or persisted_plan["task_id"] is None:
@@ -96,11 +125,7 @@ class PurgeService:
         if sorted(set(closure) - set(plan["target_refs"])) != plan["descendant_refs"] or self._lineage_revision() != plan["lineage_revision"]:
             raise RuntimeDenied("PURGE_PLAN_STALE")
         protected = sorted(set(plan["target_refs"]) | set(plan["descendant_refs"]))
-        operation = "execute_purge"
-        request = {"record_id": record_id, "barrier_id": barrier_id, "plan_hash": claimed_hash}
-        digest = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
-            prior = self.store._replay_command(conn, command_id, operation, digest)
             prior_execution = conn.execute(
                 "SELECT record_id,plan_id,barrier_id,status,unresolved_json,record_json "
                 "FROM purge_execution_records WHERE record_id=?",
@@ -108,8 +133,6 @@ class PurgeService:
             ).fetchone()
             if prior_execution:
                 self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
-        if prior is not None:
-            return prior
         if prior_execution and prior_execution["status"] == "COMPLETED":
             return {"record_id": record_id, "status": "COMPLETED", "purged_refs": protected}
         if prior_execution and prior_execution["status"] == "PARTIAL":

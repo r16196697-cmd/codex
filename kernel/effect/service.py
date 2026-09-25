@@ -155,8 +155,11 @@ class DeterministicEffectService:
 
     def authorize(self, *, command_id: str, effect_id: str, classification_assertion_ref: str) -> dict[str, str]:
         self.modes.require("core_write")
-        row = self._get(effect_id)
-        self._authorize(row["grant_id"], self._task_id(row["run_id"]), row["target_ref"], "EFFECT_COMMIT", command_id + "-authorize")
+        # Revocation blocks new authority-bearing work, but does not
+        # retroactively erase a mutation committed under valid authority.
+        # Exact CommandLedger replay only returns that immutable result; it
+        # does not authorize or repeat the protected action. _transition owns
+        # that replay gate and the locked authorization recheck for new work.
         return self._transition(command_id, effect_id, "PREPARED", "AUTHORIZED", "nexus.effect.authorized", {"effect_id": effect_id, "execution_state": "AUTHORIZED"}, classification_assertion_ref, "EFFECT_COMMIT")
 
     def commit(self, *, command_id: str, effect_id: str, classification_assertion_ref: str, start_classification_assertion_ref: str) -> dict[str, str]:

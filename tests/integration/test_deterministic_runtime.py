@@ -1107,11 +1107,38 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.authority.create_approval({"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approval-wrong-payload", "approver_principal_id": "human-root", "target_type": "FAKE_WRITE", "target_ref": "sandbox-target", "effect_id": "effect-denied", "payload_integrity_hash": "0" * 64, "decision": "APPROVE", "approved_scope": ["FAKE_WRITE", "sandbox-target"], "policy_version": "1", "issued_at": self._now()}, "cmd-approval-wrong-payload")
         effects.create_effect(command_id="cmd-create-denied-effect", effect=effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-create-denied-effect", "tool-agent"))
         effects.prepare(command_id="cmd-denied-effect-prepare", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-prepare", "tool-agent"))
-        effects.authorize(command_id="cmd-denied-effect-authorize", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-authorize", "tool-agent"))
+        authorize_class = self._event_class("cmd-denied-effect-authorize", "tool-agent")
+        authorize_result = effects.authorize(command_id="cmd-denied-effect-authorize", effect_id="effect-denied", classification_assertion_ref=authorize_class)
+        self._schedule("node-tool-comp", "run-tool-comp", "tool-agent", "grant-tool-comp")
+        self._advance("run-tool-comp", "cmd-denied-effect-fresh-running", "READY", "RUNNING", "tool-agent")
+        fresh_effect = {**effect, "effect_id":"effect-denied-fresh", "run_id":"run-tool-comp", "grant_id":"grant-tool-comp", "idempotency_key":"stable-effect-denied-fresh"}
+        fresh_effect.pop("approval_ref")
+        effects.create_effect(command_id="cmd-create-denied-effect-fresh", effect=fresh_effect, payload_object_ref="input-1", classification_assertion_ref=self._event_class("cmd-create-denied-effect-fresh", "tool-agent"))
+        effects.prepare(command_id="cmd-denied-effect-fresh-prepare", effect_id="effect-denied-fresh", classification_assertion_ref=self._event_class("cmd-denied-effect-fresh-prepare", "tool-agent"))
         with self.assertRaisesRegex(ApprovalDenied, "APPROVAL_PAYLOAD_HASH_MISMATCH"):
             effects.commit(command_id="cmd-denied-effect-commit", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-commit-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-denied-effect-commit-start", "tool-agent"))
         self.assertEqual(effects._get("effect-denied")["execution_state"], "AUTHORIZED")
         self.authority.revoke_grant("grant-root", "cmd-deny-effect-revoke-parent")
+        with self.store._connection() as conn:
+            trace_count_before_replay = conn.execute("SELECT COUNT(*) FROM trace_events").fetchone()[0]
+            effect_before_replay = tuple(conn.execute("SELECT execution_state,effect_json,updated_at FROM effects WHERE effect_id='effect-denied'").fetchone())
+            authorized_trace_count_before_replay = sum(
+                json.loads(row[0])["typed_metadata"].get("effect_id") == "effect-denied"
+                for row in conn.execute("SELECT event_json FROM trace_events WHERE event_type='nexus.effect.authorized'")
+            )
+        self.assertEqual(authorized_trace_count_before_replay, 1)
+        self.assertEqual(effects.authorize(command_id="cmd-denied-effect-authorize", effect_id="effect-denied", classification_assertion_ref=authorize_class), authorize_result)
+        with self.assertRaises(CommandConflict):
+            effects.authorize(command_id="cmd-denied-effect-authorize", effect_id="effect-denied", classification_assertion_ref="different-classification-for-same-command")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events").fetchone()[0], trace_count_before_replay)
+            self.assertEqual(tuple(conn.execute("SELECT execution_state,effect_json,updated_at FROM effects WHERE effect_id='effect-denied'").fetchone()), effect_before_replay)
+            self.assertEqual(sum(
+                json.loads(row[0])["typed_metadata"].get("effect_id") == "effect-denied"
+                for row in conn.execute("SELECT event_json FROM trace_events WHERE event_type='nexus.effect.authorized'")
+            ), 1)
+        with self.assertRaises(AuthorizationDenied):
+            effects.authorize(command_id="cmd-denied-effect-fresh-after-revoke", effect_id="effect-denied-fresh", classification_assertion_ref=self._event_class("cmd-denied-effect-fresh-after-revoke", "tool-agent"))
         with self.assertRaises(InvalidDelegation):
             effects.commit(command_id="cmd-denied-effect-after-revoke", effect_id="effect-denied", classification_assertion_ref=self._event_class("cmd-denied-effect-after-revoke-outcome", "tool-agent"), start_classification_assertion_ref=self._event_class("cmd-denied-effect-after-revoke-start", "tool-agent"))
         self.assertEqual(effects.dispatchers["tool-read"].calls, 0)

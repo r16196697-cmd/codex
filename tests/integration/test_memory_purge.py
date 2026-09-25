@@ -89,9 +89,12 @@ class MemoryPurgeTests(unittest.TestCase):
         self._classify(class_ref, "OBJECT", object_id)
         return self.store.put_object(command_id="put-" + object_id, object_id=object_id, payload=payload, object_type="artifact", created_by_run="run-7", classification_assertion_ref=class_ref)
 
-    def _approve_purge(self, plan_hash):
+    def _approve_purge(self, plan_hash, *, expires_at=None):
         now = datetime.now(timezone.utc).isoformat()
-        self.authority.create_approval({"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approval-7", "approver_principal_id": "human-root", "target_type": "PURGE_EXECUTE", "target_ref": "plan-7", "effect_id": "record-7", "payload_integrity_hash": plan_hash, "decision": "APPROVE", "approved_scope": ["PURGE_EXECUTE", "plan-7"], "policy_version": "1", "issued_at": now}, "approval-7")
+        approval = {"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approval-7", "approver_principal_id": "human-root", "target_type": "PURGE_EXECUTE", "target_ref": "plan-7", "effect_id": "record-7", "payload_integrity_hash": plan_hash, "decision": "APPROVE", "approved_scope": ["PURGE_EXECUTE", "plan-7"], "policy_version": "1", "issued_at": now}
+        if expires_at is not None:
+            approval["expires_at"] = expires_at
+        self.authority.create_approval(approval, "approval-7")
 
     def _human_verification(self, verification_id):
         axes = {"generator_independence": "NOT_APPLICABLE", "evidence_independence": "INDEPENDENT", "method_independence": "INDEPENDENT"}
@@ -649,6 +652,64 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='partial-record'").fetchone()[0], "PARTIAL")
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers WHERE barrier_id='partial-barrier-b'").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records WHERE plan_id='partial-plan-b'").fetchone()[0], 0)
+
+    def test_completed_purge_exact_command_replays_after_grant_revocation(self):
+        plan = self.purge.plan(command_id="purge-revoke-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        request = {"command_id":"purge-revoke-execute", "record_id":"record-7", "barrier_id":"barrier-7", "plan":plan,
+                   "grant_id":"grant-7", "task_id":"task-7", "approval_id":"approval-7"}
+        original = self.purge.execute(**request)
+        self.assertEqual(original["status"], "COMPLETED")
+        journal_before = self.purge.journal.read()
+        with self.store._connection() as conn:
+            purge_state_before = (
+                conn.execute("SELECT COUNT(*) FROM purge_ledger").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM command_ledger WHERE operation='execute_purge'").fetchone()[0],
+                [tuple(row) for row in conn.execute("SELECT object_id,payload_state FROM object_states ORDER BY object_id")],
+            )
+        self.authority.revoke_grant("grant-7", "purge-revoke-root")
+
+        with mock.patch.object(self.purge, "_purge_payloads_and_indexes", side_effect=AssertionError("exact replay must not purge again")):
+            self.assertEqual(self.purge.execute(**request), original)
+        self.assertEqual(self.purge.journal.read(), journal_before)
+        with self.store._connection() as conn:
+            self.assertEqual((
+                conn.execute("SELECT COUNT(*) FROM purge_ledger").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0],
+                conn.execute("SELECT COUNT(*) FROM command_ledger WHERE operation='execute_purge'").fetchone()[0],
+                [tuple(row) for row in conn.execute("SELECT object_id,payload_state FROM object_states ORDER BY object_id")],
+            ), purge_state_before)
+        with self.assertRaises(CommandConflict):
+            self.purge.execute(**{**request, "record_id":"different-record"})
+        with self.assertRaises(CommandConflict):
+            self.purge.execute(**{**request, "barrier_id":"different-barrier"})
+        changed_plan = {**plan, "plan_id":"different-plan"}
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_HASH_MISMATCH"):
+            self.purge.execute(**{**request, "plan":changed_plan})
+        with self.assertRaises(AuthorizationDenied):
+            self.purge.execute(**{**request, "command_id":"purge-revoke-new-command", "record_id":"new-record", "barrier_id":"new-barrier"})
+        self.assertEqual(self.store.get_object_metadata(self.claim), {"object_id": self.claim, "payload_state": "PURGED"})
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM purge_barriers WHERE barrier_id='new-barrier'").fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='purge-revoke-new-command'").fetchone())
+
+    def test_completed_purge_exact_command_replays_after_approval_expiry(self):
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=2)
+        plan = self.purge.plan(command_id="purge-expiry-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"], expires_at=expires_at.isoformat())
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        request = {"command_id":"purge-expiry-execute", "record_id":"record-7", "barrier_id":"barrier-7", "plan":plan,
+                   "grant_id":"grant-7", "task_id":"task-7", "approval_id":"approval-7"}
+        original = self.purge.execute(**request)
+        later = expires_at + timedelta(seconds=5)
+        with mock.patch("kernel.authority.service._now", return_value=later):
+            self.assertEqual(self.purge.execute(**request), original)
 
     def test_purge_backup_restore_replays_external_ledger_without_resurrection(self):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")
