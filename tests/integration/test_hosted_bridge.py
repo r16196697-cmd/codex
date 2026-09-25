@@ -79,6 +79,7 @@ class HostedBridgeTests(unittest.TestCase):
             "task:" + self.task_id, "runtime-mode:instance", self.root_run_id, self.input_id,
             self.contract_id, self.root_manifest_id, self.model_run_id, self.model_manifest_id,
             self.model_artifact_id, self.search_evidence_id, self.search_injection_evidence_id, "hosted-search-conflict-candidate", self.tool_run_id, self.tool_manifest_id, self.tool_artifact_id,
+            "hosted-search-missing-evidence",
             "hosted-codex-search-run", "hosted-codex-search-manifest",
             self.tool_id, self.search_tool_id, self.search_query_object_id,
         ]
@@ -149,7 +150,7 @@ class HostedBridgeTests(unittest.TestCase):
                 resources.append("evt-hosted-search-evidence-trace-evidence")
         else:
             resources.append(self.search_evidence_id)
-            resources.extend([self.search_injection_evidence_id, "evt-hosted-search-injection-trace-evidence", "hosted-search-conflict-candidate", "evt-hosted-search-official-trace-evidence"])
+            resources.extend([self.search_injection_evidence_id, "hosted-search-missing-evidence", "evt-hosted-search-injection-trace-evidence", "hosted-search-conflict-candidate", "evt-hosted-search-official-trace-evidence"])
             if self.operator_id == "human-root":
                 resources.append("hosted-model-memory-candidate")
         commands = [command_prefix+"-create-run", command_prefix+"-ready", command_prefix+"-running", command_prefix+"-output-trace-object", "hosted-"+command_prefix.split("-")[1]+"-close-verifying", "hosted-"+command_prefix.split("-")[1]+"-close-terminal"]
@@ -381,6 +382,14 @@ class HostedBridgeTests(unittest.TestCase):
             classification_assertion_ref="class-hosted-search-evidence",
             event_classification_assertion_ref="class-hosted-search-official-event", verifier_id="hosted-search-official-verification")
         self.assertEqual(official["verification"]["verdict"], "PASS")
+        insufficient = self.verifier.verify_object_integrity(
+            verification_id="hosted-search-insufficient-verification",
+            target_ref=self.search_evidence_id,
+            evidence_refs=["hosted-search-missing-evidence"],
+            run_id=self.model_run_id,
+        )
+        self.assertEqual(insufficient["verdict"], "INCONCLUSIVE")
+        self.assertEqual(insufficient["missing_evidence"], ["hosted-search-missing-evidence"])
         candidate = MemoryService(self.store,self.authority,self.verifier).create_candidate(
             command_id="hosted-search-conflict-candidate-command",candidate_id="hosted-search-conflict-candidate",
             claim_ref=self.search_injection_evidence_id,evidence_refs=[self.search_injection_evidence_id],owner="host-model",

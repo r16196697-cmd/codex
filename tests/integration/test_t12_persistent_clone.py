@@ -56,7 +56,8 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         input_id, contract_id, manifest_id = "t12-clone-input", "t12-clone-contract", "t12-clone-root-manifest"
         mode_commands = {"SAFE": "t12-mode-safe", "STATELESS": "t12-mode-stateless", "NORMAL": "t12-mode-normal", "RECOVERY": "t12-mode-recovery"}
         event_ids = ["evt-t12-create-root-root-create", "evt-t12-create-root-trace-input", "evt-t12-create-root-root-ready", "evt-t12-create-root-root-running",
-                     "evt-t12-root-verifying", "evt-t12-root-succeeded", *("evt-" + item for item in mode_commands.values())]
+                     "evt-t12-root-verifying", "evt-t12-root-succeeded", *("evt-" + item for item in mode_commands.values()),
+                     "evt-t12-post-recovery-safe", "evt-t12-post-recovery-stateless", "evt-t12-post-recovery-normal"]
         resources = ["runtime-mode:instance", root_run, input_id, contract_id, manifest_id, "t12-purge-plan", "t12-purge-record", *event_ids]
         now = datetime.now(timezone.utc)
         authority.register_principal({"schema_id":"nexus.principal","schema_version":1,"principal_id":agent,"principal_type":"SERVICE","status":"ACTIVE"}, "t12-register-agent")
@@ -154,6 +155,9 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery_store._current_runtime_mode(), "RECOVERY")
         with self.assertRaises(RuntimeDenied):
             recovery_memory.search_raw(query="purge marker",run_id=root_run)
+        recovery_runtime = DeterministicRuntime(recovery_store,recovery_authority,BudgetService(recovery_store),TraceRuntime(recovery_store,recovery_authority))
+        with self.assertRaises(RuntimeDenied):
+            recovery_runtime.inspect_task(grant_id=grant_id,task_id=task_id)
         report = recovery_purge.replay_independent_journal()
         self.assertTrue(report["normal_allowed"])
         self.assertEqual(report["held_refs"], 0)
@@ -162,8 +166,30 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         with self.assertRaises(PurgedObject):
             recovery_store.get_payload(input_id)
         self.assertEqual(recovery_memory.search_raw(query="purge marker",run_id=root_run), [])
+        def classify_recovery(assertion_id, subject_ref):
+            recovery_authority.record_classification_assertion({"schema_id":"nexus.classification_assertion","schema_version":1,
+                "assertion_id":assertion_id,"subject_type":"TRACE_EVENT","subject_ref":subject_ref,"sensitivity_level":"PUBLIC",
+                "handling_tags":[],"policy_version":"1","reason":"isolated persistent-root clone recovery test","actor_id":agent},
+                grant_id=grant_id,task_id=task_id,audience="nexus-runtime",command_id="t12-classify-"+assertion_id)
+        for command in ("t12-post-recovery-safe", "t12-post-recovery-stateless", "t12-post-recovery-normal"):
+            classify_recovery("class-"+command,"evt-"+command)
+        recovery_modes = RuntimeModeService(recovery_store,recovery_authority)
+        recovery_modes.set_mode(command_id="t12-post-recovery-safe",grant_id=grant_id,task_id=task_id,mode="SAFE",classification_assertion_ref="class-t12-post-recovery-safe")
+        with self.assertRaises(RuntimeDenied):
+            recovery_memory.retain_raw(command_id="t12-post-purge-safe-retain-denied",object_id=input_id,run_id=root_run)
+        recovery_modes.set_mode(command_id="t12-post-recovery-stateless",grant_id=grant_id,task_id=task_id,mode="STATELESS",classification_assertion_ref="class-t12-post-recovery-stateless")
+        with self.assertRaises(RuntimeDenied):
+            recovery_memory.search_raw(query="purge marker",run_id=root_run)
+        recovery_modes.set_mode(command_id="t12-post-recovery-normal",grant_id=grant_id,task_id=task_id,mode="NORMAL",classification_assertion_ref="class-t12-post-recovery-normal")
+        self.assertEqual(recovery_store._current_runtime_mode(),"NORMAL")
         with recovery_store._connection() as conn:
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
             self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?",(input_id,)).fetchone()[0], "PURGED")
         recovery_store.close()
+        reopened = ObjectStore(restored,policy=policy)
+        self.addCleanup(reopened.close)
+        self.assertEqual(reopened._current_runtime_mode(),"NORMAL")
+        with self.assertRaises(PurgedObject):
+            reopened.get_payload(input_id)
+        self.assertEqual(MemoryService(reopened,AuthorityService(reopened,policy),VerificationService(reopened,AuthorityService(reopened,policy))).search_raw(query="purge marker",run_id=root_run),[])

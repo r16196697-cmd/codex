@@ -6,7 +6,7 @@ Goal:
 Close only the already-recorded Hosted T1/T2/T5/T9/T10/T11/T12 gaps against manual §10, without redesigning Contracts or standalone capabilities.
 
 Inputs:
-Source checkpoint `50fb283`; current Hosted E2E; manual §10; acceptance matrix in `eval/regression/2026-09-25-persistent-host-pilot.md`.
+Source checkpoint `1542cb08579ed1281630ade4b7f6c7094c90ad19`; current Hosted E2E; manual §10; acceptance matrix in `eval/regression/2026-09-25-persistent-host-pilot.md`.
 
 Allowed files:
 Focused existing contract/integration/recovery/security tests and fixtures; minimal existing service/schema compatibility fixes only where a formal test proves a gap; acceptance report and this status file. Same-directory verified timestamp backup before each existing-file edit. All failure injection uses isolated temporary roots; persistent root may only receive synthetic approved test records.
@@ -27,7 +27,7 @@ FAIL handling:
 Stop only the affected item if it requires changing frozen semantics, unsafe identifier deletion, or broader authority. Preserve audited facts and report exact blocker.
 
 Rollback point:
-Source commit `50fb283`; pre-v8 persistent-root backup `nexus/backups/codex-hosted-attached-20260925-152305-pre-v8-redaction` (schema 7, integrity `ok`).
+Source commit `1542cb08579ed1281630ade4b7f6c7094c90ad19` (reviewed T2/T5/T9 baseline checkpoint); pre-v8 persistent-root backup `nexus/backups/codex-hosted-attached-20260925-152305-pre-v8-redaction` (schema 7, integrity `ok`).
 
 Do NOT:
 - Add tests unrelated to the named unmet conditions.
@@ -78,7 +78,7 @@ Do NOT:
 Nexus version: `v0.1-development`  
 Current implementation step: Step 10 — PARTIAL (Hosted Bridge and Step 9 operational client complete; formal acceptance gaps remain)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Implementation checkpoint / branch: source commit `50fb283` / `nexus-v2-runtime`; Step 10 continuation edits are uncommitted.
+Implementation checkpoint / branch: source checkpoint `1542cb08579ed1281630ade4b7f6c7094c90ad19` / `nexus-v2-runtime`; final Step 10 evidence/test updates are pending checkpoint.
 Schema version: `nexus.* @1`; SQLite migration version `10` (tests and persistent Hosted root)
 Policy version: `1` (fail-closed default policy)  
 Database version: `10` in isolated integration tests and the persistent synthetic pilot
@@ -93,20 +93,20 @@ Step 6: PASS
 Step 7: PASS
 Step 8: PASS for Codex-hosted integration (reusable Host Bridge, declared MODEL Child Run, actual read-only TOOL Child Run, Artifact/Evidence/Verification/Trace and persistent reopen/inspect verified); standalone Provider/Broker cases DEFERRED / NOT_CONFIGURED
 Step 9: PASS for Codex-hosted operations (four enforced modes, controlled inspect, CLI mode/inspect and persistent deployment-root reopen verified)
-Step 10: PARTIAL (baseline full regression: 80 passed, 1 environment-gated receipt test skipped in 38.233s; T1–T9 PASS; T10–T12 PARTIAL. Hosted release gate not met.)
+Step 10: PARTIAL (final full regression: 80 passed, 1 optional receipt test skipped in 35.468s; T1–T9 PASS, T10 PARTIAL, T11/T12 PASS. Hosted release gate not met because T10 escalation/fallback lifecycle is absent.)
 
 Tests passed:
-- 2026-09-25 Step 10 continuation: latest full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **80 passed, 1 environment-gated receipt test skipped** in 38.233s; the search-receipt test separately passed with the actual Codex Search query/source/excerpt. Persistent Hosted fixture rerun and T12 persistent-root clone/Purge/old-snapshot RECOVERY drill passed.
+- 2026-09-25 final Step 10 round: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **80 passed, 1 optional environment-gated receipt test skipped** in 35.468s; live search was separately bracketed by a Host-declared TOOL Run before and after the actual Codex Search action. T11 security/insufficiency and T12 persistent-root clone recovery focused tests passed.
 - Persistent root: verified snapshots before v9 at `nexus/backups/codex-hosted-attached-20260925-155850-pre-v9` (schema 8) and v10 at `nexus/backups/codex-hosted-attached-20260925-162120-pre-v10` (schema 9); both integrity `ok`, 3 Tasks, 0 Purge rows. Root upgraded/reopened at schema 10; final read-only root inspection follows below.
-- Formal baseline T matrix: T1–T9 PASS; T10, T11 and T12 PARTIAL pending the final completion pass requested by the operator. Standalone Provider/Broker cases remain deferred/not configured.
+- Final T matrix: T1–T9 PASS; T10 PARTIAL; T11 PASS for Codex-hosted observable scope; T12 PASS for the isolated persistent-root clone rehearsal. Standalone Provider/Broker cases remain deferred/not configured.
 
 Tests failed / incomplete:
 - The Hosted fixture's former `COMMAND_CONFLICT` was a fixture determinism defect, not a Core defect. Persistent rerun now detects a terminal existing E2E Task read-only and verifies Run replay/Verifications without reconstructing timestamped Grants; a separate isolated test proves fresh Task + command IDs and exact same-command retry.
 - T2 now covers post-reopen create Task, create Root Run, committed transition, MODEL output and TOOL output retries without duplicates, plus payload rename/metadata-commit and state/Trace atomic-failure injections.
 - T9 now performs guarded target/hash/scope/idempotency/receipt/Trace metadata/purge-record path redaction while retaining Approval decision and Effect outcome/axes; the isolated old-snapshot replay repeats these checks.
 - T10 remains PARTIAL: existing route choices and real Hosted MODEL/TOOL execution are verified, but Runtime has one scheduled Run per DAG node and no attempt/escalation/fallback relationship. Do not expand architecture or mark this a Standalone deferral.
-- T11 remains PARTIAL: the prior test created a Host-declared Search TOOL Run after receiving a search result; it did not bracket the actual search with begin/finish lifecycle calls, nor capture an actual search timestamp/result reference as part of that Run. Injection/conflict safety tests exist but need the final required-source binding and insufficiency checks.
-- T12 remains PARTIAL: the persistent-root clone test covers a real synthetic Purge and old-snapshot replay, but does not yet combine every requested post-recovery mode/bypass, inspect-denial, identifier/hash/path, and reopen verification in one complete rehearsal.
+- T11 Hosted observable scope PASS: a live isolated Host-declared SEARCH TOOL Run began before the actual search, then bound query/source URL/retrieval receipt to Evidence, deterministic Verification and Trace; security tests keep injected/conflicting evidence QUARANTINED/UNKNOWN and missing evidence INCONCLUSIVE. No search provider telemetry is claimed.
+- T12 PASS: the persistent-root clone test now combines synthetic Purge, old-snapshot restore, RECOVERY inspect/Memory denial, Purge Ledger replay, integrity/schema and payload/index non-resurrection, SAFE/STATELESS gates, return to NORMAL, close/reopen and post-reopen checks.
 - No acceptance failure has been reclassified as DEFERRED except Standalone-only Provider/Search/Credential Broker cases.
 
 Current release state:
@@ -172,15 +172,15 @@ Open blockers:
 - Independent real Model/Search Providers, real Provider Credential Broker use, multi-provider routing and standalone model execution are intentionally `DEFERRED / NOT_CONFIGURED`. They are not Core failures. No real `auth.json` / `.env` value was read or used as a Nexus credential.
 - Step 8 is **PASS for current Codex-hosted attachment scope**. It does not claim standalone Provider telemetry. Exact backend identity, request IDs, and token telemetry remain unavailable.
 - Step 9 is **PASS for Codex-hosted operations**: enforced mode gates, controlled inspect, CLI use, persistent Task inspection and reopen were verified.
-- Step 10 is **PARTIAL**, not release acceptance. Latest: T1/T5 PASS; T2/T9/T10/T11/T12 PARTIAL; T3/T4/T6/T7/T8 remain regression-PASS. T9's at-rest identifier removal is not met; do not publish. Per-test evidence is in `eval/regression/2026-09-25-persistent-host-pilot.md`.
+- Step 10 is **PARTIAL**, not release acceptance. Latest: T1–T9 PASS, T10 PARTIAL, T11/T12 PASS. T10 lacks a real Host-declared E2 escalation attempt returning to the coordinator and a policy/budget-denied fallback path; `scheduled_run_id` is single-assignment and current RouteDecision requires a selected profile/model ID. This is not deferred as Standalone work. Per-test evidence is in `eval/regression/2026-09-25-persistent-host-pilot.md`.
 - The persistent pilot's previously RUNNING synthetic probe (`hosted-pilot-root-20260925`) is now CANCELLED through its existing Grant and authorized Trace transition. The prior exact-resource authorization denial remains in audit history; no Grant was widened and no database row was directly edited.
 
 Known UNKNOWN Effects: None in the persistent pilot.
 Pending Purge: None; no persistent pilot object has been Purged.
 Pending migration: none; persistent pilot schema migration version is 10.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: baseline full suite **80 passed, 1 expected environment-gated search receipt skipped** in 38.233s; receipt test separately passed only as a post-search declaration. `compileall`, `pip check`, `git diff --check` (only LF→CRLF advisories), schema/policy contract validation via the suite, and changed-file secret-pattern scan passed. Persistent root schema 10, `PRAGMA integrity_check=ok`, mode NORMAL; 3 Tasks (2 SUCCEEDED, 1 previously authorized/cancelled probe), 5 Runs (4 SUCCEEDED, 1 cancelled), 0 active Runs, 0 Effects/UNKNOWN Effects, 0 Purge execution records/barriers. Existing T12 clone/Purge/old-snapshot replay is partial against the newly requested combined sequence. No real user data or secrets; fixture content is synthetic/PUBLIC. Worktree is dirty at source commit `50fb2830df07a94826981725ea3aa947fb54f9bc`.
-Next allowed action: checkpoint the inspected and tested T2/T5/T9 baseline changes, then complete only the remaining T10 routing, T11 search/security, and T12 combined recovery requirements. Keep DEVELOPMENT until all Hosted requirements have direct evidence; Standalone Provider items remain deferred.
+Last verified state: full suite **80 passed, 1 optional receipt test skipped** in 35.468s; focused T11 malicious/conflicting/insufficient-evidence and T12 combined recovery tests passed. `compileall`, `pip check`, `git diff --check`, and tracked-change secret scan passed. Persistent root remains schema 10, integrity `ok`, mode `NORMAL`; final counts and clean-tree status are recorded in the regression report. T1–T9 PASS; T10 PARTIAL; T11/T12 PASS. The isolated live search Task/Run was closed and reopened successfully; its temporary database was then removed. No real private data or credentials were used. Current base checkpoint is `1542cb08579ed1281630ade4b7f6c7094c90ad19`.
+Next allowed action: only implement the existing T10 hosted escalation/fallback lifecycle within current Runtime/RouteDecision semantics, or record a manual-compatible BLOCKER if that requires changing frozen semantics. Keep `DEVELOPMENT`; Standalone Provider/Broker work remains deferred.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
