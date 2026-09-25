@@ -664,14 +664,18 @@ class DeterministicRuntime:
     def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, cancelled_event_classification_assertion_ref: str | None = None, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str, requested_capability: str | None = None, attempt_reason: str = "INITIAL", predecessor_attempt_id: str | None = None) -> dict[str, Any]:
         self.modes.require("run_execute")
         operation = "schedule_subtask"
-        legacy_request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref, "requested_capability": requested_capability, "attempt_reason": attempt_reason, "predecessor_attempt_id": predecessor_attempt_id}
-        legacy_request_hash = self.store._request_hash(operation, legacy_request)
-        # Keep both committed pre-compensation request shapes replayable. They
-        # are accepted only as exact hash matches for an existing command row.
-        pre_compensation_request = {key: legacy_request[key] for key in ("task_id", "root_run_id", "subtask_id", "child_run_id", "route_object_id", "requested_capability", "attempt_reason")}
-        pre_compensation_request_hash = self.store._request_hash(operation, pre_compensation_request)
-        historical_request_hashes = {legacy_request_hash, pre_compensation_request_hash}
-        request = {**legacy_request, "cancelled_event_classification_assertion_ref": cancelled_event_classification_assertion_ref} if cancelled_event_classification_assertion_ref is not None else legacy_request
+        current_request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref, "requested_capability": requested_capability, "attempt_reason": attempt_reason, "predecessor_attempt_id": predecessor_attempt_id}
+        # Historical shapes below match committed scheduler implementations:
+        # v1 predates multi-attempt routing; v2 adds its three attempt fields.
+        # In v1 those absent fields can only be represented by their exact
+        # historical-equivalent defaults, never by dropping caller input.
+        v1_fields = ("task_id", "root_run_id", "subtask_id", "child_run_id", "child_grant_id", "child_classification_assertion_ref", "event_classification_assertion_ref", "ready_event_classification_assertion_ref", "route_object_id", "route_classification_assertion_ref", "manifest_object_id", "manifest_classification_assertion_ref")
+        v1_request = {key: current_request[key] for key in v1_fields}
+        v2_request = current_request
+        historical_request_hashes = {self.store._request_hash(operation, v2_request)}
+        if requested_capability is None and attempt_reason == "INITIAL" and predecessor_attempt_id is None:
+            historical_request_hashes.add(self.store._request_hash(operation, v1_request))
+        request = {**current_request, "cancelled_event_classification_assertion_ref": cancelled_event_classification_assertion_ref} if cancelled_event_classification_assertion_ref is not None else current_request
         request_hash = self.store._request_hash(operation, request) if cancelled_event_classification_assertion_ref is not None else None
         with self.store._connection() as conn:
             existing = conn.execute("SELECT operation,request_hash FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
@@ -681,7 +685,7 @@ class DeterministicRuntime:
                 elif request_hash is not None and existing["operation"] == operation and existing["request_hash"] == request_hash:
                     prior = self.store._replay_command(conn, command_id, operation, request_hash)
                 else:
-                    self.store._replay_command(conn, command_id, operation, request_hash or legacy_request_hash)
+                    self.store._replay_command(conn, command_id, operation, request_hash or self.store._request_hash(operation, current_request))
                     prior = None
             else:
                 prior = None

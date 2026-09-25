@@ -34,36 +34,43 @@ class IndependentPurgeJournalDurabilityTests(unittest.TestCase):
     def test_fresh_posix_append_fsyncs_parent_after_file_fsync(self):
         with tempfile.TemporaryDirectory(prefix="nexus-journal-posix-durable-") as temporary:
             journal = self._journal(Path(temporary))
-            journal.path.touch()
+            self.assertFalse(journal.path.exists())
+            calls = []
+            real_fsync = os.fsync
+
+            def record_file_fsync(fd):
+                calls.append("file")
+                return real_fsync(fd)
+
+            def record_directory_fsync():
+                calls.append("directory")
+
             with patch("kernel.purge.journal.os.name", "posix"), \
                  patch.object(journal, "_exclusive_path_lock", nullcontext), \
-                 patch.object(journal, "_path_is_directory_synced", return_value=False), \
-                 patch("kernel.purge.journal.os.fsync", wraps=os.fsync) as fsync_file, \
-                 patch.object(journal, "_fsync_posix_parent_directory") as fsync_parent:
+                 patch("kernel.purge.journal.os.fsync", side_effect=record_file_fsync), \
+                 patch.object(journal, "_fsync_posix_parent_directory", side_effect=record_directory_fsync):
                 row = self._append(journal, "first")
             self.assertEqual(row["sequence"], 1)
-            fsync_file.assert_called_once()
-            fsync_parent.assert_called_once_with()
+            self.assertEqual(calls, ["file", "directory"])
             self.assertEqual(journal.read()[0]["record_hash"], row["record_hash"])
 
     def test_existing_posix_journal_does_not_repeat_directory_fsync(self):
         with tempfile.TemporaryDirectory(prefix="nexus-journal-existing-") as temporary:
             journal = self._journal(Path(temporary))
-            journal.path.touch()
+            first = self._append(journal, "first")
             with patch("kernel.purge.journal.os.name", "posix"), \
                  patch.object(journal, "_exclusive_path_lock", nullcontext), \
-                 patch.object(journal, "_path_is_directory_synced", return_value=True), \
                  patch.object(journal, "_fsync_posix_parent_directory") as fsync_parent:
-                self._append(journal, "first")
+                second = self._append(journal, "second")
             fsync_parent.assert_not_called()
+            self.assertEqual(journal.read(), [first, second])
 
     def test_parent_directory_fsync_failure_does_not_report_append_success(self):
         with tempfile.TemporaryDirectory(prefix="nexus-journal-fsync-failure-") as temporary:
             journal = self._journal(Path(temporary))
-            journal.path.touch()
+            self.assertFalse(journal.path.exists())
             with patch("kernel.purge.journal.os.name", "posix"), \
                  patch.object(journal, "_exclusive_path_lock", nullcontext), \
-                 patch.object(journal, "_path_is_directory_synced", return_value=False), \
                  patch.object(journal, "_fsync_posix_parent_directory", side_effect=OSError("injected directory fsync failure")):
                 with self.assertRaisesRegex(OSError, "injected directory fsync failure"):
                     self._append(journal, "first")

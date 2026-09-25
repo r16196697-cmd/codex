@@ -237,15 +237,23 @@ class DeterministicRuntimeTests(unittest.TestCase):
         ):
             self._classify(assertion, subject_type, subject_ref, actor)
         original = self.runtime.schedule_node(**args)
-        old_request = {key: args[key] for key in ("task_id", "root_run_id", "subtask_id", "child_run_id", "route_object_id", "requested_capability", "attempt_reason")}
-        old_hash = self.store._request_hash("schedule_subtask", old_request)
+        # v1 is the actual pre-T10 deterministic scheduler request recorded in
+        # 2eeead0f: all original authority/classification/route/manifest refs,
+        # before the three multi-attempt fields existed.
+        v1_fields = ("task_id", "root_run_id", "subtask_id", "child_run_id", "child_grant_id", "child_classification_assertion_ref", "event_classification_assertion_ref", "ready_event_classification_assertion_ref", "route_object_id", "route_classification_assertion_ref", "manifest_object_id", "manifest_classification_assertion_ref")
+        v1_request = {key: args[key] for key in v1_fields}
+        v1_hash = self.store._request_hash("schedule_subtask", v1_request)
+        # v2 is the actual T10 multi-attempt request shape present at release
+        # 0cb9d1ed: v1 plus capability/reason/predecessor.
+        v2_request = {key: args[key] for key in (*v1_fields, "requested_capability", "attempt_reason", "predecessor_attempt_id")}
+        v2_hash = self.store._request_hash("schedule_subtask", v2_request)
         with self.store._connection() as conn:
             # Emulate an immutable command row written by the pre-change binary.
             # Historical data is not rewritten in production; the disposable DB
             # fixture is rebuilt here to represent that older committed shape.
             conn.execute("DROP TRIGGER command_ledger_no_update")
-            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (old_hash, args["command_id"]))
-            self.assertEqual(conn.execute("SELECT request_hash FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0], old_hash)
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (v1_hash, args["command_id"]))
+            self.assertEqual(conn.execute("SELECT request_hash FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0], v1_hash)
             before = tuple(conn.execute(
                 "SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM runs WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE subtask_id=?)",
                 (args["child_run_id"], args["child_run_id"], args["child_run_id"], args["subtask_id"]),
@@ -258,19 +266,20 @@ class DeterministicRuntimeTests(unittest.TestCase):
         changed_legacy_args = {**legacy_args, "route_object_id": "different-route"}
         with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
             self.runtime.schedule_node(**changed_legacy_args)
+        non_default_v2_args = {**legacy_args, "requested_capability": "E1"}
+        with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
+            self.runtime.schedule_node(**non_default_v2_args)
 
-        # Also accept the immediately preceding full request shape (without the
-        # later cancellation-classification field), but no changed old fields.
-        full_pre_change_hash = self.store._request_hash("schedule_subtask", {key: value for key, value in args.items() if key not in {"command_id", "cancelled_event_classification_assertion_ref"}})
+        # Also accept the actual v2 full request shape, but no changed fields.
         with self.store._connection() as conn:
-            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (full_pre_change_hash, args["command_id"]))
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (v2_hash, args["command_id"]))
         self.assertEqual(self.runtime.schedule_node(**legacy_args), original)
         changed_full_args = {**legacy_args, "manifest_object_id": "different-manifest"}
         with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
             self.runtime.schedule_node(**changed_full_args)
 
         with self.store._connection() as conn:
-            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (old_hash, args["command_id"]))
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (v1_hash, args["command_id"]))
 
         # Reopen the persistent root and ensure the old request remains replayable.
         data_root = Path(self.temp.name) / "data"

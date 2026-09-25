@@ -17,7 +17,6 @@ def _canon(value: Any) -> str:
 
 _LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[str, threading.RLock] = {}
-_DURABLE_PATHS: set[str] = set()
 
 
 def _thread_lock(path: Path) -> threading.RLock:
@@ -104,16 +103,6 @@ class IndependentPurgeJournal:
             previous = digest
         return records
 
-    def _path_is_directory_synced(self) -> bool:
-        key = os.path.normcase(str(self.path))
-        with _LOCKS_GUARD:
-            return key in _DURABLE_PATHS
-
-    def _mark_path_directory_synced(self) -> None:
-        key = os.path.normcase(str(self.path))
-        with _LOCKS_GUARD:
-            _DURABLE_PATHS.add(key)
-
     def _create_empty_journal_durably(self) -> None:
         """Create the pathname with platform-appropriate namespace durability."""
         if os.name == "nt":
@@ -136,7 +125,6 @@ class IndependentPurgeJournal:
             finally:
                 if temporary.exists():
                     temporary.unlink()
-            self._mark_path_directory_synced()
             return
 
         fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -156,8 +144,9 @@ class IndependentPurgeJournal:
         if lineage_revision < 0 or len(plan_hash) != 64:
             raise ValueError("invalid purge journal plan binding")
         with self._exclusive_path_lock():
+            created_here = not self.path.exists()
             prior = self._read_unlocked()
-            if not self.path.exists():
+            if created_here:
                 self._create_empty_journal_durably()
             body = {"version": 1, "sequence": len(prior) + 1, "action": action, "barrier_id": barrier_id, "plan_id": plan_id, "plan_hash": plan_hash, "lineage_revision": lineage_revision, "protected_refs": sorted(set(protected_refs)), "previous_hash": prior[-1]["record_hash"] if prior else "0" * 64}
             body["record_hash"] = hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()
@@ -165,7 +154,6 @@ class IndependentPurgeJournal:
                 handle.write(_canon(body) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-            if os.name != "nt" and not self._path_is_directory_synced():
+            if created_here and os.name != "nt":
                 self._fsync_posix_parent_directory()
-                self._mark_path_directory_synced()
             return body
