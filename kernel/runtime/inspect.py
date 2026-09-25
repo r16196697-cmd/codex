@@ -55,6 +55,27 @@ class InspectService:
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
         return row
 
+    @staticmethod
+    def _object_task_owner(conn, object_id: str, direct_task_id: str | None, *, purged: bool) -> str:
+        owners = []
+        if direct_task_id is not None:
+            owners.append(direct_task_id)
+        provenance = conn.execute(
+            "SELECT DISTINCT pp.task_id FROM purge_execution_refs pr "
+            "JOIN purge_execution_records pe USING(record_id) "
+            "JOIN purge_plan_records pp USING(plan_id) WHERE pr.object_id=?",
+            (object_id,),
+        ).fetchall()
+        if purged and not provenance:
+            raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
+        if any(row["task_id"] is None for row in provenance):
+            raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
+        owners.extend(row["task_id"] for row in provenance)
+        unique = set(owners)
+        if len(unique) != 1:
+            raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
+        return next(iter(unique))
+
     def _is_purged_object(self, object_id: str | None) -> bool:
         if not object_id:
             return False
@@ -200,7 +221,32 @@ class InspectService:
             ).fetchone()
         if not row:
             raise RuntimeDenied("INSPECT_NOT_FOUND")
-        if row["task_id"] and row["task_id"] != task_id:
+        owner_task_id = row["task_id"]
+        if row["target_type"] == "PURGE_EXECUTE":
+            with self.store._connection() as conn:
+                plan_owner = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (row["target_ref"],)).fetchall()
+                if len(plan_owner) != 1 or plan_owner[0]["task_id"] is None:
+                    raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+                plan_task_id = plan_owner[0]["task_id"]
+                if owner_task_id is not None and owner_task_id != plan_task_id:
+                    raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+                owner_task_id = plan_task_id
+                purge_plan = json.loads(plan_owner[0]["plan_json"])
+                for ref in set(purge_plan.get("target_refs", [])) | set(purge_plan.get("descendant_refs", [])):
+                    state = conn.execute("SELECT s.payload_state,r.task_id FROM object_states s LEFT JOIN object_envelopes e USING(object_id) LEFT JOIN runs r ON r.run_id=e.created_by_run WHERE s.object_id=?", (ref,)).fetchone()
+                    if not state:
+                        raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+                    ref_owner = self._object_task_owner(conn, ref, state["task_id"], purged=state["payload_state"] == "PURGED")
+                    if ref_owner != owner_task_id:
+                        raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+        elif owner_task_id is None:
+            with self.store._connection() as conn:
+                object_state = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (row["target_ref"],)).fetchone()
+                if object_state:
+                    owner_task_id = self._object_task_owner(conn, row["target_ref"], None, purged=object_state["payload_state"] == "PURGED")
+            if owner_task_id is None:
+                raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+        if owner_task_id != task_id:
             raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         if row["sensitivity_level"] and not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
@@ -316,7 +362,11 @@ class InspectService:
             ).fetchone()
         if not row:
             raise RuntimeDenied("INSPECT_NOT_FOUND")
-        if row["task_id"] and row["task_id"] != task_id:
+        with self.store._connection() as conn:
+            owner_task_id = self._object_task_owner(
+                conn, object_id, row["task_id"], purged=row["payload_state"] == "PURGED"
+            )
+        if owner_task_id != task_id:
             raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         if row["sensitivity_level"] and not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")

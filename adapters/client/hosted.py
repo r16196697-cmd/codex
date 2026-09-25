@@ -169,6 +169,7 @@ class CodexHostedBridge:
         reservation_id = self.budget.reserve(
             command_id=command_id + "-budget",
             account_id=account_id,
+            task_id=run["task_id"],
             run_id=run["run_id"],
             amount=estimated_units,
             model_calls=1 if kind == "MODEL" else 0,

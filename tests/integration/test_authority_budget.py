@@ -169,7 +169,7 @@ class AuthorityBudgetTests(unittest.TestCase):
         def reserve(command_id, run_id):
             start.wait()
             try:
-                reservation = self.budget.reserve(command_id=command_id, account_id="budget-1", run_id=run_id, amount=7, model_calls=1)
+                reservation = self.budget.reserve(command_id=command_id, account_id="budget-1", task_id="task-1", run_id=run_id, amount=7, model_calls=1)
                 results.append(("PASS", reservation))
             except BudgetExceeded:
                 results.append(("DENY", None))
@@ -182,7 +182,7 @@ class AuthorityBudgetTests(unittest.TestCase):
         self.assertEqual(sorted(item[0] for item in results), ["DENY", "PASS"])
         reservation_id = next(item[1] for item in results if item[0] == "PASS")
         command_id, run_id = self._reservation_request(reservation_id)
-        self.assertEqual(self.budget.reserve(command_id=command_id, account_id="budget-1", run_id=run_id, amount=7, model_calls=1), reservation_id)
+        self.assertEqual(self.budget.reserve(command_id=command_id, account_id="budget-1", task_id="task-1", run_id=run_id, amount=7, model_calls=1), reservation_id)
         self.budget.settle(command_id="cmd-settle-1", reservation_id=reservation_id, actual_amount=5)
         self.budget.settle(command_id="cmd-settle-1", reservation_id=reservation_id, actual_amount=5)
         with self.store._connection() as conn:
@@ -192,9 +192,46 @@ class AuthorityBudgetTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE budget_ledger SET amount=0 WHERE command_id=?", (command_id,))
 
+    def test_budget_reservation_rejects_cross_task_account_without_side_effects(self):
+        self.budget.create_account(command_id="budget-a", account_id="budget-a", task_id="task-a", amount_limit=20, unit="credits", model_call_limit=2, tool_call_limit=2, child_run_limit=2)
+        self.budget.create_account(command_id="budget-b", account_id="budget-b", task_id="task-b", amount_limit=20, unit="credits", model_call_limit=2, tool_call_limit=2, child_run_limit=2)
+        with self.assertRaisesRegex(BudgetExceeded, "BUDGET_TASK_MISMATCH"):
+            self.budget.reserve(command_id="cross-task-reserve", account_id="budget-b", task_id="task-a", run_id="run-a", amount=5, child_runs=1)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE command_id='cross-task-reserve'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_ledger WHERE command_id='cross-task-reserve'").fetchone()[0], 0)
+            account = conn.execute("SELECT reserved,consumed,model_calls_reserved,tool_calls_reserved,child_runs_reserved FROM budget_accounts WHERE account_id='budget-b'").fetchone()
+            self.assertEqual(tuple(account), (0, 0, 0, 0, 0))
+        self._grant("budget-run-grant", "human-root", "agent", tasks=["task-a", "task-b"], resources=["run-a"], actions=["READ"], audiences=["local"])
+        now = datetime.now(timezone.utc).isoformat()
+        with self.store._connection() as conn:
+            for task in ("task-a", "task-b"):
+                conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES(?, 'human-root','CREATED',?,?,NULL)", (task, now, task))
+            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('class-run-a','RUN','run-a','PUBLIC','[]','1','budget test','agent')")
+            conn.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('run-a','task-a',NULL,NULL,'ORCHESTRATOR','CREATED','budget-run-grant',NULL,NULL,'{}','class-run-a',?)", (now,))
+        with self.assertRaisesRegex(BudgetExceeded, "BUDGET_TASK_MISMATCH"):
+            self.budget.reserve(command_id="run-account-cross-task", account_id="budget-b", task_id="task-b", run_id="run-a", amount=2)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE command_id='run-account-cross-task'").fetchone()[0], 0)
+            self.assertEqual(tuple(conn.execute("SELECT reserved,consumed FROM budget_accounts WHERE account_id='budget-b'").fetchone()), (0, 0))
+        reservation = self.budget.reserve(command_id="same-task-reserve", account_id="budget-a", task_id="task-a", run_id="run-a", amount=5, child_runs=1)
+        self.assertEqual(self.budget.reserve(command_id="same-task-reserve", account_id="budget-a", task_id="task-a", run_id="run-a", amount=5, child_runs=1), reservation)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE command_id='same-task-reserve'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_ledger WHERE command_id='same-task-reserve' AND action='RESERVED'").fetchone()[0], 1)
+        # Model a persisted reservation written by the pre-task-bound API.
+        legacy_request = {"account_id":"budget-a","run_id":"legacy-run","amount":1,"model_calls":0,"tool_calls":0,"child_runs":0}
+        legacy_hash = self.store._request_hash("reserve_budget", legacy_request)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE budget_accounts SET reserved=reserved+1 WHERE account_id='budget-a'")
+            conn.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,model_calls,tool_calls,child_runs,state,command_id,created_at) VALUES('legacy-reservation','budget-a','legacy-run',1,0,0,0,'RESERVED','legacy-reserve-command','2026-09-25T00:00:00Z')")
+            self.store._record_command(conn, "legacy-reserve-command", "reserve_budget", legacy_hash, {"reservation_id":"legacy-reservation"})
+            conn.execute("INSERT INTO budget_ledger(reservation_id,command_id,action,amount,created_at) VALUES('legacy-reservation','legacy-reserve-command','RESERVED',1,'2026-09-25T00:00:00Z')")
+        self.assertEqual(self.budget.reserve(command_id="legacy-reserve-command", account_id="budget-a", task_id="task-a", run_id="legacy-run", amount=1), "legacy-reservation")
+
     def test_release_frees_reserved_budget_without_consuming_it(self):
         self.budget.create_account(command_id="cmd-release-account", account_id="budget-release", task_id="task-release", amount_limit=10, unit="microcredits", model_call_limit=2, tool_call_limit=2, child_run_limit=2)
-        reservation = self.budget.reserve(command_id="cmd-release-reserve", account_id="budget-release", run_id="run-release", amount=8, tool_calls=1)
+        reservation = self.budget.reserve(command_id="cmd-release-reserve", account_id="budget-release", task_id="task-release", run_id="run-release", amount=8, tool_calls=1)
         self.budget.release(command_id="cmd-release-command", reservation_id=reservation)
         self.budget.release(command_id="cmd-release-command", reservation_id=reservation)
         with self.store._connection() as conn:

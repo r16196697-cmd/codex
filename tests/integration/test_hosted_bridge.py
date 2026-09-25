@@ -10,7 +10,7 @@ from jsonschema.exceptions import ValidationError
 from adapters.client.hosted import CodexHostedBridge
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
-from kernel.budget import BudgetService
+from kernel.budget import BudgetExceeded, BudgetService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
 from kernel.memory import MemoryService
@@ -185,7 +185,7 @@ class HostedBridgeTests(unittest.TestCase):
             result[key]=assertion_id
         return result
 
-    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id, subtask_id="hosted-model-node"):
+    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id, subtask_id="hosted-model-node", account_id="hosted-budget"):
         self._child_grant(grant_id,actor,run_id,manifest_id,artifact_id,command_id,tool=kind=="TOOL")
         run_class="class-"+run_id
         manifest_class="class-"+manifest_id
@@ -209,8 +209,21 @@ class HostedBridgeTests(unittest.TestCase):
             common={**common,"schema_versions":{"nexus.run_manifest":1}}
             manifest=self.bridge.tool_manifest(common={**common,"schema_version":1},tool_id=self.tool_id,descriptor_version="1",input_ref=self.input_id)
         return self.bridge.create_child_run(command_id=command_id,run=run,manifest=manifest,parent_grant_id="hosted-root-grant",
-            account_id="hosted-budget",estimated_units=1,manifest_object_id=manifest_id,
+            account_id=account_id,estimated_units=1,manifest_object_id=manifest_id,
             manifest_classification_assertion_ref=manifest_class,event_classification_assertion_refs=events)
+
+    def test_hosted_child_cannot_reserve_another_tasks_budget(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('other-task','human-root','CREATED',?,'other-task',NULL)", (datetime.now(timezone.utc).isoformat(),))
+        self.budget.create_account(command_id="other-task-budget-create", account_id="other-task-budget", task_id="other-task", amount_limit=10, unit="test-units", model_call_limit=2, tool_call_limit=2, child_run_limit=2)
+        with self.assertRaisesRegex(BudgetExceeded, "BUDGET_TASK_MISMATCH"):
+            self._start_child("MODEL", self.model_run_id, self.model_manifest_id, self.model_artifact_id, "hosted-model-cross-task-budget-grant", "host-model", "hosted-model", account_id="other-task-budget")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_ledger WHERE command_id='hosted-cross-task-budget-budget'").fetchone()[0], 0)
+            self.assertEqual(tuple(conn.execute("SELECT reserved,consumed,model_calls_reserved,child_runs_reserved FROM budget_accounts WHERE account_id='other-task-budget'").fetchone()), (0, 0, 0, 0))
 
     def test_child_setup_failure_cancels_run_and_releases_budget_reservation(self):
         with mock.patch.object(self.runtime, "bind_manifest", side_effect=RuntimeError("injected manifest bind failure")):

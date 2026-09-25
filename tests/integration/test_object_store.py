@@ -12,6 +12,9 @@ from unittest import mock
 from jsonschema import ValidationError
 
 from adapters.storage import ObjectStore
+from kernel.purge import PurgeService
+from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.inspect import InspectService
 from kernel.object.errors import (
     CommandConflict,
     ConcurrentModification,
@@ -30,6 +33,7 @@ class ObjectStoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-step2-")
         self.root = Path(self.temp.name)
         self.store = ObjectStore(self.root / "data")
+        self.addCleanup(self.store.close)
         with self.store._connection() as conn:
             conn.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('test_actor','HUMAN','ACTIVE')")
 
@@ -305,6 +309,58 @@ raise SystemExit(0)
             self.assertEqual(tuple(row), (12, "0012_purge_plan_task_binding.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+    def test_real_v11_legacy_purge_plan_migrates_unbound_and_cannot_execute_or_inspect(self) -> None:
+        object_id = self.put("v11-legacy-purge-target", b"synthetic legacy payload must remain")
+        command_id = "v11-legacy-plan-command"
+        plan_id = "v11-legacy-plan"
+        created_at = "2026-09-25T00:00:00Z"
+        plan = {"schema_id":"nexus.purge_plan","schema_version":1,"plan_id":plan_id,"target_refs":[object_id],
+            "descendant_refs":[],"affected_indexes":["raw_history","admitted_memory"],
+            "planned_actions":["QUIESCE_RUNS","RECONCILE_EFFECTS","DELETE_PAYLOADS","DELETE_INDEX_ROWS","REDACT_DERIVED_METADATA","VERIFY_UNAVAILABLE"],
+            "lineage_revision":0,"created_at":created_at,"policy_version":"1"}
+        plan["plan_hash"] = hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        self.store._validate("nexus.purge_plan@1.schema.json", plan)
+        with self.store._connection() as conn:
+            digest = self.store._request_hash("create_purge_plan", {"legacy_fixture":plan_id})
+            self.store._record_command(conn, command_id, "create_purge_plan", digest, {"plan_id":plan_id,"plan_hash":plan["plan_hash"]})
+            conn.execute("INSERT INTO purge_plan_records(plan_id,plan_hash,lineage_revision,plan_json,command_id,created_at,task_id) VALUES(?,?,?,?,?,?,NULL)",
+                (plan_id,plan["plan_hash"],plan["lineage_revision"],json.dumps(plan,sort_keys=True,separators=(",",":")),command_id,created_at))
+        database_path = self.store.database_path
+        self.store.close()
+        legacy = sqlite3.connect(database_path)
+        try:
+            legacy.execute("PRAGMA foreign_keys=OFF")
+            legacy.execute("DROP INDEX purge_plan_records_task_idx")
+            legacy.execute("ALTER TABLE purge_plan_records DROP COLUMN task_id")
+            legacy.execute("DELETE FROM schema_migrations WHERE version=12")
+            legacy.execute("PRAGMA user_version=11")
+            legacy.commit()
+        finally:
+            legacy.close()
+        self.store = ObjectStore(self.root / "data")
+        self.addCleanup(self.store.close)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
+            self.assertIsNone(migrated["task_id"])
+            migrated_plan = json.loads(migrated["plan_json"])
+            self.assertEqual(migrated_plan, plan)
+            self.assertNotIn("task_id", migrated_plan)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0], 0)
+        purge = PurgeService(self.store, None, None, independent_journal_path=self.root / "independent" / "legacy-purge.jsonl")
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_TASK_UNBOUND_LEGACY"):
+            purge.execute(command_id="legacy-execute", record_id="legacy-record", barrier_id="legacy-barrier", plan=plan, grant_id="legacy-grant", task_id="task-legacy", approval_id="legacy-approval")
+        inspector = InspectService(self.store, None)
+        with mock.patch.object(inspector, "_authorize"), mock.patch.object(inspector, "_task_context"):
+            with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_TASK_UNBOUND_LEGACY"):
+                inspector.purge(grant_id="legacy-inspect", task_id="task-legacy", plan_id=plan_id)
+        self.assertEqual(self.store.get_payload(object_id), b"synthetic legacy payload must remain")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0], 0)
 
     def test_changed_applied_migration_is_rejected(self) -> None:
         with self.store._connection() as conn:

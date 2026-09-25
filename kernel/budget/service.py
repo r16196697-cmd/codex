@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from kernel.budget.errors import BudgetExceeded
+from kernel.object.errors import CommandConflict
 from adapters.storage import ObjectStore
 
 
@@ -43,24 +45,36 @@ class BudgetService:
                 conn.rollback()
                 raise
 
-    def reserve(self, *, command_id: str, account_id: str, run_id: str, amount: int, model_calls: int = 0, tool_calls: int = 0, child_runs: int = 0) -> str:
+    def reserve(self, *, command_id: str, account_id: str, task_id: str, run_id: str, amount: int, model_calls: int = 0, tool_calls: int = 0, child_runs: int = 0) -> str:
         self.store._require_mode("core_write")
         values = {"amount": amount, "model_calls": model_calls, "tool_calls": tool_calls, "child_runs": child_runs}
-        if not account_id or not run_id or any(type(value) is not int or value < 0 for value in values.values()):
+        if not account_id or not task_id or not run_id or any(type(value) is not int or value < 0 for value in values.values()):
             raise ValueError("invalid reservation")
         operation = "reserve_budget"
-        request = {"account_id": account_id, "run_id": run_id, **values}
+        request = {"account_id": account_id, "task_id": task_id, "run_id": run_id, **values}
         request_hash = self.store._request_hash(operation, request)
+        legacy_request_hash = self.store._request_hash(operation, {"account_id": account_id, "run_id": run_id, **values})
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                replay = self.store._replay_command(conn, command_id, operation, request_hash)
-                if replay is not None:
-                    conn.commit()
-                    return replay["reservation_id"]
                 account = conn.execute("SELECT * FROM budget_accounts WHERE account_id=?", (account_id,)).fetchone()
                 if not account:
                     raise BudgetExceeded("BUDGET_ACCOUNT_NOT_FOUND")
+                if account["task_id"] != task_id:
+                    raise BudgetExceeded("BUDGET_TASK_MISMATCH")
+                run = conn.execute("SELECT task_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                if run is not None and run["task_id"] != task_id:
+                    raise BudgetExceeded("BUDGET_TASK_MISMATCH")
+                prior = conn.execute("SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
+                if prior:
+                    if prior["operation"] != operation or prior["request_hash"] not in {request_hash, legacy_request_hash}:
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    replay = json.loads(prior["result_json"])
+                    reservation = conn.execute("SELECT account_id,run_id,amount,model_calls,tool_calls,child_runs FROM budget_reservations WHERE reservation_id=?", (replay.get("reservation_id"),)).fetchone()
+                    if not reservation or reservation["account_id"] != account_id or reservation["run_id"] != run_id or any(reservation[key] != values[key] for key in values):
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    conn.commit()
+                    return replay["reservation_id"]
                 checks = (("amount", "reserved", "consumed", "amount_limit"), ("model_calls", "model_calls_reserved", "model_calls_consumed", "model_call_limit"), ("tool_calls", "tool_calls_reserved", "tool_calls_consumed", "tool_call_limit"), ("child_runs", "child_runs_reserved", "child_runs_consumed", "child_run_limit"))
                 for requested, reserved, consumed, limit in checks:
                     if account[reserved] + account[consumed] + values[requested] > account[limit]:

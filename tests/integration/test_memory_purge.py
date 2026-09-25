@@ -11,7 +11,7 @@ from pathlib import Path
 from adapters.storage import ObjectStore
 from adapters.client.operator import OperatorClient
 from kernel.authority.errors import AuthorizationDenied
-from kernel.object.errors import PurgedObject, PurgeBarrierActive
+from kernel.object.errors import CommandConflict, PurgedObject, PurgeBarrierActive
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.memory import MemoryService
@@ -296,6 +296,148 @@ class MemoryPurgeTests(unittest.TestCase):
             )
         self.assertTrue(self.purge.replay_independent_journal()["normal_allowed"])
 
+    def test_durable_release_journal_with_uncommitted_sqlite_projection_resumes_after_reopen(self):
+        plan = self.purge.plan(command_id="release-projection-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        original_append = self.purge.journal.append
+        failed_release_write = False
+
+        def fail_first_journal_release(**kwargs):
+            nonlocal failed_release_write
+            if kwargs.get("action") == "BARRIER_RELEASED" and not failed_release_write:
+                failed_release_write = True
+                raise OSError("injected first release journal failure")
+            return original_append(**kwargs)
+
+        with mock.patch.object(self.purge.journal, "append", side_effect=fail_first_journal_release):
+            first = self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(first["status"], "PARTIAL")
+        # The retry durably writes RELEASED, then simulates a crash/failure
+        # before SQLite can project completion.
+        with mock.patch.object(self.purge, "_release", side_effect=sqlite3.OperationalError("injected completion projection failure")):
+            with self.assertRaisesRegex(sqlite3.OperationalError, "completion projection"):
+                self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.store.close()
+        self.store = ObjectStore(self.data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        self.purge.replay_independent_journal()
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='record-7'").fetchone()[0], "PARTIAL")
+        with self.assertRaises(PurgedObject):
+            self.store.get_payload(self.claim)
+        journal_rows = self.purge.journal.read()
+        mismatched_rows = [dict(row, plan_hash="f" * 64) if row.get("action") == "BARRIER_RELEASED" else row for row in journal_rows]
+        with mock.patch.object(self.purge.journal, "read", return_value=mismatched_rows):
+            with self.assertRaisesRegex(RuntimeDenied, "PURGE_RELEASE_JOURNAL_MISMATCH"):
+                self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        resumed = self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(resumed["status"], "COMPLETED")
+        self.store.close()
+        self.store = ObjectStore(self.data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        replayed = self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(replayed["status"], "COMPLETED")
+        self.assertEqual(sum(row.get("action") == "BARRIER_RELEASED" for row in self.purge.journal.read()), 1)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='record-7'").fetchone()[0], "COMPLETED")
+
+    def test_purge_plan_same_command_returns_original_persisted_plan(self):
+        first = self.purge.plan(command_id="stable-plan-command", plan_id="stable-plan", task_id="task-7", target_refs=[self.claim])
+        second = self.purge.plan(command_id="stable-plan-command", plan_id="stable-plan", task_id="task-7", target_refs=[self.claim])
+        self.assertEqual(second, first)
+        for changed in (
+            {"plan_id":"changed-plan","task_id":"task-7","target_refs":[self.claim]},
+            {"plan_id":"stable-plan","task_id":"task-8","target_refs":[self.claim]},
+            {"plan_id":"stable-plan","task_id":"task-7","target_refs":[self.evidence]},
+        ):
+            with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
+                self.purge.plan(command_id="stable-plan-command", **changed)
+        self.store.close()
+        self.store = ObjectStore(self.data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        self.assertEqual(self.purge.plan(command_id="stable-plan-command", plan_id="stable-plan", task_id="task-7", target_refs=[self.claim]), first)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_plan_records WHERE command_id='stable-plan-command'").fetchone()[0], 1)
+
+    def test_inspect_denies_cross_task_purged_objects_and_unresolved_approvals(self):
+        plan = self.purge.plan(command_id="inspect-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        now = datetime.now(timezone.utc)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        completed = self.purge.execute(command_id="inspect-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-7-inspect",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["object:"+self.claim],
+            "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-7-inspect")
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-8-inspect",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-8"],
+            "resource_scope":["object:"+self.claim,"object:"+self.evidence,"approval:approval-7","approval:approval-unresolved"],
+            "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-8-inspect")
+        self._classify("class-run-8", "RUN", "run-8")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+            conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('task-8','human-root','CREATED',?,'task-8',NULL)", (now.isoformat(),))
+            conn.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('run-8','task-8',NULL,NULL,'ORCHESTRATOR','CREATED','grant-task-8-inspect',NULL,NULL,?,?,?)", (json.dumps({"allowed_classifications":["PUBLIC"],"handling_tags":[]}),"class-run-8",now.isoformat()))
+            conn.execute("UPDATE tasks SET root_run_id='run-8',status='ACTIVE' WHERE task_id='task-8'")
+            conn.execute("INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES('approval-unresolved','human-root','UNMAPPED_ACTION','not-an-object',NULL,NULL,'APPROVE','[]','1',?,NULL,NULL,NULL)", (now.isoformat(),))
+        inspector = InspectService(self.store, self.authority)
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_TASK_SCOPE_MISMATCH"):
+            inspector.object_metadata(grant_id="grant-task-8-inspect", task_id="task-8", object_id=self.claim)
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_TASK_SCOPE_MISMATCH"):
+            inspector.object_metadata(grant_id="grant-task-8-inspect", task_id="task-8", object_id=self.evidence)
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_TASK_SCOPE_MISMATCH"):
+            inspector.approval(grant_id="grant-task-8-inspect", task_id="task-8", approval_id="approval-7")
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_APPROVAL_TASK_UNRESOLVED"):
+            inspector.approval(grant_id="grant-task-8-inspect", task_id="task-8", approval_id="approval-unresolved")
+        self.assertEqual(inspector.object_metadata(grant_id="grant-task-7-inspect", task_id="task-7", object_id=self.claim)["payload_state"], "PURGED")
+
+    def test_inspect_denies_unbound_and_conflicting_purge_task_provenance(self):
+        for task_id in ("task-7", "task-8"):
+            now = datetime.now(timezone.utc).isoformat()
+            if task_id == "task-8":
+                self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-8-owner",
+                    "issued_by":"human-root","granted_to":"agent","task_scope":["task-8"],"resource_scope":["object:"+self.claim],
+                    "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now,
+                    "expires_at":(datetime.now(timezone.utc)+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-8-owner")
+                self._classify("class-run-8-owner", "RUN", "run-8-owner")
+                with self.store._connection() as conn:
+                    conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('task-8','human-root','CREATED',?,'task-8',NULL)", (now,))
+                    conn.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('run-8-owner','task-8',NULL,NULL,'ORCHESTRATOR','CREATED','grant-task-8-owner',NULL,NULL,?,?,?)", (json.dumps({"allowed_classifications":["PUBLIC"],"handling_tags":[]}),"class-run-8-owner",now))
+                    conn.execute("UPDATE tasks SET root_run_id='run-8-owner',status='ACTIVE' WHERE task_id='task-8'")
+        with self.store._connection() as conn:
+            for suffix, bound_task in (("conflict", "task-8"), ("legacy", None)):
+                plan_id = "inspect-provenance-" + suffix
+                command_id = "inspect-provenance-command-" + suffix
+                plan_doc = {"schema_id":"nexus.purge_plan","schema_version":1,"plan_id":plan_id,"target_refs":[self.claim],"descendant_refs":[],"affected_indexes":[],"planned_actions":[],"lineage_revision":0,"created_at":"2026-09-25T00:00:00Z","policy_version":"1","plan_hash":"a"*64}
+                self.store._record_command(conn, command_id, "create_purge_plan", "b"*64, {"plan_id":plan_id})
+                conn.execute("INSERT INTO purge_plan_records(plan_id,plan_hash,lineage_revision,plan_json,command_id,created_at,task_id) VALUES(?,?,?,?,?,?,?)", (plan_id,"a"*64,0,json.dumps(plan_doc),command_id,plan_doc["created_at"],bound_task))
+                barrier_id = "inspect-provenance-barrier-" + suffix
+                conn.execute("INSERT INTO purge_barriers(barrier_id,plan_id,lineage_revision,status,created_at) VALUES(?,?,0,'RELEASED',?)", (barrier_id,plan_id,plan_doc["created_at"]))
+                record_id = "inspect-provenance-record-" + suffix
+                conn.execute("INSERT INTO purge_execution_records(record_id,plan_id,barrier_id,status,unresolved_json,record_json,started_at,completed_at) VALUES(?,?,?,'COMPLETED','[]','{}',?,?)", (record_id,plan_id,barrier_id,plan_doc["created_at"],plan_doc["created_at"]))
+                conn.execute("INSERT INTO purge_execution_refs(record_id,object_id,payload_uri,integrity_hash) VALUES(?,?,NULL,NULL)", (record_id,self.claim))
+                if suffix == "conflict":
+                    with self.assertRaisesRegex(RuntimeDenied, "INSPECT_OBJECT_TASK_UNRESOLVED"):
+                        InspectService._object_task_owner(conn, self.claim, "task-7", purged=False)
+        with self.store._connection() as conn:
+            with self.assertRaisesRegex(RuntimeDenied, "INSPECT_OBJECT_TASK_UNRESOLVED"):
+                InspectService._object_task_owner(conn, self.claim, "task-7", purged=False)
+
     def test_purge_execution_cannot_cross_task_boundary(self):
         now = datetime.now(timezone.utc)
         with self.store._connection() as conn:
@@ -488,7 +630,7 @@ class MemoryPurgeTests(unittest.TestCase):
         digest = hashlib.sha256(self.store.get_payload(self.claim)).hexdigest()
         budgets = BudgetService(self.store)
         budgets.create_account(command_id="purge-audit-budget-create", account_id="purge-audit-budget", task_id="task-7", amount_limit=0, unit="test", model_call_limit=0, tool_call_limit=0, child_run_limit=0)
-        reservation = budgets.reserve(command_id="purge-audit-reserve", account_id="purge-audit-budget", run_id="run-7", amount=0)
+        reservation = budgets.reserve(command_id="purge-audit-reserve", account_id="purge-audit-budget", task_id="task-7", run_id="run-7", amount=0)
         approval_id = "approval-purge-sensitive"
         effect_id = "effect-purge-sensitive"
         now = datetime.now(timezone.utc).isoformat()

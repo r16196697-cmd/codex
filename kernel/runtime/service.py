@@ -811,7 +811,7 @@ class DeterministicRuntime:
                     conn.rollback()
                     raise
         self._assert_classification_scope(manifest_classification_assertion_ref, "OBJECT", manifest_object_id, child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
-        reservation_id = self.budget.reserve(command_id=command_id + "-budget", account_id=account_id, run_id=child_run_id, amount=reserve_amount, model_calls=1 if selected_profile else 0, tool_calls=1 if descriptor else 0, child_runs=1)
+        reservation_id = self.budget.reserve(command_id=command_id + "-budget", account_id=account_id, task_id=task_id, run_id=child_run_id, amount=reserve_amount, model_calls=1 if selected_profile else 0, tool_calls=1 if descriptor else 0, child_runs=1)
         child_run = {"schema_id": "nexus.run", "schema_version": 1, "run_id": child_run_id, "task_id": task_id, "subtask_id": subtask_id, "parent_run_id": root_run_id, "executor_kind": node["requested_executor"], "status": "CREATED", "grant_id": child_grant_id, "budget_reservation_ref": reservation_id, "data_boundary": child_boundary, "classification_assertion_ref": child_classification_assertion_ref, "created_at": node["created_at"]}
         self.trace.create_run(child_run, command_id=command_id + "-create-run", event_classification_assertion_ref=event_classification_assertion_ref)
         child_input_refs = [contract_ref, *node["input_object_refs"]]
