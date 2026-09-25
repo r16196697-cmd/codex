@@ -37,5 +37,9 @@ class MigrationError(NexusStoreError):
     """A schema migration is missing, changed, or inconsistent."""
 
 
+class SchemaUnsupported(NexusStoreError):
+    """A persisted object requests a schema version with no registered reader."""
+
+
 class WriterAlreadyRunning(NexusStoreError):
     """Another process owns the single-writer lease for this data root."""

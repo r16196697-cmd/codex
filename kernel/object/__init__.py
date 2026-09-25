@@ -8,6 +8,7 @@ from .errors import (
     ObjectNotFound,
     PurgeBarrierActive,
     PurgedObject,
+    SchemaUnsupported,
     WriterAlreadyRunning,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "ObjectNotFound",
     "PurgeBarrierActive",
     "PurgedObject",
+    "SchemaUnsupported",
     "WriterAlreadyRunning",
 ]

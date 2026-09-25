@@ -12,6 +12,7 @@ from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
+from kernel.memory import MemoryService
 from kernel.verification import VerificationService
 
 
@@ -74,12 +75,14 @@ class HostedBridgeTests(unittest.TestCase):
             for suffix in ("create-run", "ready", "running", "output-trace-object", "close-verifying", "close-terminal"):
                 self.resource_scope.append("evt-" + prefix + "-" + suffix)
         self.resource_scope.append("evt-hosted-search-trace-evidence")
+        if self.operator_id == "human-root":
+            self.resource_scope.append("hosted-model-memory-candidate")
         now = datetime.now(timezone.utc)
         self.authority.create_grant({
             "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"hosted-root-grant",
             "issued_by":self.operator_id,"granted_to":"host-agent","task_scope":[self.task_id],
             "resource_scope":self.resource_scope,
-            "action_scope":["RUN_CREATE","RUN_TRANSITION","TRACE_APPEND","OBJECT_WRITE","CLASSIFY","VERIFY","INSPECT","DELEGATE","RUNTIME_CONFIGURE","TOOL_READ"],
+            "action_scope":["RUN_CREATE","RUN_TRANSITION","TRACE_APPEND","OBJECT_WRITE","CLASSIFY","VERIFY","INSPECT","DELEGATE","RUNTIME_CONFIGURE","TOOL_READ"] + (["MEMORY_ADMIT"] if self.operator_id == "human-root" else []),
             "audience_scope":["nexus-runtime","nexus-inspect"],"issued_at":now.isoformat(),
             "expires_at":(now+timedelta(days=2)).isoformat(),"status":"ACTIVE","policy_version":"1",
         }, "hosted-root-grant-create")
@@ -130,6 +133,8 @@ class HostedBridgeTests(unittest.TestCase):
             resources.append(self.tool_id)
         else:
             resources.append(self.search_evidence_id)
+            if self.operator_id == "human-root":
+                resources.append("hosted-model-memory-candidate")
         commands = [command_prefix+"-create-run", command_prefix+"-ready", command_prefix+"-running", command_prefix+"-output-trace-object", "hosted-"+command_prefix.split("-")[1]+"-close-verifying", "hosted-"+command_prefix.split("-")[1]+"-close-terminal"]
         if not tool:
             commands.append("hosted-search-trace-evidence")
@@ -140,7 +145,7 @@ class HostedBridgeTests(unittest.TestCase):
         self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":grant_id,
             "parent_grant_id":"hosted-root-grant","issued_by":"host-agent","granted_to":principal_id,
             "task_scope":[self.task_id],"resource_scope":resources,
-            "action_scope":["RUN_CREATE","RUN_TRANSITION","TRACE_APPEND","OBJECT_WRITE","CLASSIFY","VERIFY","TOOL_READ"],
+            "action_scope":["RUN_CREATE","RUN_TRANSITION","TRACE_APPEND","OBJECT_WRITE","CLASSIFY","VERIFY","TOOL_READ"] + (["MEMORY_ADMIT"] if grant_id == "hosted-model-grant" and self.operator_id == "human-root" else []),
             "audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),
             "status":"ACTIVE","policy_version":"1"}, "create-" + grant_id)
 
@@ -200,6 +205,13 @@ class HostedBridgeTests(unittest.TestCase):
             artifact_id=self.model_artifact_id,payload=(Path(__file__).resolve().parents[2]/"eval/regression/fixtures/nexus-hosted-e2e-model-result.txt").read_bytes(),classification_assertion_ref=model_class,
             event_classification_assertion_ref="class-model-output-event",verifier_id="hosted-model-verification")
         self.assertEqual(model_result["verification"]["verdict"],"PASS")
+        if self.operator_id == "human-root":
+            memory = MemoryService(self.store,self.authority,self.verifier)
+            candidate = memory.create_candidate(command_id="hosted-model-memory-candidate-command",candidate_id="hosted-model-memory-candidate",
+                claim_ref=self.model_artifact_id,evidence_refs=[self.model_artifact_id],owner="host-model",
+                classification_assertion_ref=model_class,verification_ref="hosted-model-verification",
+                review_trigger="hosted E2E candidate remains quarantined pending independent evidence")
+            self.assertEqual((candidate["status"],candidate["truth_state"]),("QUARANTINED","INFERRED"))
         self._add_class("class-hosted-search-evidence","OBJECT",self.search_evidence_id,"host-model","hosted-model-grant")
         self._add_class("class-hosted-search-event","TRACE_EVENT","evt-hosted-search-trace-evidence","host-model","hosted-model-grant")
         search_result=self.bridge.record_evidence(command_id="hosted-search",task_id=self.task_id,run_id=self.model_run_id,grant_id="hosted-model-grant",
@@ -244,6 +256,18 @@ class HostedBridgeTests(unittest.TestCase):
         self.assertEqual({item["executor_kind"] for item in projection["runs"]},{"ORCHESTRATOR","MODEL","TOOL"})
         manifest=json.loads(self.store.get_payload(self.model_manifest_id).decode("utf-8"))
         self.assertEqual((manifest["execution_source"],manifest["model_identity_status"]),("CODEX_HOST_DECLARED","UNAVAILABLE"))
+        root_manifest=json.loads(self.store.get_payload(self.root_manifest_id).decode("utf-8"))
+        tool_manifest=json.loads(self.store.get_payload(self.tool_manifest_id).decode("utf-8"))
+        self.assertEqual(root_manifest["executor_kind"],"ORCHESTRATOR")
+        self.assertNotIn("model_id",root_manifest)
+        self.assertNotIn("provider",root_manifest)
+        self.assertEqual(tool_manifest["executor_kind"],"TOOL")
+        self.assertEqual(tool_manifest["tool_id"],self.tool_id)
+        self.assertEqual({json.dumps(item["data_boundary"],sort_keys=True) for item in (root_manifest,manifest,tool_manifest)}, {json.dumps(self.boundary,sort_keys=True)})
+        with self.store._connection() as conn:
+            root_class=conn.execute("SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id='class-root-run'").fetchone()
+            child_classes=conn.execute("SELECT c.sensitivity_level,c.handling_tags_json FROM runs r JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref WHERE r.run_id IN (?,?)",(self.model_run_id,self.tool_run_id)).fetchall()
+        self.assertTrue(all((row["sensitivity_level"],row["handling_tags_json"]) == tuple(root_class) for row in child_classes))
         with self.store._connection() as conn:
             trace_count=conn.execute("select count(*) from trace_events where run_id in (?,?)",(self.model_run_id,self.tool_run_id)).fetchone()[0]
         self.assertGreaterEqual(trace_count,8)
@@ -269,6 +293,34 @@ class HostedBridgeTests(unittest.TestCase):
         self.assertEqual(self.verifier.get("hosted-search-verification")["verdict"],"PASS")
         evidence=json.loads(self.store.get_payload(self.search_evidence_id).decode("utf-8"))
         self.assertEqual(evidence["source_url"],"https://www.sqlite.org/fts5.html")
+
+        # Simulate the Host losing a successful output receipt, reopening, and
+        # retrying the identical command_id: Object, Trace and Verification
+        # commands must replay their saved results rather than duplicate state.
+        before = self._persisted_counts()
+        retry=self.bridge.record_output(command_id="hosted-model-output",task_id=self.task_id,run_id=self.model_run_id,grant_id="hosted-model-grant",
+            artifact_id=self.model_artifact_id,payload=(Path(__file__).resolve().parents[2]/"eval/regression/fixtures/nexus-hosted-e2e-model-result.txt").read_bytes(),
+            classification_assertion_ref="class-hosted-model-artifact",event_classification_assertion_ref="class-model-output-event",
+            verifier_id="hosted-model-verification")
+        self.assertEqual(retry["verification"]["verification_id"],"hosted-model-verification")
+        self.assertEqual(self._persisted_counts(),before)
+        retry_tool=self.bridge.record_output(command_id="hosted-tool-output",task_id=self.task_id,run_id=self.tool_run_id,grant_id="hosted-tool-grant",
+            artifact_id=self.tool_artifact_id,payload=receipt,classification_assertion_ref="class-hosted-tool-artifact",
+            event_classification_assertion_ref="class-tool-output-event",verifier_id="hosted-tool-verification")
+        self.assertEqual(retry_tool["verification"]["verification_id"],"hosted-tool-verification")
+        self.assertEqual(self._persisted_counts(),before)
+        before_root_events=self._trace_count(self.root_run_id)
+        repeated=self.trace.transition_run(command_id="hosted-e2e-root-succeeded",run_id=self.root_run_id,expected_state="VERIFYING",next_state="SUCCEEDED",classification_assertion_ref="class-root-succeeded")
+        self.assertEqual(repeated["status"],"SUCCEEDED")
+        self.assertEqual(self._trace_count(self.root_run_id),before_root_events)
+
+    def _persisted_counts(self):
+        with self.store._connection() as conn:
+            return tuple(conn.execute("SELECT (SELECT COUNT(*) FROM objects),(SELECT COUNT(*) FROM trace_events),(SELECT COUNT(*) FROM verification_results)").fetchone())
+
+    def _trace_count(self, run_id):
+        with self.store._connection() as conn:
+            return conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=?",(run_id,)).fetchone()[0]
 
     def _terminal_classes(self, prefix, actor):
         result={}

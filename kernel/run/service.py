@@ -9,6 +9,7 @@ from typing import Any
 
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
+from kernel.object.errors import SchemaUnsupported
 from kernel.run.errors import InvalidRunTransition, TraceAdmissionDenied
 from kernel.runtime.modes import RuntimeModeService
 
@@ -419,6 +420,8 @@ class TraceRuntime:
         try:
             manifest = json.loads(self.store.get_payload(run["manifest_ref"]).decode("utf-8"))
             self.store._validate(f"nexus.run_manifest@{manifest.get('schema_version')}.schema.json", manifest)
+        except SchemaUnsupported as exc:
+            raise TraceAdmissionDenied("SCHEMA_UNSUPPORTED") from exc
         except Exception as exc:
             raise TraceAdmissionDenied("RUN_READY_MANIFEST_INTEGRITY_OR_SCHEMA_INVALID") from exc
         boundary = json.loads(run["data_boundary_json"])

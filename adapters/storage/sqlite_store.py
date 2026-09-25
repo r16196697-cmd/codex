@@ -25,6 +25,7 @@ from kernel.object.errors import (
     ObjectNotFound,
     PurgeBarrierActive,
     PurgedObject,
+    SchemaUnsupported,
     WriterAlreadyRunning,
 )
 
@@ -297,7 +298,10 @@ class ObjectStore:
     def _schema(self, filename: str) -> dict[str, Any]:
         if filename not in self._schemas:
             path = self.schema_dir / filename
-            schema = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                schema = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError as exc:
+                raise SchemaUnsupported("SCHEMA_UNSUPPORTED") from exc
             Draft202012Validator.check_schema(schema)
             self._schemas[filename] = schema
         return self._schemas[filename]

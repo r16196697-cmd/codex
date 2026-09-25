@@ -19,6 +19,7 @@ from kernel.object.errors import (
     MigrationError,
     ObjectNotFound,
     PurgeBarrierActive,
+    SchemaUnsupported,
     WriterAlreadyRunning,
 )
 
@@ -263,6 +264,10 @@ raise SystemExit(0)
         self.store.close()
         with self.assertRaises(MigrationError):
             ObjectStore(self.root / "data")
+
+    def test_unknown_schema_version_is_rejected_as_unsupported(self) -> None:
+        with self.assertRaisesRegex(SchemaUnsupported, "SCHEMA_UNSUPPORTED"):
+            self.store._validate("nexus.run_manifest@99.schema.json", {"schema_id": "nexus.run_manifest", "schema_version": 99})
 
     def test_command_and_purge_ledgers_are_schema_validated_and_idempotent(self) -> None:
         protected = self.put("cmd-ledger-object", b"ledger test")

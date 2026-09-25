@@ -1,4 +1,5 @@
 import json
+import hashlib
 import shutil
 import sqlite3
 import tempfile
@@ -12,6 +13,7 @@ from adapters.client.operator import OperatorClient
 from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import PurgedObject, PurgeBarrierActive
 from kernel.authority import AuthorityService
+from kernel.budget import BudgetService
 from kernel.memory import MemoryService
 from kernel.purge import PurgeService
 from kernel.runtime.errors import RuntimeDenied
@@ -35,8 +37,8 @@ class MemoryPurgeTests(unittest.TestCase):
         for principal_id, principal_type in (("human-root", "HUMAN"), ("agent", "SERVICE")):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "anchor-root")
-        self.actions = ["RUN_CREATE", "VERIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
-        self.resources = ["run-7", "claim-7", "evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "plan-7", "record-7"]
+        self.actions = ["RUN_CREATE", "TRACE_APPEND", "VERIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
+        self.resources = ["run-7", "claim-7", "evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "plan-7", "record-7", "evt-purge-ref-event"]
         now = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-7", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-7"], "resource_scope": self.resources, "action_scope": self.actions, "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "grant-7")
         self._seed_task_run()
@@ -249,6 +251,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")
         result = self._human_verification("verify-for-purge")
         self.memory.create_candidate(command_id="candidate-for-purge", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
+        approval_id, effect_id, inspector = self._seed_purge_identifier_audit()
         plan = self.purge.plan(command_id="purge-plan-success", plan_id="plan-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         backup_root = self.root / "old-backup"
@@ -266,9 +269,31 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(outcome["status"], "COMPLETED")
         with self.assertRaises(PurgedObject):
             self.store.get_payload(self.claim)
+        # The existing immutable RunManifest derived from this input is part
+        # of the purge closure; retaining its index row must not retain bytes.
+        with self.assertRaises(PurgedObject):
+            self.store.get_payload("manifest-7")
+        self.assertEqual(self.store.get_object_metadata("manifest-7"), {"object_id": "manifest-7", "payload_state": "PURGED"})
+        tombstone = self.store.get_object_metadata(self.claim)
+        self.assertEqual(tombstone, {"object_id": self.claim, "payload_state": "PURGED"})
+        self.assertNotIn("integrity_hash", tombstone)
+        effect_projection = inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id=effect_id)
+        approval_projection = inspector.approval(grant_id="purge-audit-inspect", task_id="task-7", approval_id=approval_id, include_payload_hash=True)
+        trace_projection = inspector.trace_events(grant_id="purge-audit-inspect", task_id="task-7", run_id="run-7")
+        self.assertEqual(effect_projection["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(approval_projection["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(approval_projection["effect_id"], "REDACTED_PURGED")
+        self.assertEqual(approval_projection["payload_integrity_hash"], "REDACTED_PURGED")
+        self.assertEqual(trace_projection[-1]["object_refs"], ["REDACTED_PURGED"])
+        self.assertEqual(trace_projection[-1]["effect_refs"], ["REDACTED_PURGED"])
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM raw_history_fts WHERE raw_history_fts MATCH 'governed' ").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM admitted_memory_fts WHERE admitted_memory_fts MATCH 'governed' ").fetchone()[0], 0)
+            # The immutable audit outcome survives; ordinary Inspect redacts its
+            # payload-derived target/hash after the source Object is Purged.
+            retained_effect = conn.execute("SELECT effect_outcome,payload_integrity_hash,target_ref FROM effects WHERE effect_id=?", (effect_id,)).fetchone()
+            self.assertEqual((retained_effect["effect_outcome"], retained_effect["payload_integrity_hash"]), ("NOT_COMMITTED", hashlib.sha256(b"The synthetic Nexus fact is governed memory.").hexdigest()))
+            self.assertEqual(retained_effect["target_ref"], "https://private.example/recipient/42")
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE runs SET status='READY' WHERE run_id='run-pending'")
         restored = ObjectStore(backup_root)
@@ -280,13 +305,50 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertEqual(replay["purged_refs_checked"], 3)
             with self.assertRaises(PurgedObject):
                 restored.get_payload(self.claim)
+            with self.assertRaises(PurgedObject):
+                restored.get_payload("manifest-7")
             self.assertEqual(restored_memory.search_raw(query="governed memory", run_id="run-7"), [])
             self.assertEqual(restored_memory.search_admitted(query="governed memory", run_id="run-7"), [])
+            restored_inspector = InspectService(restored, self.authority)
+            self.assertEqual(restored_inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id=effect_id)["target_ref"], "REDACTED_PURGED")
+            restored_approval = restored_inspector.approval(grant_id="purge-audit-inspect", task_id="task-7", approval_id=approval_id, include_payload_hash=True)
+            self.assertEqual(restored_approval["payload_integrity_hash"], "REDACTED_PURGED")
+            restored_trace = restored_inspector.trace_events(grant_id="purge-audit-inspect", task_id="task-7", run_id="run-7")
+            self.assertEqual(restored_trace[-1]["object_refs"], ["REDACTED_PURGED"])
             with restored._connection() as conn:
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
                 self.assertEqual([row[0] for row in conn.execute("SELECT action FROM purge_ledger ORDER BY ledger_seq")], ["BARRIER_INSTALLED", "BARRIER_RELEASED"])
         finally:
             restored.close()
+
+    def _seed_purge_identifier_audit(self):
+        target = "https://private.example/recipient/42"
+        digest = hashlib.sha256(self.store.get_payload(self.claim)).hexdigest()
+        budgets = BudgetService(self.store)
+        budgets.create_account(command_id="purge-audit-budget-create", account_id="purge-audit-budget", task_id="task-7", amount_limit=0, unit="test", model_call_limit=0, tool_call_limit=0, child_run_limit=0)
+        reservation = budgets.reserve(command_id="purge-audit-reserve", account_id="purge-audit-budget", run_id="run-7", amount=0)
+        approval_id = "approval-purge-sensitive"
+        effect_id = "effect-purge-sensitive"
+        now = datetime.now(timezone.utc).isoformat()
+        self.authority.create_approval({"schema_id":"nexus.approval_decision","schema_version":1,"approval_id":approval_id,
+            "approver_principal_id":"human-root","target_type":"FAKE_ACTION","target_ref":target,"effect_id":effect_id,
+            "payload_integrity_hash":digest,"decision":"APPROVE","approved_scope":["FAKE_ACTION",target],"policy_version":"1","issued_at":now}, "create-approval-purge-sensitive")
+        effect = {"effect_id":effect_id,"run_id":"run-7","idempotency_key":"purge-sensitive-key","execution_state":"CANCELLED","effect_outcome":"NOT_COMMITTED","reconciliation_status":"NOT_REQUIRED"}
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (effect_id,"run-7","synthetic-tool","1","FAKE_ACTION",target,digest,self.claim,"purge-sensitive-key","grant-7",approval_id,reservation,"CANCELLED","NOT_COMMITTED","NOT_REQUIRED",None,json.dumps(effect,sort_keys=True),now,now))
+            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+        self._classify("class-purge-ref-event","TRACE_EVENT","evt-purge-ref-event")
+        trace = TraceRuntime(self.store,self.authority)
+        trace.append_trace_event(command_id="purge-ref-event",run_id="run-7",event_type="nexus.object.created",
+            classification_assertion_ref="class-purge-ref-event",typed_metadata={"object_type":"artifact"},object_refs=[self.claim],effect_refs=[effect_id])
+        now_dt = datetime.now(timezone.utc)
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"purge-audit-inspect",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],
+            "resource_scope":["task:task-7","effect:"+effect_id,"approval:"+approval_id,"approval:"+approval_id+":payload-integrity","trace:run-7"],
+            "action_scope":["INSPECT","INSPECT_PROTECTED"],"audience_scope":["nexus-inspect"],"issued_at":now_dt.isoformat(),
+            "expires_at":(now_dt+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-purge-audit-inspect")
+        return approval_id,effect_id,InspectService(self.store,self.authority)
 
     def test_old_snapshot_recovery_replays_purge_ledger_before_normal(self):
         self.memory.retain_raw(command_id="retain-for-recovery", object_id=self.claim, run_id="run-7")

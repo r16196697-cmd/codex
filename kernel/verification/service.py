@@ -4,7 +4,7 @@ import json
 import hashlib
 from datetime import datetime, timezone
 
-from kernel.object.errors import IntegrityMismatch, ObjectNotFound, PurgedObject
+from kernel.object.errors import CommandConflict, IntegrityMismatch, ObjectNotFound, PurgedObject
 from kernel.runtime.errors import RuntimeDenied
 
 
@@ -24,9 +24,28 @@ class VerificationService:
         if not evidence:
             raise RuntimeDenied("VERIFIER_REQUIRES_EVIDENCE_REFS")
         run = self._run(run_id)
+        grant_id = run["grant_id"]
+        axes = {"generator_independence": "NOT_APPLICABLE", "evidence_independence": "UNKNOWN", "method_independence": "INDEPENDENT"}
+        if independence is not None and independence != axes:
+            raise RuntimeDenied("T1_INDEPENDENCE_IS_NOT_CALLER_ASSERTED")
+        with self.store._connection() as conn:
+            prior = conn.execute("SELECT target_ref,evidence_used_json,independence_json,run_id,result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
+        if prior:
+            same_request = (prior["target_ref"] == target_ref
+                and json.loads(prior["evidence_used_json"]) == evidence
+                and json.loads(prior["independence_json"]) == axes
+                and prior["run_id"] == run_id)
+            if not same_request:
+                raise CommandConflict("COMMAND_CONFLICT")
+            for object_id in sorted(set([target_ref, *evidence])):
+                self.authority.evaluate_authorization(
+                    grant_id,
+                    {"task": run["task_id"], "resource": object_id, "action": "VERIFY", "audience": "nexus-runtime"},
+                    f"verify-auth-{verification_id}-{object_id}",
+                )
+            return json.loads(prior["result_json"])
         if run["status"] not in {"RUNNING", "VERIFYING"}:
             raise RuntimeDenied("VERIFIER_RUN_NOT_ACTIVE")
-        grant_id = run["grant_id"]
         for object_id in sorted(set([target_ref, *evidence])):
             self.authority.evaluate_authorization(
                 grant_id,
@@ -41,9 +60,6 @@ class VerificationService:
                 self._assert_run_boundary(run, metadata["classification_assertion_ref"], object_id)
             except (IntegrityMismatch, ObjectNotFound, PurgedObject):
                 missing.append(object_id)
-        axes = {"generator_independence": "NOT_APPLICABLE", "evidence_independence": "UNKNOWN", "method_independence": "INDEPENDENT"}
-        if independence is not None and independence != axes:
-            raise RuntimeDenied("T1_INDEPENDENCE_IS_NOT_CALLER_ASSERTED")
         result = {"schema_id": "nexus.verification_result", "schema_version": 1, "verification_id": verification_id, "target_ref": target_ref, "verdict": "PASS" if not missing else "INCONCLUSIVE", "verifier_kind": "T1_DETERMINISTIC", "evidence_used": evidence, "missing_evidence": missing, "conflicts": [], "independence": axes, "rationale_summary": "SHA-256 integrity verification of target and referenced evidence objects.", "run_id": run_id, "policy_version": self.authority.policy["policy_version"]}
         self.store._validate("nexus.verification_result@1.schema.json", result)
         operation = "record_verification_result"

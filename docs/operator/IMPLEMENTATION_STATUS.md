@@ -1,5 +1,40 @@
 # Nexus v2 Implementation Status
 
+## IMPLEMENTATION STEP 10 CONTINUATION — CLOSE RECORDED ACCEPTANCE GAPS
+
+Goal:
+Close only the already-recorded Hosted T1/T2/T5/T9/T10/T11/T12 gaps against manual §10, without redesigning Contracts or standalone capabilities.
+
+Inputs:
+Checkpoint `f2c5ae7`; current Hosted E2E; manual §10; current acceptance matrix in `eval/regression/2026-09-25-persistent-host-pilot.md`.
+
+Allowed files:
+Focused existing contract/integration/recovery/security tests and fixtures; minimal existing service/schema compatibility fixes only where a formal test proves a gap; acceptance report and this status file. Same-directory verified timestamp backup before each existing-file edit. All failure injection uses isolated temporary roots; persistent root may only receive synthetic approved test records.
+
+Forbidden files:
+Five Foundation Contract semantics, migrations already applied to the persistent deployment, policy weakening, grant widening, real user data, real external writes, standalone Provider/Search/Credential Broker, broad framework or architecture additions.
+
+Expected outputs:
+Evidence mapped one-to-one to formal observable T1/T2/T5/T9/T10/T11/T12 conditions; exact remaining blockers called out rather than converted to PASS.
+
+Exact tests:
+Focused test modules for each affected T; full `.venv\\Scripts\\python.exe -m unittest discover -s tests -v`; migration/schema checks; `compileall`, `pip check`, `git diff --check`, secret scan; isolated old-snapshot/Purge-ledger/RECOVERY drill.
+
+PASS criteria:
+Manual conditions are actually observed; command retry and restore cases are idempotent; Purged content and policy-governed identifiers do not reappear; Recovery cannot return NORMAL until checks finish; unsupported Host telemetry remains unavailable.
+
+FAIL handling:
+Stop only the affected item if it requires changing frozen semantics, unsafe identifier deletion, or broader authority. Preserve audited facts and report exact blocker.
+
+Rollback point:
+Commit `f2c5ae7`; isolated pre-existing root snapshot `nexus/backups/codex-hosted-attached-20260925-140800-post-hosted-e2e`.
+
+Do NOT:
+- Add tests unrelated to the named unmet conditions.
+- Change T3/T4/T6/T7/T8 unless a change makes their regressions necessary.
+- Call a provider-specific future capability a Hosted blocker or vice versa.
+- Mark any state PASS without observable evidence.
+
 ## IMPLEMENTATION STEP 8 CONTINUATION — CODEX HOST BRIDGE
 
 Goal:
@@ -58,9 +93,23 @@ Step 6: PASS
 Step 7: PASS
 Step 8: PASS for Codex-hosted integration (reusable Host Bridge, declared MODEL Child Run, actual read-only TOOL Child Run, Artifact/Evidence/Verification/Trace and persistent reopen/inspect verified); standalone Provider/Broker cases DEFERRED / NOT_CONFIGURED
 Step 9: PASS for Codex-hosted operations (four enforced modes, controlled inspect, CLI mode/inspect and persistent deployment-root reopen verified)
-Step 10: PARTIAL (full regression and persistent backup/restore pass; applicable T1–T12 statuses are recorded in `eval/regression/2026-09-25-persistent-host-pilot.md`; T1/T2/T5/T9/T10/T11/T12 remain PARTIAL)
+Step 10: PARTIAL (latest full regression: 76 passed; T1/T5 PASS; T2/T9/T10/T11/T12 PARTIAL. Hosted release gate not met.)
 
 Tests passed:
+- 2026-09-25 Step 10 continuation focused ObjectStore/Trace/Hosted Bridge/Purge/Runtime Modes/Deterministic Runtime regression — 51 passed; latest full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **76 passed** in 28.286s after T1 manifest/boundary, T2 MODEL/TOOL lost-response retries, and T9 RunManifest old-snapshot assertions.
+- Persistent-root read-only health check after the rejected fixture replay: schema 7, `PRAGMA integrity_check=ok`, mode `NORMAL`, 3 Tasks, 5 Runs, 0 Purge Ledger rows. Root was not transitioned or purged.
+- Formal latest T matrix: T1 PASS; T2 PARTIAL; T3 PASS; T4 PASS; T5 PASS; T6 PASS; T7 PASS; T8 PASS; T9 PARTIAL; T10 PARTIAL; T11 PARTIAL; T12 PARTIAL. Reasons and direct test names are in `eval/regression/2026-09-25-persistent-host-pilot.md`.
+
+Tests failed / incomplete:
+- Persistent rerun of `tests.integration.test_hosted_bridge` stopped in fixture setup with `COMMAND_CONFLICT`: it reuses an existing command ID but generates a fresh timestamped Grant request. The conflict was rejected before write; this repeatability case is not a runtime acceptance PASS.
+- T2 now retries both MODEL and TOOL output receipts after reopen without duplicate state; it still lacks a full per-mutation-command response-loss matrix (including create Task/Run and every command boundary).
+- T9 still retains purged target/hash values in immutable Approval/Effect database rows; inspect redaction is not a substitute for the manual's at-rest Purge redaction requirement.
+- T10 formal E2 escalation/fallback lacks implementation/evidence; T11 cannot record the current Codex Search invocation as a distinct TOOL Run and lacks injection/conflict end-to-end acceptance evidence; T12 lacks a combined persistent-root mode + Purge-history restore drill.
+- No acceptance failure has been reclassified as DEFERRED except Standalone-only Provider/Search/Credential Broker cases.
+
+Current release state:
+- `Nexus v0.1 — Codex-hosted / Attached`: DEVELOPMENT; not DEPLOYED.
+- `Standalone Nexus`: NOT IMPLEMENTED / DEFERRED.
 - 2026-09-25 corrective mode/inspect + client run: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 65 passed; `compileall`, `pip check`, `git diff --check`, CLI `--help` passed. The only `git diff --check` output was Git's LF→CRLF advisory, not whitespace errors.
 - 2026-09-25 follow-up revalidation: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 65 passed in 19.736s; `compileall`, `pip check`, `git diff --check`, and CLI `--help` passed. No tracked source edits were made during this audit. Step 9's mode/inspect gates remain regression-PASS; this is not formal T1–T12 acceptance.
 - 2026-09-25 mode-to-Trace correction: focused Runtime/Trace/replay/deterministic-runtime/client regression — 32 passed; full `.venv\Scripts\python.exe -m unittest discover -s tests -v` — **68 passed** in 21.325s. `compileall`, `pip check`, CLI `--help` and `mode set --help`, and `git diff --check` passed. These checks establish only tested Core behavior, not a live persistent-client deployment or full T1–T12 acceptance.
@@ -121,15 +170,15 @@ Open blockers:
 - Independent real Model/Search Providers, real Provider Credential Broker use, multi-provider routing and standalone model execution are intentionally `DEFERRED / NOT_CONFIGURED`. They are not Core failures. No real `auth.json` / `.env` value was read or used as a Nexus credential.
 - Step 8 is **PASS for current Codex-hosted attachment scope**. It does not claim standalone Provider telemetry. Exact backend identity, request IDs, and token telemetry remain unavailable.
 - Step 9 is **PASS for Codex-hosted operations**: enforced mode gates, controlled inspect, CLI use, persistent Task inspection and reopen were verified.
-- Step 10 is **PARTIAL**, not release acceptance. T1/T2/T5/T9/T10/T11/T12 remain PARTIAL; T3/T4/T6/T7/T8 pass only within documented tested Core scope. Per-test observable conditions and evidence are in `eval/regression/2026-09-25-persistent-host-pilot.md`.
+- Step 10 is **PARTIAL**, not release acceptance. Latest: T1/T5 PASS; T2/T9/T10/T11/T12 PARTIAL; T3/T4/T6/T7/T8 remain regression-PASS. T9's at-rest identifier removal is not met; do not publish. Per-test evidence is in `eval/regression/2026-09-25-persistent-host-pilot.md`.
 - The persistent pilot's previously RUNNING synthetic probe (`hosted-pilot-root-20260925`) is now CANCELLED through its existing Grant and authorized Trace transition. The prior exact-resource authorization denial remains in audit history; no Grant was widened and no database row was directly edited.
 
 Known UNKNOWN Effects: None in the persistent pilot.
 Pending Purge: None; no persistent pilot object has been Purged.
 Pending migration: none; persistent pilot schema migration version is 7.
 Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
-Last verified state: persistent Task `hosted-task` reopened and inspected SUCCEEDED; Root `hosted-root`, declared MODEL `hosted-model-run`, and actual read-only TOOL `hosted-tool-run` replay SUCCEEDED. Three T1 integrity Verifications PASS; Artifact and source-URL Evidence persisted. A new-process CLI inspect and isolated post-E2E snapshot restore passed. Full regression **75 passed**; compile, pip, diff checks passed. Deployment remains DEVELOPMENT because required T1/T2/T5/T9/T10/T11/T12 conditions remain partial.
-Next allowed action: close only the remaining formal T1/T2/T5/T9/T10/T11/T12 evidence gaps with governed APIs and recorded Step Cards; do not claim DEPLOYED until all applicable Hosted release conditions, including Purge/Recovery and Trace replay, are evidenced. Standalone Provider items remain deferred.
+Last verified state: Step 10 focused regression 51 passed; final full regression **76 passed** in 28.186s; `compileall`, `pip check`, `git diff --check`, and changed-file secret-pattern scan passed. Persistent root read-only health: schema 7, integrity `ok`, mode `NORMAL`, 3 Tasks / 5 Runs; statuses have only SUCCEEDED/CANCELLED; no Effects, Purge records or barriers. Historical Purge restore remains isolated-test evidence only. Worktree is dirty at source commit `f2c5ae7`.
+Next allowed action: fix the persistent Bridge fixture's timestamp/command replay collision; close T2's explicit TOOL response-loss case; resolve at-rest Purge identifier redaction without deleting required audit facts; then complete T10 routing escalation/fallback, T11 honest Search-tool observation/verification, and T12 persistent clone mode+old-Purge-snapshot drill. Keep status DEVELOPMENT until all Hosted-required gates have direct evidence; Standalone Provider items remain deferred.
 
 ## IMPLEMENTATION STEP 2 — PASS
 
