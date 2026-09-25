@@ -184,7 +184,7 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery_store._current_runtime_mode(),"NORMAL")
         with recovery_store._connection() as conn:
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
             self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?",(input_id,)).fetchone()[0], "PURGED")
         recovery_store.close()
         reopened = ObjectStore(restored,policy=policy)

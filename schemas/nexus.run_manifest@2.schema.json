@@ -29,6 +29,7 @@
     "host_kind": {"const": "CODEX"},
     "host_adapter_version": {"type": "string", "minLength": 1},
     "model_identity_status": {"const": "UNAVAILABLE"},
-    "context_object_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+    "context_object_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "route_decision_ref": {"type": "string", "minLength": 1}
   }
 }

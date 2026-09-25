@@ -32,7 +32,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "cmd-principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "cmd-anchor")
         now = datetime.now(timezone.utc)
-        self.root_resources = ["runtime-mode:instance", "run-root", "run-e0", "run-e1", "run-e2", "run-tool", "run-tool-comp", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read", "sandbox-target"]
+        self.root_resources = ["runtime-mode:instance", "run-root", "run-e0", "run-e1", "run-e2", "run-tool", "run-tool-comp", "run-fail-e1", "run-fail-e2", "run-e2-downstream", "run-illegal-third", "model-e0", "model-e1", "model-e2", "model-cloud", "tool-read", "sandbox-target"]
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-root", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-1"], "resource_scope": self.root_resources, "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "DELEGATE", "OBJECT_WRITE", "CLASSIFY", "RUNTIME_CONFIGURE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=300)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-root-grant")
         self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "status": "CREATED", "created_at": self._now(), "command_id": "cmd-task"})
         self.budget.create_account(command_id="cmd-budget", account_id="budget-1", task_id="task-1", amount_limit=100, unit="credits", model_call_limit=10, tool_call_limit=10, child_run_limit=10)
@@ -93,17 +93,19 @@ class DeterministicRuntimeTests(unittest.TestCase):
         result.append({"schema_id": "nexus.subtask", "schema_version": 1, "subtask_id": "node-tool-comp", "task_id": "task-1", "input_object_refs": ["input-1"], "input_schema_id": "nexus.object@1.schema.json", "output_schema_id": "nexus.object@1.schema.json", "dependency_ids": [], "quality_requirement": "ROUTINE", "risk_class": "LOW", "validation_method": "TEST", "budget_amount": 2, "requested_executor": "TOOL", "tool_id": "tool-read", "required_modalities": ["text"], "created_at": "2026-09-24T00:00:00Z"})
         return result
 
-    def _schedule(self, node_id, run_id, actor_id, grant_id, route_id=None):
+    def _schedule(self, node_id, run_id, actor_id, grant_id, route_id=None, *, command_id=None, requested_capability=None, attempt_reason="INITIAL", predecessor_attempt_id=None):
+        route_id = route_id or "route-" + run_id
         self._child_grant(run_id, actor_id, grant_id)
         self._classify("class-" + run_id, "RUN", run_id, actor_id)
-        create_command = "cmd-schedule-" + node_id + "-create-run"
+        command_id = command_id or "cmd-schedule-" + node_id
+        create_command = command_id + "-create-run"
         create_event = self._event_class(create_command, actor_id)
-        ready_event = self._event_class("cmd-schedule-" + node_id + "-ready", actor_id)
+        ready_event = self._event_class(command_id + "-ready", actor_id)
         if route_id:
             self._classify("class-" + route_id, "OBJECT", route_id, "agent")
         manifest_id = "manifest-" + run_id
         self._classify("class-" + manifest_id, "OBJECT", manifest_id, actor_id)
-        return self.runtime.schedule_node(command_id="cmd-schedule-" + node_id, task_id="task-1", root_run_id="run-root", subtask_id=node_id, child_run_id=run_id, child_grant_id=grant_id, child_classification_assertion_ref="class-" + run_id, event_classification_assertion_ref=create_event, ready_event_classification_assertion_ref=ready_event, route_object_id=route_id, route_classification_assertion_ref="class-" + route_id if route_id else None, manifest_object_id=manifest_id, manifest_classification_assertion_ref="class-" + manifest_id)
+        return self.runtime.schedule_node(command_id=command_id, task_id="task-1", root_run_id="run-root", subtask_id=node_id, child_run_id=run_id, child_grant_id=grant_id, child_classification_assertion_ref="class-" + run_id, event_classification_assertion_ref=create_event, ready_event_classification_assertion_ref=ready_event, route_object_id=route_id, route_classification_assertion_ref="class-" + route_id if route_id else None, manifest_object_id=manifest_id, manifest_classification_assertion_ref="class-" + manifest_id, requested_capability=requested_capability, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
 
     def _advance(self, run_id, command_id, expected, target, actor_id):
         classification = self._event_class(command_id, actor_id)
@@ -147,6 +149,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.assertEqual(routed["node-e0"]["selected_model_class"], "E0")
         self.assertEqual(routed["node-e1"]["selected_model_class"], "E1")
         self.assertEqual(routed["node-e2"]["selected_model_class"], "E2")
+        self.assertEqual((routed["node-tool"]["schema_version"], routed["node-tool"]["actual_executor_kind"], routed["node-tool"]["execution_source"]), (2, "TOOL", "DETERMINISTIC_RUNTIME"))
         self.assertIn({"model_id": "model-cloud", "reason_code": "LOCALITY_CONSTRAINT"}, routed["node-e1"]["exclusion_reasons"])
         self.assertEqual(tuple(budget), (8, 3, 1, 4))
         self.assertEqual(self._schedule("node-e0", "run-e0", "model-agent", "grant-e0", "route-e0"), results[0])
@@ -162,6 +165,65 @@ class DeterministicRuntimeTests(unittest.TestCase):
         node = self._nodes()[2]
         with self.assertRaisesRegex(RuntimeDenied, "NO_MODEL_MEETS_HARD_ROUTING_AND_QUALITY_CONSTRAINTS"):
             self.runtime._choose_model(node, self.runtime._contract("task-1")[1], self._root(), self.runtime._budget_snapshot("budget-1"), self.runtime._contract("task-1")[0])
+
+    def test_escalation_attempts_replay_and_coordinator_continue_downstream(self):
+        nodes = self._nodes()
+        nodes[1]["dependency_ids"] = ["node-e0"]
+        nodes[2]["dependency_ids"] = ["node-e1"]
+        self.runtime.create_dag(command_id="cmd-escalation-dag", task_id="task-1", root_run_id="run-root", nodes=nodes)
+        self._activate_root()
+        for args in (("model-e1", "E1", 1), ("model-e2", "E2", 2)):
+            self._model_profile(*args)
+        self._schedule("node-e0", "run-e0", "model-agent", "grant-e0", "route-e0")
+        for state, command in (("RUNNING", "cmd-e0-running"), ("VERIFYING", "cmd-e0-verifying"), ("SUCCEEDED", "cmd-e0-succeeded")):
+            expected = {"RUNNING":"READY", "VERIFYING":"RUNNING", "SUCCEEDED":"VERIFYING"}[state]
+            self._advance("run-e0", command, expected, state, "model-agent")
+        first = self._schedule("node-e1", "run-e1", "model-agent", "grant-e1", "route-e1", requested_capability="E1")
+        self._advance("run-e1", "cmd-e1-running", "READY", "RUNNING", "model-agent")
+        self._advance("run-e1", "cmd-e1-waiting", "RUNNING", "WAITING", "model-agent")
+        with self.assertRaisesRegex(RuntimeDenied, "SUBTASK_PREVIOUS_ATTEMPT_NOT_TERMINAL_FAILURE"):
+            self._schedule("node-e1", "run-e2", "model-agent", "grant-e2", "route-e2", command_id="cmd-e1-attempt-2", requested_capability="E2", attempt_reason="VERIFIER_REQUIRED_ESCALATION", predecessor_attempt_id=first["attempt_id"])
+        self._advance("run-e1", "cmd-e1-resumed", "WAITING", "RUNNING", "model-agent")
+        self._advance("run-e1", "cmd-e1-escalate-failure", "RUNNING", "FAILED", "model-agent")
+        self.assertEqual(self.runtime.replay_subtask("node-e1")["status"], "WAITING")
+        second = self._schedule("node-e1", "run-e2", "model-agent", "grant-e2", "route-e2", command_id="cmd-e1-attempt-2", requested_capability="E2", attempt_reason="VERIFIER_REQUIRED_ESCALATION", predecessor_attempt_id=first["attempt_id"])
+        self.assertEqual(second["attempt_no"], 2)
+        self.assertEqual(self._schedule("node-e1", "run-e2", "model-agent", "grant-e2", "route-e2", command_id="cmd-e1-attempt-2", requested_capability="E2", attempt_reason="VERIFIER_REQUIRED_ESCALATION", predecessor_attempt_id=first["attempt_id"]), second)
+        for state, command in (("RUNNING", "cmd-e2-running"), ("VERIFYING", "cmd-e2-verifying"), ("SUCCEEDED", "cmd-e2-succeeded")):
+            expected = {"RUNNING":"READY", "VERIFYING":"RUNNING", "SUCCEEDED":"VERIFYING"}[state]
+            self._advance("run-e2", command, expected, state, "model-agent")
+        projection = self.runtime.replay_subtask("node-e1")
+        self.assertEqual(projection["final_outcome"], "SUCCEEDED")
+        self.assertEqual([item["requested_capability"] for item in projection["attempts"]], ["E1", "E2"])
+        self.assertEqual([item["run_id"] for item in projection["attempts"]], ["run-e1", "run-e2"])
+        downstream = self._schedule("node-e2", "run-e2-downstream", "model-agent", "grant-e2-downstream", "route-e2-downstream")
+        self.assertEqual(downstream["status"], "READY")
+        with self.store._connection() as conn:
+            reservations = conn.execute("SELECT COUNT(DISTINCT run_id) FROM budget_reservations WHERE run_id IN ('run-e1','run-e2')").fetchone()[0]
+            attempt_count = conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE subtask_id='node-e1'").fetchone()[0]
+        self.assertEqual((reservations, attempt_count), (2, 2))
+
+    def test_escalation_failure_finalizes_once_as_inconclusive(self):
+        nodes = self._nodes()
+        nodes[1]["dependency_ids"] = []
+        self.runtime.create_dag(command_id="cmd-fallback-dag", task_id="task-1", root_run_id="run-root", nodes=nodes)
+        self._activate_root()
+        for args in (("model-e1", "E1", 1), ("model-e2", "E2", 2)):
+            self._model_profile(*args)
+        first = self._schedule("node-e1", "run-fail-e1", "model-agent", "grant-fail-e1", "route-fail-e1", requested_capability="E1")
+        self._advance("run-fail-e1", "cmd-fail-e1-running", "READY", "RUNNING", "model-agent")
+        self._advance("run-fail-e1", "cmd-fail-e1-failed", "RUNNING", "FAILED", "model-agent")
+        second = self._schedule("node-e1", "run-fail-e2", "model-agent", "grant-fail-e2", "route-fail-e2", command_id="cmd-fail-e2-attempt", requested_capability="E2", attempt_reason="VERIFIER_REQUIRED_ESCALATION", predecessor_attempt_id=first["attempt_id"])
+        self._advance("run-fail-e2", "cmd-fail-e2-running", "READY", "RUNNING", "model-agent")
+        self._advance("run-fail-e2", "cmd-fail-e2-failed", "RUNNING", "FAILED", "model-agent")
+        final = self.runtime.finalize_subtask(command_id="cmd-e1-inconclusive", task_id="task-1", root_run_id="run-root", subtask_id="node-e1", outcome="INCONCLUSIVE", classification_assertion_ref=self._event_class("cmd-e1-inconclusive", "agent"))
+        self.assertEqual(final["final_attempt_id"], second["attempt_id"])
+        self.assertEqual(self.runtime.finalize_subtask(command_id="cmd-e1-inconclusive", task_id="task-1", root_run_id="run-root", subtask_id="node-e1", outcome="INCONCLUSIVE", classification_assertion_ref="class-evt-cmd-e1-inconclusive"), final)
+        self.assertEqual(self.trace.replay_run("run-root")["status"], "RUNNING")
+        projection = self.runtime.replay_subtask("node-e1")
+        self.assertEqual((projection["status"], projection["final_outcome"], len(projection["attempts"])), ("FAILED", "INCONCLUSIVE", 2))
+        with self.assertRaisesRegex(RuntimeDenied, "SUBTASK_NOT_SCHEDULABLE"):
+            self._schedule("node-e1", "run-illegal-third", "model-agent", "grant-illegal-third", "route-illegal-third", command_id="cmd-illegal-third", requested_capability="E2", attempt_reason="RETRY", predecessor_attempt_id=second["attempt_id"])
 
     def test_unknown_effect_is_reconciled_without_retry_and_compensation_is_independent(self):
         class FakeDispatcher:

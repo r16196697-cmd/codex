@@ -397,45 +397,127 @@ class DeterministicRuntime:
     def replay_subtask(self, subtask_id: str) -> dict[str, Any]:
         self.modes.require("core_read")
         with self.store._connection() as conn:
-            row = conn.execute("SELECT task_id,status,scheduled_run_id,node_json FROM subtasks WHERE subtask_id=?", (subtask_id,)).fetchone()
+            row = conn.execute("SELECT task_id,status,scheduled_run_id,node_json,final_attempt_id,final_outcome FROM subtasks WHERE subtask_id=?", (subtask_id,)).fetchone()
             if not row:
                 raise RuntimeDenied("SUBTASK_NOT_FOUND")
+            attempts = conn.execute("SELECT attempt_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id FROM subtask_attempts WHERE subtask_id=? ORDER BY attempt_no", (subtask_id,)).fetchall()
+        if not attempts:
             run_id = row["scheduled_run_id"]
-        if run_id is None:
-            if row["status"] != "PENDING":
-                raise RuntimeDenied("SUBTASK_PROJECTION_WITHOUT_RUN")
-            return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": "PENDING", "run_id": None}
-        projection = self.trace.replay_run(run_id)
-        run_to_node = {"CREATED": "PENDING", "READY": "READY", "RUNNING": "RUNNING", "WAITING": "WAITING", "VERIFYING": "RUNNING", "SUCCEEDED": "SUCCEEDED", "FAILED": "FAILED", "CANCELLED": "CANCELLED"}
-        expected = run_to_node[projection["status"]]
+            if run_id is None:
+                if row["status"] != "PENDING":
+                    raise RuntimeDenied("SUBTASK_PROJECTION_WITHOUT_RUN")
+                return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": "PENDING", "run_id": None, "attempts": [], "final_outcome": None}
+            attempts = [{"attempt_id": None, "attempt_no": 1, "run_id": run_id, "route_decision_ref": None, "requested_capability": "LEGACY", "attempt_reason": "LEGACY_SINGLE_RUN", "predecessor_attempt_id": None, "outcome": None, "command_id": None}]
+        replayed = []
+        latest_projection = None
+        for attempt in attempts:
+            projection = self.trace.replay_run(attempt["run_id"])
+            latest_projection = projection
+            expected_attempt = {"CREATED":"CREATED","READY":"READY","RUNNING":"RUNNING","WAITING":"RUNNING","VERIFYING":"RUNNING","SUCCEEDED":"SUCCEEDED","FAILED":"FAILED","CANCELLED":"CANCELLED"}.get(projection["status"])
+            if attempt["outcome"] is not None and attempt["outcome"] != expected_attempt:
+                raise RuntimeDenied("SUBTASK_ATTEMPT_TRACE_REPLAY_MISMATCH")
+            replayed.append({**dict(attempt), "run_status": projection["status"], "last_seq": projection["last_seq"]})
+        latest = replayed[-1]
+        if row["final_attempt_id"]:
+            if row["final_attempt_id"] != latest["attempt_id"] or row["final_outcome"] not in {"SUCCEEDED", "FAILED", "CANCELLED", "INCONCLUSIVE", "POLICY_DENIED", "BUDGET_DENIED"}:
+                raise RuntimeDenied("SUBTASK_FINAL_OUTCOME_REPLAY_MISMATCH")
+            if row["final_outcome"] in {"SUCCEEDED", "CANCELLED"} and latest["run_status"] != row["final_outcome"]:
+                raise RuntimeDenied("SUBTASK_TERMINAL_RUN_OUTCOME_MISMATCH")
+            if row["final_outcome"] not in {"SUCCEEDED", "CANCELLED"} and latest["attempt_reason"] != "LEGACY_SINGLE_RUN_BACKFILL":
+                with self.store._connection() as conn:
+                    final_events = conn.execute("SELECT event_json FROM trace_events WHERE run_id=(SELECT root_run_id FROM task_dags WHERE task_id=?) AND event_type='nexus.subtask.finalized' ORDER BY seq_no DESC", (row["task_id"],)).fetchall()
+                matching = any((lambda event: event.get("typed_metadata", {}).get("subtask_id") == subtask_id and event.get("typed_metadata", {}).get("final_attempt_id") == row["final_attempt_id"] and event.get("typed_metadata", {}).get("final_outcome") == row["final_outcome"])(json.loads(item[0])) for item in final_events)
+                if latest["run_status"] != "FAILED" or not matching:
+                    raise RuntimeDenied("SUBTASK_COORDINATOR_FINALIZATION_TRACE_MISMATCH")
+            return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": row["status"], "run_id": latest["run_id"], "last_seq": latest["last_seq"], "attempts": replayed, "final_attempt_id": row["final_attempt_id"], "final_outcome": row["final_outcome"]}
+        if latest["run_status"] == "FAILED":
+            expected = "WAITING"
+        else:
+            run_to_node = {"CREATED": "PENDING", "READY": "READY", "RUNNING": "RUNNING", "WAITING": "WAITING", "VERIFYING": "RUNNING", "SUCCEEDED": "SUCCEEDED", "FAILED": "WAITING", "CANCELLED": "CANCELLED"}
+            expected = run_to_node[latest["run_status"]]
         if row["status"] != expected:
             raise RuntimeDenied("SUBTASK_TRACE_REPLAY_PROJECTION_MISMATCH")
-        return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": expected, "run_id": run_id, "last_seq": projection["last_seq"]}
+        return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": expected, "run_id": latest["run_id"], "last_seq": latest["last_seq"], "attempts": replayed, "final_attempt_id": row["final_attempt_id"], "final_outcome": row["final_outcome"]}
 
-    def bind_hosted_run_to_subtask(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str) -> dict[str, Any]:
+    def finalize_subtask(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, outcome: str, classification_assertion_ref: str) -> dict[str, Any]:
+        """Let the owning coordinator close a failed node after bounded attempts."""
+        self.modes.require("core_write")
+        self.modes.require("trace_write", event_type="nexus.subtask.finalized")
+        if outcome not in {"FAILED", "INCONCLUSIVE", "POLICY_DENIED", "BUDGET_DENIED"}:
+            raise RuntimeDenied("SUBTASK_FINAL_OUTCOME_NOT_ALLOWED")
+        operation = "finalize_subtask"
+        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "outcome": outcome, "classification_assertion_ref": classification_assertion_ref}
+        request_hash = self.store._request_hash(operation, request)
+        with self.store._connection() as conn:
+            prior = self.store._replay_command(conn, command_id, operation, request_hash)
+            if prior is not None:
+                return prior
+            root = conn.execute("SELECT task_id,grant_id,executor_kind,status FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
+            node = conn.execute("SELECT status,final_attempt_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+            latest = conn.execute("SELECT attempt_id,run_id,outcome FROM subtask_attempts WHERE task_id=? AND subtask_id=? ORDER BY attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
+            run = conn.execute("SELECT status FROM runs WHERE run_id=?", (latest["run_id"],)).fetchone() if latest else None
+        if not root or root["task_id"] != task_id or root["executor_kind"] != "ORCHESTRATOR" or root["status"] != "RUNNING" or not node or node["status"] != "WAITING" or node["final_attempt_id"] is not None or not latest or not run or run["status"] != "FAILED":
+            raise RuntimeDenied("SUBTASK_NOT_FINALIZABLE_BY_COORDINATOR")
+        self._authorize(root["grant_id"], task_id, root_run_id, "RUN_TRANSITION", command_id + "-authorize")
+        self._authorize(root["grant_id"], task_id, root_run_id, "TRACE_APPEND", command_id + "-trace-authorize")
+        self._assert_classification_scope(classification_assertion_ref, "TRACE_EVENT", "evt-" + command_id, {item for grant in self.authority.validate_delegation_chain(root["grant_id"]) for item in (grant["issued_by"], grant["granted_to"])}, json.loads(self._run_boundary(root_run_id)))
+        result = {"task_id": task_id, "subtask_id": subtask_id, "final_attempt_id": latest["attempt_id"], "final_outcome": outcome}
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                replay = self.store._replay_command(conn, command_id, operation, request_hash)
+                if replay is not None:
+                    conn.commit()
+                    return replay
+                cur = conn.execute("UPDATE subtasks SET status='FAILED',final_attempt_id=?,final_outcome=?,finalized_at=? WHERE task_id=? AND subtask_id=? AND status='WAITING' AND final_attempt_id IS NULL", (latest["attempt_id"], outcome, _now(), task_id, subtask_id))
+                if cur.rowcount != 1:
+                    raise RuntimeDenied("SUBTASK_FINALIZATION_RACE")
+                chain = self.authority.validate_delegation_chain(root["grant_id"])
+                seq_no = conn.execute("SELECT COALESCE(MAX(seq_no),0)+1 FROM trace_events WHERE run_id=?", (root_run_id,)).fetchone()[0]
+                event = self.trace._make_event(conn, event_id="evt-" + command_id, run_id=root_run_id, seq_no=seq_no, event_type="nexus.subtask.finalized", actor_id=chain[-1]["granted_to"], object_refs=[], effect_refs=[], policy_refs=[self.authority.policy["policy_version"]], authority_refs=[root["grant_id"]], classification_ref=classification_assertion_ref, metadata={"subtask_id":subtask_id,"final_attempt_id":latest["attempt_id"],"final_outcome":outcome,"attempt_count":conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE task_id=? AND subtask_id=?",(task_id,subtask_id)).fetchone()[0]})
+                self.trace._insert_event(conn, event)
+                self.store._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _run_boundary(self, run_id: str) -> str:
+        with self.store._connection() as conn:
+            row = conn.execute("SELECT data_boundary_json FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if not row:
+            raise RuntimeDenied("ROOT_RUN_NOT_FOUND")
+        return row["data_boundary_json"]
+
+    def bind_hosted_run_to_subtask(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, requested_capability: str = "UNSPECIFIED", attempt_reason: str = "CODEX_HOST_DECLARED") -> dict[str, Any]:
         """Bind an attached-host child into the persisted DAG without model routing."""
         self.modes.require("run_execute")
         operation = "bind_hosted_run_to_subtask"
-        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id}
+        route_object_id = "route-" + child_run_id
+        route_classification_id = "class-" + route_object_id
+        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "route_object_id": route_object_id, "requested_capability": requested_capability, "attempt_reason": attempt_reason}
         request_hash = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
             prior = self.store._replay_command(conn, command_id, operation, request_hash)
             if prior is not None:
                 return prior
             root = conn.execute("SELECT status,grant_id,task_id,executor_kind FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
-            child = conn.execute("SELECT status,task_id,parent_run_id,subtask_id,executor_kind,manifest_ref FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
-            node_row = conn.execute("SELECT node_json,status,scheduled_run_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+            child = conn.execute("SELECT status,task_id,parent_run_id,subtask_id,executor_kind,manifest_ref,grant_id,created_at FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
+            node_row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
         if not root or root["task_id"] != task_id or root["executor_kind"] != "ORCHESTRATOR" or root["status"] != "RUNNING":
             raise RuntimeDenied("HOSTED_SUBTASK_ROOT_NOT_RUNNING")
         if not child or child["task_id"] != task_id or child["parent_run_id"] != root_run_id or child["subtask_id"] != subtask_id or child["status"] != "CREATED":
             raise RuntimeDenied("HOSTED_SUBTASK_CHILD_BINDING_INVALID")
-        if not node_row or node_row["scheduled_run_id"] not in (None, child_run_id) or node_row["status"] != "PENDING":
+        if not node_row or node_row["final_attempt_id"] is not None or node_row["status"] not in {"PENDING", "WAITING"}:
             raise RuntimeDenied("HOSTED_SUBTASK_NOT_BINDABLE")
         node = json.loads(node_row["node_json"])
         if node["requested_executor"] != child["executor_kind"]:
             raise RuntimeDenied("HOSTED_SUBTASK_EXECUTOR_MISMATCH")
         manifest = json.loads(self.store.get_payload(child["manifest_ref"]).decode("utf-8"))
         self.store._validate(f"nexus.run_manifest@{manifest.get('schema_version')}.schema.json", manifest)
+        if manifest.get("schema_version") == 2 and manifest.get("route_decision_ref") != route_object_id:
+            raise RuntimeDenied("HOSTED_MANIFEST_ROUTE_DECISION_MISMATCH")
         if not set(node["input_object_refs"]).issubset(set(manifest["input_object_refs"])):
             raise RuntimeDenied("HOSTED_SUBTASK_INPUTS_NOT_BOUND")
         if child["executor_kind"] == "MODEL":
@@ -444,6 +526,21 @@ class DeterministicRuntime:
         elif child["executor_kind"] == "TOOL" and node.get("tool_id") != manifest.get("tool_id"):
             raise RuntimeDenied("HOSTED_TOOL_NODE_DESCRIPTOR_MISMATCH")
         self._authorize(root["grant_id"], task_id, root_run_id, "RUN_CREATE", command_id + "-authorize")
+        child_chain = self.authority.validate_delegation_chain(child["grant_id"])
+        with self.store._connection() as conn:
+            previous_attempt = conn.execute("SELECT a.attempt_id,a.attempt_no,a.outcome,r.status AS run_status FROM subtask_attempts a JOIN runs r ON r.run_id=a.run_id WHERE a.task_id=? AND a.subtask_id=? ORDER BY a.attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
+        attempt_no = (previous_attempt["attempt_no"] if previous_attempt else 0) + 1
+        if node_row["status"] == "WAITING" and (not previous_attempt or previous_attempt["outcome"] != "FAILED" or previous_attempt["run_status"] != "FAILED"):
+            raise RuntimeDenied("HOSTED_PREVIOUS_ATTEMPT_NOT_TERMINAL_FAILURE")
+        if route_object_id not in self.authority.compute_effective_authority(child["grant_id"])["resource_scope"]:
+            raise RuntimeDenied("HOSTED_ROUTE_OBJECT_OUTSIDE_CHILD_GRANT")
+        self._authorize(child["grant_id"], task_id, route_object_id, "OBJECT_WRITE", command_id + "-route-authorize")
+        actor_id = child_chain[-1]["granted_to"]
+        self.authority.record_classification_assertion({"schema_id":"nexus.classification_assertion","schema_version":1,"assertion_id":route_classification_id,"subject_type":"OBJECT","subject_ref":route_object_id,"sensitivity_level":"PUBLIC","handling_tags":[],"policy_version":self.authority.policy["policy_version"],"reason":"Host-declared execution route; no backend identity asserted","actor_id":actor_id}, grant_id=child["grant_id"], task_id=task_id, audience="nexus-runtime", command_id=command_id + "-route-classify")
+        execution_source = "CODEX_HOST_DECLARED" if child["executor_kind"] == "MODEL" else "CODEX_HOST_TOOL_DECLARED"
+        decision = {"schema_id":"nexus.route_decision","schema_version":2,"route_decision_id":route_object_id,"subtask_id":subtask_id,"attempt_no":attempt_no,"requested_capability":requested_capability,"routing_constraints":{"source":"Codex-hosted; host supplies executor, Nexus does not infer provider/model"},"actual_executor_kind":child["executor_kind"],"execution_source":execution_source,"model_identity_status":"UNAVAILABLE" if child["executor_kind"] == "MODEL" else "NOT_APPLICABLE","reason_codes":[attempt_reason],"created_at":child["created_at"]}
+        self.store._validate("nexus.route_decision@2.schema.json", decision)
+        self.store.put_object(command_id=command_id + "-route-object", object_id=route_object_id, payload=_canonical(decision).encode("utf-8"), object_type="artifact", created_by_run=root_run_id, classification_assertion_ref=route_classification_id)
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -451,12 +548,23 @@ class DeterministicRuntime:
                 if replay is not None:
                     conn.commit()
                     return replay
-                cursor = conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL AND status='PENDING'", (child_run_id, task_id, subtask_id))
-                if cursor.rowcount != 1:
-                    current = conn.execute("SELECT scheduled_run_id,status FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
-                    if not current or current["scheduled_run_id"] != child_run_id or current["status"] != "PENDING":
-                        raise RuntimeDenied("HOSTED_SUBTASK_BINDING_RACE")
-                result = {"task_id": task_id, "subtask_id": subtask_id, "run_id": child_run_id, "status": "PENDING", "manifest_ref": child["manifest_ref"]}
+                if conn.execute("SELECT 1 FROM subtask_attempts WHERE run_id=?", (child_run_id,)).fetchone():
+                    raise RuntimeDenied("HOSTED_SUBTASK_RUN_ALREADY_ATTEMPTED")
+                previous = conn.execute("SELECT attempt_id,attempt_no FROM subtask_attempts WHERE task_id=? AND subtask_id=? ORDER BY attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
+                attempt_no = (previous["attempt_no"] if previous else 0) + 1
+                if attempt_no != decision["attempt_no"]:
+                    raise RuntimeDenied("HOSTED_SUBTASK_ATTEMPT_ORDER_RACE")
+                attempt_id = f"{subtask_id}:attempt:{attempt_no}"
+                capability = "UNSPECIFIED" if child["executor_kind"] == "MODEL" else "TOOL"
+                route_op = "persist_route_decision"
+                route_request = {"decision": decision, "object_id": route_object_id, "subtask_id": subtask_id}
+                route_hash = self.store._request_hash(route_op, route_request)
+                self.store._record_command(conn, command_id + "-route-record", route_op, route_hash, {"route_decision_id": route_object_id})
+                conn.execute("INSERT INTO route_decisions(route_decision_id,subtask_id,decision_object_id,decision_json,command_id,created_at) VALUES(?,?,?,?,?,?)", (route_object_id, subtask_id, route_object_id, _canonical(decision), command_id + "-route-record", decision["created_at"]))
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_object_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now()))
+                if node_row["scheduled_run_id"] is None:
+                    conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL", (child_run_id, task_id, subtask_id))
+                result = {"task_id": task_id, "subtask_id": subtask_id, "run_id": child_run_id, "attempt_id": attempt_id, "attempt_no": attempt_no, "requested_capability": capability, "status": "CREATED", "manifest_ref": child["manifest_ref"]}
                 self.store._record_command(conn, command_id, operation, request_hash, result)
                 conn.commit()
                 return result
@@ -479,7 +587,7 @@ class DeterministicRuntime:
             raise RuntimeDenied("SCHEDULE_CLASSIFICATION_TAG_DOWNGRADE")
         return dict(row)
 
-    def _choose_model(self, node: dict[str, Any], contract: dict[str, Any], root, budget: dict[str, Any], contract_object_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _choose_model(self, node: dict[str, Any], contract: dict[str, Any], root, budget: dict[str, Any], contract_object_id: str, requested_capability: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         boundary = json.loads(root["data_boundary_json"])
         input_bytes = 0
         input_levels: set[str] = set()
@@ -496,7 +604,8 @@ class DeterministicRuntime:
                 raise RuntimeDenied("MODEL_INPUT_OUTSIDE_DATA_BOUNDARY")
             input_levels.add(row["sensitivity_level"])
         constraints = contract["routing_constraints"]
-        preferred_floor = max(_QUALITY_FLOOR[node["quality_requirement"]], 2 if node["risk_class"] in {"HIGH", "CRITICAL"} else 0)
+        capability_floor = {"E0": 0, "E1": 1, "E2": 2}.get(requested_capability, 0)
+        preferred_floor = max(_QUALITY_FLOOR[node["quality_requirement"]], 2 if node["risk_class"] in {"HIGH", "CRITICAL"} else 0, capability_floor)
         profiles: list[dict[str, Any]] = []
         with self.store._connection() as conn:
             rows = conn.execute("SELECT profile_json FROM model_profiles ORDER BY model_id,version").fetchall()
@@ -544,10 +653,10 @@ class DeterministicRuntime:
         self.store._validate("nexus.route_decision@1.schema.json", decision)
         return decision, selected
 
-    def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str) -> dict[str, Any]:
+    def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str, requested_capability: str | None = None, attempt_reason: str = "INITIAL", predecessor_attempt_id: str | None = None) -> dict[str, Any]:
         self.modes.require("run_execute")
         operation = "schedule_subtask"
-        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref}
+        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref, "requested_capability": requested_capability, "attempt_reason": attempt_reason, "predecessor_attempt_id": predecessor_attempt_id}
         request_hash = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
             prior = self.store._replay_command(conn, command_id, operation, request_hash)
@@ -555,26 +664,39 @@ class DeterministicRuntime:
             return prior
         with self.store._connection() as conn:
             root = conn.execute("SELECT * FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
-            row = conn.execute("SELECT node_json,status,scheduled_run_id FROM subtasks WHERE subtask_id=? AND task_id=?", (subtask_id, task_id)).fetchone()
+            row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id FROM subtasks WHERE subtask_id=? AND task_id=?", (subtask_id, task_id)).fetchone()
         if not root or root["executor_kind"] != "ORCHESTRATOR" or root["task_id"] != task_id or root["status"] != "RUNNING" or not row:
             raise RuntimeDenied("SCHEDULER_OWNERSHIP_OR_NODE_INVALID")
         node = json.loads(row["node_json"])
-        if row["scheduled_run_id"]:
+        with self.store._connection() as conn:
+            prior_attempt_no = conn.execute("SELECT COALESCE(MAX(attempt_no),0) FROM subtask_attempts WHERE task_id=? AND subtask_id=?", (task_id,subtask_id)).fetchone()[0]
+        attempt_no_hint = prior_attempt_no + 1
+        with self.store._connection() as conn:
+            existing_attempt = conn.execute("SELECT attempt_id,route_decision_ref FROM subtask_attempts WHERE subtask_id=? AND run_id=?", (subtask_id, child_run_id)).fetchone()
+        if existing_attempt:
             with self.store._connection() as conn:
-                scheduled = conn.execute("SELECT manifest_ref,budget_reservation_ref,status FROM runs WHERE run_id=?", (row["scheduled_run_id"],)).fetchone()
-                route = conn.execute("SELECT decision_object_id FROM route_decisions WHERE subtask_id=?", (subtask_id,)).fetchone()
+                scheduled = conn.execute("SELECT manifest_ref,budget_reservation_ref,status FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
             if scheduled["status"] == "CREATED":
-                self.trace.transition_run(command_id=command_id + "-ready", run_id=row["scheduled_run_id"], expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
+                self.trace.transition_run(command_id=command_id + "-ready", run_id=child_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
             elif scheduled["status"] not in {"READY", "RUNNING", "WAITING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED"}:
                 raise RuntimeDenied("SCHEDULED_RUN_STATE_UNRECOGNIZED")
-            result = {"run_id": row["scheduled_run_id"], "status": "READY", "manifest_ref": scheduled["manifest_ref"], "reservation_ref": scheduled["budget_reservation_ref"], "route_decision_ref": route["decision_object_id"] if route else None}
+            result = {"run_id": child_run_id, "attempt_id": existing_attempt["attempt_id"], "status": scheduled["status"], "manifest_ref": scheduled["manifest_ref"], "reservation_ref": scheduled["budget_reservation_ref"], "route_decision_ref": existing_attempt["route_decision_ref"]}
             with self.store._lock, self.store._connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 self.store._record_command(conn, command_id, operation, request_hash, result)
                 conn.commit()
             return result
-        if row["status"] != "PENDING":
+        if row["final_attempt_id"] is not None or row["status"] not in {"PENDING", "WAITING"}:
             raise RuntimeDenied("SUBTASK_NOT_SCHEDULABLE")
+        if row["status"] == "PENDING" and predecessor_attempt_id is not None:
+            raise RuntimeDenied("INITIAL_ATTEMPT_CANNOT_HAVE_PREDECESSOR")
+        if row["status"] == "WAITING" and attempt_reason == "INITIAL":
+            raise RuntimeDenied("RETRY_ATTEMPT_REASON_REQUIRED")
+        if row["status"] == "WAITING":
+            with self.store._connection() as conn:
+                latest = conn.execute("SELECT a.outcome,r.status FROM subtask_attempts a JOIN runs r ON r.run_id=a.run_id WHERE a.task_id=? AND a.subtask_id=? ORDER BY a.attempt_no DESC LIMIT 1", (task_id,subtask_id)).fetchone()
+            if not latest or latest["outcome"] != "FAILED" or latest["status"] != "FAILED":
+                raise RuntimeDenied("SUBTASK_PREVIOUS_ATTEMPT_NOT_TERMINAL_FAILURE")
         with self.store._connection() as conn:
             for dependency in node["dependency_ids"]:
                 dep = conn.execute("SELECT status FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, dependency)).fetchone()
@@ -622,7 +744,7 @@ class DeterministicRuntime:
                     raise RuntimeDenied("ROUTE_DECISION_PROFILE_NO_LONGER_AVAILABLE")
                 selected_profile = json.loads(profile_row["profile_json"])
             else:
-                decision, selected_profile = self._choose_model(node, contract, root, budget_snapshot, contract_ref)
+                decision, selected_profile = self._choose_model(node, contract, root, budget_snapshot, contract_ref, requested_capability)
                 decision = {**decision, "route_decision_id": route_object_id}
                 self.store._validate("nexus.route_decision@1.schema.json", decision)
                 route_payload = _canonical(decision).encode("utf-8")
@@ -661,6 +783,33 @@ class DeterministicRuntime:
             if budget_snapshot["tool_calls_remaining"] < 1 or budget_snapshot["child_runs_remaining"] < 1 or node["budget_amount"] > budget_snapshot["remaining"]:
                 raise RuntimeDenied("TOOL_BUDGET_UNAVAILABLE")
             reserve_amount = node["budget_amount"]
+            if not route_object_id or not route_classification_assertion_ref:
+                raise RuntimeDenied("ROUTE_DECISION_OBJECT_CLASSIFICATION_REQUIRED")
+            self._authorize(root["grant_id"], task_id, root_run_id, "OBJECT_WRITE", command_id + "-tool-route-authorize")
+            self._assert_classification_scope(route_classification_assertion_ref, "OBJECT", route_object_id, root_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
+            decision = {"schema_id":"nexus.route_decision","schema_version":2,"route_decision_id":route_object_id,"subtask_id":subtask_id,"attempt_no":attempt_no_hint,"requested_capability":requested_capability or "TOOL","routing_constraints":{"tool_id":descriptor["tool_id"],"effect_class":descriptor["effect_class"]},"actual_executor_kind":"TOOL","execution_source":"DETERMINISTIC_RUNTIME","model_identity_status":"NOT_APPLICABLE","reason_codes":["APPROVED_TOOL_DESCRIPTOR_SELECTED"],"created_at":node["created_at"]}
+            self.store._validate("nexus.route_decision@2.schema.json", decision)
+            route_id = route_object_id
+            route_operation = "persist_route_decision"
+            route_request = {"decision":decision,"object_id":route_object_id,"subtask_id":subtask_id}
+            route_hash = self.store._request_hash(route_operation, route_request)
+            with self.store._connection() as conn:
+                prior_route = conn.execute("SELECT decision_json,decision_object_id FROM route_decisions WHERE command_id=?", (command_id + "-route-record",)).fetchone()
+            if prior_route:
+                if prior_route["decision_object_id"] != route_object_id or json.loads(prior_route["decision_json"]) != decision:
+                    raise RuntimeDenied("TOOL_ROUTE_DECISION_RETRY_CONFLICT")
+            else:
+                self.store.put_object(command_id=command_id + "-route-object", object_id=route_object_id, payload=_canonical(decision).encode("utf-8"), object_type="artifact", created_by_run=root_run_id, classification_assertion_ref=route_classification_assertion_ref)
+            with self.store._lock, self.store._connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    if not prior_route:
+                        self.store._record_command(conn, command_id + "-route-record", route_operation, route_hash, {"route_decision_id":route_object_id})
+                        conn.execute("INSERT INTO route_decisions(route_decision_id,subtask_id,decision_object_id,decision_json,command_id,created_at) VALUES(?,?,?,?,?,?)", (route_object_id,subtask_id,route_object_id,_canonical(decision),command_id + "-route-record",decision["created_at"]))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
         self._assert_classification_scope(manifest_classification_assertion_ref, "OBJECT", manifest_object_id, child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
         reservation_id = self.budget.reserve(command_id=command_id + "-budget", account_id=account_id, run_id=child_run_id, amount=reserve_amount, model_calls=1 if selected_profile else 0, tool_calls=1 if descriptor else 0, child_runs=1)
         child_run = {"schema_id": "nexus.run", "schema_version": 1, "run_id": child_run_id, "task_id": task_id, "subtask_id": subtask_id, "parent_run_id": root_run_id, "executor_kind": node["requested_executor"], "status": "CREATED", "grant_id": child_grant_id, "budget_reservation_ref": reservation_id, "data_boundary": child_boundary, "classification_assertion_ref": child_classification_assertion_ref, "created_at": node["created_at"]}
@@ -675,11 +824,19 @@ class DeterministicRuntime:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                cur = conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE subtask_id=? AND status='PENDING' AND scheduled_run_id IS NULL", (child_run_id, subtask_id))
-                if cur.rowcount != 1:
-                    bound = conn.execute("SELECT scheduled_run_id FROM subtasks WHERE subtask_id=?", (subtask_id,)).fetchone()
-                    if not bound or bound["scheduled_run_id"] != child_run_id:
-                        raise RuntimeDenied("SUBTASK_RUN_BINDING_RACE")
+                current = conn.execute("SELECT status,scheduled_run_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+                previous = conn.execute("SELECT attempt_id,attempt_no FROM subtask_attempts WHERE task_id=? AND subtask_id=? ORDER BY attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
+                if current["status"] not in {"PENDING", "WAITING"}:
+                    raise RuntimeDenied("SUBTASK_RUN_BINDING_RACE")
+                if predecessor_attempt_id != (previous["attempt_id"] if previous else None):
+                    raise RuntimeDenied("SUBTASK_ATTEMPT_PREDECESSOR_MISMATCH")
+                attempt_no = (previous["attempt_no"] if previous else 0) + 1
+                attempt_id = f"{subtask_id}:attempt:{attempt_no}"
+                capability = requested_capability or (selected_profile["model_class"] if selected_profile else "TOOL")
+                now = _now()
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, now))
+                if current["scheduled_run_id"] is None:
+                    conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL", (child_run_id, task_id, subtask_id))
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -688,7 +845,7 @@ class DeterministicRuntime:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                result = {"run_id": child_run_id, "status": "READY", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id, "route_decision_ref": route_id}
+                result = {"run_id": child_run_id, "attempt_id": attempt_id, "attempt_no": attempt_no, "requested_capability": capability, "status": "READY", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id, "route_decision_ref": route_id}
                 self.store._record_command(conn, command_id, operation, request_hash, result)
                 conn.commit()
             except Exception:

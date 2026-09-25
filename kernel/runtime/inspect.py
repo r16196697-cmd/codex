@@ -68,7 +68,15 @@ class InspectService:
         with self.store._connection() as conn:
             dag = conn.execute("SELECT dag_version,graph_hash,node_count FROM task_dags WHERE task_id=?", (task_id,)).fetchone()
             subtasks = [dict(row) for row in conn.execute(
-                "SELECT subtask_id,node_index,status,scheduled_run_id FROM subtasks WHERE task_id=? ORDER BY node_index", (task_id,)
+                "SELECT subtask_id,node_index,status,scheduled_run_id,final_attempt_id,final_outcome,finalized_at FROM subtasks WHERE task_id=? ORDER BY node_index", (task_id,)
+            )]
+            attempts = [dict(row) for row in conn.execute(
+                "SELECT a.attempt_id,a.task_id,a.subtask_id,a.attempt_no,a.run_id,a.route_decision_ref,a.requested_capability,a.attempt_reason,a.predecessor_attempt_id,a.outcome,a.created_at,"
+                "s.payload_state AS route_payload_state,c.sensitivity_level,c.handling_tags_json "
+                "FROM subtask_attempts a LEFT JOIN object_states s ON s.object_id=a.route_decision_ref "
+                "LEFT JOIN object_envelopes e ON e.object_id=a.route_decision_ref "
+                "LEFT JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
+                "WHERE a.task_id=? ORDER BY a.subtask_id,a.attempt_no", (task_id,)
             )]
             runs = [dict(row) for row in conn.execute(
                 "SELECT r.run_id,r.executor_kind,r.status,r.parent_run_id,"
@@ -103,6 +111,17 @@ class InspectService:
             run.pop("data_boundary_json", None)
             run.pop("handling_tags_json", None)
             visible_runs.append(run)
+        visible_attempts = []
+        boundary = json.loads(task["data_boundary_json"])
+        for attempt in attempts:
+            route_ref = attempt.pop("route_decision_ref")
+            route_class = attempt.pop("sensitivity_level")
+            route_tags = attempt.pop("handling_tags_json")
+            route_state = attempt.pop("route_payload_state")
+            if route_ref and (not route_class or route_class not in set(boundary["allowed_classifications"]) or not set(json.loads(route_tags or "[]")).issubset(set(boundary["handling_tags"]))):
+                raise RuntimeDenied("INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY")
+            attempt["route_decision_ref"] = "REDACTED_PURGED" if route_ref and route_state == "PURGED" else route_ref
+            visible_attempts.append(attempt)
         visible_artifacts = []
         for artifact in artifacts:
             if artifact["sensitivity_level"] in set(json.loads(task["data_boundary_json"])["allowed_classifications"]) and set(json.loads(artifact["handling_tags_json"])).issubset(set(json.loads(task["data_boundary_json"])["handling_tags"])):
@@ -113,6 +132,7 @@ class InspectService:
             "task": {"task_id": task_id, "status": task["status"], "created_at": task["created_at"]},
             "dag": dict(dag) if dag else None,
             "subtasks": subtasks,
+            "attempts": visible_attempts,
             "runs": visible_runs,
             "artifacts": visible_artifacts,
             "verifications": verifications,
@@ -255,10 +275,14 @@ class InspectService:
         self._authorize(grant_id, task_id, f"route:{route_id}")
         with self.store._connection() as conn:
             row = conn.execute(
-                "SELECT d.decision_json,s.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
+                "SELECT d.decision_json,s.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json,"
+                "ds.payload_state AS decision_payload_state,dc.sensitivity_level AS decision_sensitivity,dc.handling_tags_json AS decision_tags "
                 "FROM route_decisions d JOIN subtasks s ON s.subtask_id=d.subtask_id "
                 "JOIN task_dags g ON g.task_id=s.task_id JOIN runs r ON r.run_id=g.root_run_id "
-                "JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref WHERE d.route_decision_id=?",
+                "JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
+                "JOIN object_states ds ON ds.object_id=d.decision_object_id "
+                "JOIN object_envelopes de ON de.object_id=d.decision_object_id "
+                "JOIN classification_assertions dc ON dc.assertion_id=de.classification_assertion_ref WHERE d.route_decision_id=?",
                 (route_id,),
             ).fetchone()
         if not row:
@@ -267,7 +291,14 @@ class InspectService:
             raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         if not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
-        return json.loads(row["decision_json"])
+        boundary = json.loads(self._task_context(task_id)["data_boundary_json"])
+        if row["decision_sensitivity"] not in set(boundary["allowed_classifications"]) or not set(json.loads(row["decision_tags"])).issubset(set(boundary["handling_tags"])):
+            raise RuntimeDenied("INSPECT_ROUTE_CLASSIFICATION_OUTSIDE_BOUNDARY")
+        if row["decision_payload_state"] == "PURGED":
+            return {"route_decision_id": route_id, "status": "REDACTED_PURGED"}
+        decision = json.loads(row["decision_json"])
+        self.store._validate(f"nexus.route_decision@{decision.get('schema_version')}.schema.json", decision)
+        return decision
 
     def object_metadata(self, *, grant_id: str, task_id: str, object_id: str, include_integrity_hash: bool = False) -> dict[str, Any]:
         self.modes.require("inspect")

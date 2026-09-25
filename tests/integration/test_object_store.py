@@ -228,18 +228,34 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64)])
 
-    def test_v6_snapshot_replays_v7_v8_v9_and_v10_migrations_deterministically(self) -> None:
+    def test_v6_snapshot_replays_v7_v8_v9_v10_and_v11_migrations_deterministically(self) -> None:
         database_path = self.root / "data" / "nexus.sqlite"
         self.store.close()
         legacy_conn = sqlite3.connect(database_path)
         try:
             conn = legacy_conn
             conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_identity_immutable")
+            conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_no_delete")
+            conn.execute("DROP TRIGGER IF EXISTS subtasks_identity_immutable")
+            conn.execute("DROP TABLE IF EXISTS subtask_attempts")
+            conn.execute("ALTER TABLE subtasks DROP COLUMN finalized_at")
+            conn.execute("ALTER TABLE subtasks DROP COLUMN final_outcome")
+            conn.execute("ALTER TABLE subtasks DROP COLUMN final_attempt_id")
+            conn.executescript("""CREATE TRIGGER subtasks_identity_immutable BEFORE UPDATE ON subtasks
+                WHEN NEW.subtask_id<>OLD.subtask_id OR NEW.task_id<>OLD.task_id OR NEW.node_index<>OLD.node_index
+                  OR NEW.node_json<>OLD.node_json OR NEW.command_id<>OLD.command_id OR NEW.created_at<>OLD.created_at
+                  OR (NEW.scheduled_run_id IS NOT OLD.scheduled_run_id AND NOT (OLD.status='PENDING' AND OLD.scheduled_run_id IS NULL AND NEW.scheduled_run_id IS NOT NULL AND NEW.status IN ('PENDING','READY')))
+                  OR NOT (OLD.status=NEW.status OR (OLD.status='PENDING' AND NEW.status IN ('READY','CANCELLED','STALE'))
+                    OR (OLD.status='READY' AND NEW.status IN ('RUNNING','CANCELLED','STALE'))
+                    OR (OLD.status='RUNNING' AND NEW.status IN ('WAITING','SUCCEEDED','FAILED','CANCELLED'))
+                    OR (OLD.status='WAITING' AND NEW.status IN ('RUNNING','FAILED','CANCELLED')))
+                BEGIN SELECT RAISE(ABORT,'INVALID_SUBTASK_TRANSITION'); END;""")
             conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_update")
             conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_delete")
             conn.execute("DROP TABLE IF EXISTS runtime_mode_events")
@@ -275,9 +291,9 @@ raise SystemExit(0)
 
         self.store = ObjectStore(self.root / "data")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 11)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (10, "0010_purge_run_manifest_indexes.sql"))
+            self.assertEqual(tuple(row), (11, "0011_subtask_attempts.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 

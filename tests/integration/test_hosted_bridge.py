@@ -79,8 +79,12 @@ class HostedBridgeTests(unittest.TestCase):
             "task:" + self.task_id, "runtime-mode:instance", self.root_run_id, self.input_id,
             self.contract_id, self.root_manifest_id, self.model_run_id, self.model_manifest_id,
             self.model_artifact_id, self.search_evidence_id, self.search_injection_evidence_id, "hosted-search-conflict-candidate", self.tool_run_id, self.tool_manifest_id, self.tool_artifact_id,
+            "route-" + self.model_run_id, "route-" + self.tool_run_id,
+            "route:route-" + self.model_run_id, "route:route-" + self.tool_run_id,
             "hosted-search-missing-evidence",
             "hosted-codex-search-run", "hosted-codex-search-manifest",
+            "route-hosted-codex-search-run",
+            "route:route-hosted-codex-search-run",
             self.tool_id, self.search_tool_id, self.search_query_object_id,
         ]
         for command in ("hosted-e2e-root-create", "hosted-e2e-trace-input", "hosted-e2e-root-ready", "hosted-e2e-root-running", "hosted-e2e-root-verifying", "hosted-e2e-root-succeeded", "hosted-search-query-trace"):
@@ -143,7 +147,7 @@ class HostedBridgeTests(unittest.TestCase):
         }
 
     def _child_grant(self, grant_id, principal_id, run_id, manifest_id, artifact_id, command_prefix, tool=False, tool_id=None):
-        resources = [run_id, manifest_id, artifact_id]
+        resources = [run_id, manifest_id, artifact_id, "route-" + run_id]
         if tool:
             resources.append(tool_id or self.tool_id)
             if tool_id == self.search_tool_id:
@@ -319,6 +323,15 @@ class HostedBridgeTests(unittest.TestCase):
         self.assertEqual(self.trace.replay_run(self.tool_run_id)["status"],"SUCCEEDED")
         self.assertEqual(self.runtime.replay_subtask("hosted-model-node")["status"],"SUCCEEDED")
         self.assertEqual(self.runtime.replay_subtask("hosted-tool-node")["status"],"SUCCEEDED")
+        model_projection = self.runtime.replay_subtask("hosted-model-node")
+        self.assertEqual(len(model_projection["attempts"]), 1)
+        model_route = self.runtime.inspect_route(grant_id="hosted-root-grant", task_id=self.task_id, route_id=model_projection["attempts"][0]["route_decision_ref"])
+        self.assertEqual((model_route["schema_version"], model_route["execution_source"], model_route["model_identity_status"]), (2, "CODEX_HOST_DECLARED", "UNAVAILABLE"))
+        self.assertNotIn("actual_model_id", model_route)
+        model_manifest = json.loads(self.store.get_payload(self.model_manifest_id).decode("utf-8"))
+        self.assertEqual(model_manifest["route_decision_ref"], model_projection["attempts"][0]["route_decision_ref"])
+        hosted_inspect = self.runtime.inspect_task(grant_id="hosted-root-grant", task_id=self.task_id)
+        self.assertEqual(len([a for a in hosted_inspect["attempts"] if a["subtask_id"] == "hosted-model-node"]), 1)
         self.assertEqual(self.verifier.get("hosted-model-verification")["verdict"],"PASS")
         self.assertEqual(self.verifier.get("hosted-tool-verification")["verdict"],"PASS")
         self.assertEqual(self.verifier.get("hosted-search-verification")["verdict"],"PASS")

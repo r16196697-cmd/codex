@@ -131,6 +131,8 @@ class CodexHostedBridge:
         manifest_classification_assertion_ref: str,
         event_classification_assertion_refs: dict[str, str],
         parent_grant_id: str,
+        requested_capability: str = "UNSPECIFIED",
+        attempt_reason: str = "CODEX_HOST_DECLARED",
     ) -> dict[str, Any]:
         """Create and start a MODEL/TOOL child using Core-owned state and gates.
 
@@ -143,6 +145,8 @@ class CodexHostedBridge:
             raise ValueError("Hosted bridge only records child MODEL or TOOL Runs")
         if manifest.get("executor_kind") != kind:
             raise ValueError("Run and Manifest executor_kind differ")
+        if run.get("subtask_id") and kind == "MODEL" and manifest.get("schema_version") == 2:
+            manifest = {**manifest, "route_decision_ref": "route-" + run["run_id"]}
         if kind == "MODEL" and (manifest.get("execution_source") != "CODEX_HOST_DECLARED" or manifest.get("model_identity_status") != "UNAVAILABLE"):
             raise ValueError("Attached MODEL Run must explicitly declare host execution and unavailable backend identity")
 
@@ -193,6 +197,8 @@ class CodexHostedBridge:
                 root_run_id=run["parent_run_id"],
                 subtask_id=run["subtask_id"],
                 child_run_id=run["run_id"],
+                requested_capability=requested_capability,
+                attempt_reason=attempt_reason,
             )
         self.trace.transition_run(
             command_id=ready_command,
