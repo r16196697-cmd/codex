@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from kernel.authority import AuthorityService
 from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, InvalidDelegation
 from kernel.budget import BudgetService
 from kernel.run import TraceAdmissionDenied, TraceRuntime
+from kernel.run.errors import InvalidRunTransition
 from kernel.effect import AmbiguousDispatch, DeterministicEffectService
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.inspect import InspectService
@@ -105,7 +107,8 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self._classify("class-" + route_id, "OBJECT", route_id, "agent")
         manifest_id = "manifest-" + run_id
         self._classify("class-" + manifest_id, "OBJECT", manifest_id, actor_id)
-        return self.runtime.schedule_node(command_id=command_id, task_id="task-1", root_run_id="run-root", subtask_id=node_id, child_run_id=run_id, child_grant_id=grant_id, child_classification_assertion_ref="class-" + run_id, event_classification_assertion_ref=create_event, ready_event_classification_assertion_ref=ready_event, route_object_id=route_id, route_classification_assertion_ref="class-" + route_id if route_id else None, manifest_object_id=manifest_id, manifest_classification_assertion_ref="class-" + manifest_id, requested_capability=requested_capability, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
+        cancelled_event = self._event_class(command_id + "-setup-cancel", actor_id)
+        return self.runtime.schedule_node(command_id=command_id, task_id="task-1", root_run_id="run-root", subtask_id=node_id, child_run_id=run_id, child_grant_id=grant_id, child_classification_assertion_ref="class-" + run_id, event_classification_assertion_ref=create_event, ready_event_classification_assertion_ref=ready_event, cancelled_event_classification_assertion_ref=cancelled_event, route_object_id=route_id, route_classification_assertion_ref="class-" + route_id if route_id else None, manifest_object_id=manifest_id, manifest_classification_assertion_ref="class-" + manifest_id, requested_capability=requested_capability, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
 
     def _advance(self, run_id, command_id, expected, target, actor_id):
         classification = self._event_class(command_id, actor_id)
@@ -153,6 +156,199 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.assertIn({"model_id": "model-cloud", "reason_code": "LOCALITY_CONSTRAINT"}, routed["node-e1"]["exclusion_reasons"])
         self.assertEqual(tuple(budget), (8, 3, 1, 4))
         self.assertEqual(self._schedule("node-e0", "run-e0", "model-agent", "grant-e0", "route-e0"), results[0])
+
+    def test_schedule_retry_after_ready_transition_interruption_records_authoritative_ready_projection(self):
+        self.runtime.create_dag(command_id="cmd-interrupted-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e0", "E0", 1)
+        args = {
+            "command_id": "cmd-interrupted-schedule", "task_id": "task-1", "root_run_id": "run-root",
+            "subtask_id": "node-e0", "child_run_id": "run-e0", "child_grant_id": "grant-interrupted",
+            "child_classification_assertion_ref": "class-run-e0",
+            "event_classification_assertion_ref": "class-evt-cmd-interrupted-schedule-create-run",
+            "ready_event_classification_assertion_ref": "class-evt-cmd-interrupted-schedule-ready",
+            "cancelled_event_classification_assertion_ref": "class-evt-cmd-interrupted-schedule-setup-cancel",
+            "route_object_id": "route-e0", "route_classification_assertion_ref": "class-route-e0",
+            "manifest_object_id": "manifest-run-e0", "manifest_classification_assertion_ref": "class-manifest-run-e0",
+        }
+        self._child_grant("run-e0", "model-agent", "grant-interrupted")
+        self._classify("class-run-e0", "RUN", "run-e0", "model-agent")
+        self._classify("class-evt-cmd-interrupted-schedule-create-run", "TRACE_EVENT", "evt-cmd-interrupted-schedule-create-run", "model-agent")
+        self._classify("class-evt-cmd-interrupted-schedule-ready", "TRACE_EVENT", "evt-cmd-interrupted-schedule-ready", "model-agent")
+        self._classify("class-evt-cmd-interrupted-schedule-setup-cancel", "TRACE_EVENT", "evt-cmd-interrupted-schedule-setup-cancel", "model-agent")
+        self._classify("class-route-e0", "OBJECT", "route-e0", "agent")
+        self._classify("class-manifest-run-e0", "OBJECT", "manifest-run-e0", "model-agent")
+        original_transition = self.trace.transition_run
+        failed = False
+
+        def fail_before_ready(**kwargs):
+            nonlocal failed
+            if kwargs["command_id"] == "cmd-interrupted-schedule-ready" and not failed:
+                failed = True
+                raise RuntimeError("injected interruption before READY transition")
+            return original_transition(**kwargs)
+
+        with patch.object(self.trace, "transition_run", side_effect=fail_before_ready):
+            with self.assertRaisesRegex(RuntimeError, "injected interruption"):
+                self.runtime.schedule_node(**args)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RESERVED")
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone())
+            counts_before = tuple(conn.execute("SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE subtask_id=?)", (args["child_run_id"], args["child_run_id"], args["subtask_id"])).fetchone())
+
+        recovered = self.runtime.schedule_node(**args)
+        self.assertEqual(recovered["status"], "READY")
+        self.assertEqual(self.trace.replay_run(args["child_run_id"])["status"], "READY")
+        self.assertEqual(self.runtime.replay_subtask(args["subtask_id"])["status"], "READY")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (args["child_run_id"],)).fetchone()[0], "READY")
+            stored = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0])
+            counts_after = tuple(conn.execute("SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE subtask_id=?)", (args["child_run_id"], args["child_run_id"], args["subtask_id"])).fetchone())
+        self.assertEqual(stored, recovered)
+        self.assertEqual(counts_after, counts_before)
+        self.assertEqual(self.runtime.schedule_node(**args), recovered)
+
+    def _prepare_single_schedule(self, *, command_id="cmd-setup-failure", run_id="run-e0"):
+        self.runtime.create_dag(command_id=command_id + "-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e0", "E0", 1)
+        return ("node-e0", run_id, "model-agent", "grant-e0", "route-" + run_id)
+
+    def test_permanent_failure_after_reserve_before_run_create_releases_budget_with_disposition(self):
+        args = self._prepare_single_schedule()
+        with patch.object(self.trace, "create_run", side_effect=TraceAdmissionDenied("INJECTED_CREATE_REJECTION")):
+            with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM runs WHERE run_id='run-e0'").fetchone())
+            reservation = conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()
+            self.assertEqual(reservation["state"], "RELEASED")
+            disposition = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id='cmd-setup-failure'").fetchone()[0])
+            self.assertEqual(disposition["status"], "SETUP_FAILED")
+            self.assertEqual(conn.execute("SELECT action FROM budget_ledger WHERE reservation_id=(SELECT reservation_id FROM budget_reservations WHERE run_id='run-e0') ORDER BY ledger_seq", ()).fetchall()[0][0], "RESERVED")
+            self.assertEqual(conn.execute("SELECT action FROM budget_ledger WHERE reservation_id=(SELECT reservation_id FROM budget_reservations WHERE run_id='run-e0') ORDER BY ledger_seq", ()).fetchall()[1][0], "RELEASED")
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self._schedule(*args, command_id="cmd-setup-failure")
+
+    def test_permanent_manifest_and_attempt_setup_failures_cancel_without_fabricating_attempts(self):
+        args = self._prepare_single_schedule()
+        with patch.object(self.runtime, "bind_manifest", side_effect=TraceAdmissionDenied("INJECTED_MANIFEST_REJECTION")):
+            with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT status FROM subtasks WHERE subtask_id='node-e0'").fetchone()[0], "PENDING")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM route_decisions WHERE subtask_id='node-e0'").fetchone()[0], 1)
+
+    def test_manifest_response_loss_keeps_setup_recoverable_without_duplicate_reservation_or_run(self):
+        args = self._prepare_single_schedule()
+        original_bind = self.runtime.bind_manifest
+        lost = False
+
+        def lose_manifest_response_once(**kwargs):
+            nonlocal lost
+            if not lost:
+                lost = True
+                raise RuntimeError("injected lost response before manifest binding")
+            return original_bind(**kwargs)
+
+        with patch.object(self.runtime, "bind_manifest", side_effect=lose_manifest_response_once):
+            with self.assertRaisesRegex(RuntimeError, "lost response"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+            recovered = self._schedule(*args, command_id="cmd-setup-failure")
+        self.assertEqual(recovered["status"], "READY")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE run_id='run-e0'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM route_decisions WHERE subtask_id='node-e0'").fetchone()[0], 1)
+        self.assertEqual(self._schedule(*args, command_id="cmd-setup-failure"), recovered)
+
+    def test_attempt_registration_rejection_compensates_and_retains_route_fact(self):
+        args = self._prepare_single_schedule()
+        with patch.object(self.runtime, "_register_scheduled_attempt", side_effect=RuntimeDenied("INJECTED_ATTEMPT_REJECTION")):
+            with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM route_decisions WHERE subtask_id='node-e0'").fetchone()[0], 1)
+
+    def test_ready_rejection_cancels_registered_attempt_and_cleanup_resumes_after_reopen(self):
+        args = self._prepare_single_schedule()
+        original_transition = self.trace.transition_run
+
+        def fail_ready_once(**kwargs):
+            if kwargs["command_id"] == "cmd-setup-failure-ready":
+                raise InvalidRunTransition("INJECTED_READY_REJECTION")
+            return original_transition(**kwargs)
+
+        with patch.object(self.trace, "transition_run", side_effect=fail_ready_once):
+            with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            node = conn.execute("SELECT status,final_outcome FROM subtasks WHERE subtask_id='node-e0'").fetchone()
+            self.assertEqual(tuple(node), ("CANCELLED", "CANCELLED"))
+
+    def test_ready_commit_with_lost_response_is_not_compensated_or_cancelled(self):
+        args = self._prepare_single_schedule()
+        original_transition = self.trace.transition_run
+
+        def commit_then_lose_response(**kwargs):
+            result = original_transition(**kwargs)
+            if kwargs["command_id"] == "cmd-setup-failure-ready":
+                raise InvalidRunTransition("INJECTED_POST_COMMIT_RESPONSE_LOSS")
+            return result
+
+        with patch.object(self.trace, "transition_run", side_effect=commit_then_lose_response):
+            result = self._schedule(*args, command_id="cmd-setup-failure")
+        self.assertEqual(result["status"], "READY")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "READY")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id='run-e0'").fetchone()[0], "READY")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RESERVED")
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='cmd-setup-failure-setup-cancel'").fetchone())
+
+    def test_setup_cleanup_failure_resumes_same_command_after_store_reopen(self):
+        args = self._prepare_single_schedule()
+        original_transition = self.trace.transition_run
+
+        def fail_cleanup_once(**kwargs):
+            if kwargs["command_id"] == "cmd-setup-failure-setup-cancel":
+                raise RuntimeError("injected cancellation cleanup interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(self.runtime, "bind_manifest", side_effect=TraceAdmissionDenied("INJECTED_MANIFEST_REJECTION")), patch.object(self.trace, "transition_run", side_effect=fail_cleanup_once):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='cmd-setup-failure-setup-intent'").fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='cmd-setup-failure'").fetchone())
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RESERVED")
+
+        policy = self.authority.policy
+        self.store.close()
+        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self._schedule(*args, command_id="cmd-setup-failure")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RELEASED")
+            result = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id='cmd-setup-failure'").fetchone()[0])
+            self.assertEqual(result["status"], "SETUP_FAILED")
 
     def test_dag_rejects_unknown_output_schema_and_route_never_downgrades_quality(self):
         nodes = self._nodes()

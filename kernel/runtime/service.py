@@ -10,7 +10,8 @@ from typing import Any
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
-from kernel.run import TraceRuntime
+from kernel.run import TraceRuntime, TraceAdmissionDenied
+from kernel.run.errors import InvalidRunTransition
 from kernel.runtime.errors import RuntimeDenied
 from kernel.runtime.inspect import InspectService
 from kernel.runtime.modes import RuntimeModeService
@@ -26,6 +27,13 @@ def _now() -> str:
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _safe_setup_failure_code(exc: Exception) -> str:
+    value = str(exc)
+    if value and len(value) <= 96 and all(char.isupper() or char.isdigit() or char in "_:-" for char in value):
+        return value
+    return type(exc).__name__
 
 
 class DeterministicRuntime:
@@ -653,14 +661,16 @@ class DeterministicRuntime:
         self.store._validate("nexus.route_decision@1.schema.json", decision)
         return decision, selected
 
-    def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str, requested_capability: str | None = None, attempt_reason: str = "INITIAL", predecessor_attempt_id: str | None = None) -> dict[str, Any]:
+    def schedule_node(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str, child_grant_id: str, child_classification_assertion_ref: str, event_classification_assertion_ref: str, ready_event_classification_assertion_ref: str, cancelled_event_classification_assertion_ref: str, route_object_id: str | None = None, route_classification_assertion_ref: str | None = None, manifest_object_id: str, manifest_classification_assertion_ref: str, requested_capability: str | None = None, attempt_reason: str = "INITIAL", predecessor_attempt_id: str | None = None) -> dict[str, Any]:
         self.modes.require("run_execute")
         operation = "schedule_subtask"
-        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref, "requested_capability": requested_capability, "attempt_reason": attempt_reason, "predecessor_attempt_id": predecessor_attempt_id}
+        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id, "child_grant_id": child_grant_id, "child_classification_assertion_ref": child_classification_assertion_ref, "event_classification_assertion_ref": event_classification_assertion_ref, "ready_event_classification_assertion_ref": ready_event_classification_assertion_ref, "cancelled_event_classification_assertion_ref": cancelled_event_classification_assertion_ref, "route_object_id": route_object_id, "route_classification_assertion_ref": route_classification_assertion_ref, "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref, "requested_capability": requested_capability, "attempt_reason": attempt_reason, "predecessor_attempt_id": predecessor_attempt_id}
         request_hash = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
             prior = self.store._replay_command(conn, command_id, operation, request_hash)
         if prior is not None:
+            if prior.get("status") == "SETUP_FAILED":
+                raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + prior["failure_code"])
             return prior
         with self.store._connection() as conn:
             root = conn.execute("SELECT * FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
@@ -676,11 +686,13 @@ class DeterministicRuntime:
         if existing_attempt:
             with self.store._connection() as conn:
                 scheduled = conn.execute("SELECT manifest_ref,budget_reservation_ref,status FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
+            scheduled_status = scheduled["status"]
             if scheduled["status"] == "CREATED":
-                self.trace.transition_run(command_id=command_id + "-ready", run_id=child_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
+                transition = self.trace.transition_run(command_id=command_id + "-ready", run_id=child_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
+                scheduled_status = transition["status"]
             elif scheduled["status"] not in {"READY", "RUNNING", "WAITING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED"}:
                 raise RuntimeDenied("SCHEDULED_RUN_STATE_UNRECOGNIZED")
-            result = {"run_id": child_run_id, "attempt_id": existing_attempt["attempt_id"], "status": scheduled["status"], "manifest_ref": scheduled["manifest_ref"], "reservation_ref": scheduled["budget_reservation_ref"], "route_decision_ref": existing_attempt["route_decision_ref"]}
+            result = {"run_id": child_run_id, "attempt_id": existing_attempt["attempt_id"], "status": scheduled_status, "manifest_ref": scheduled["manifest_ref"], "reservation_ref": scheduled["budget_reservation_ref"], "route_decision_ref": existing_attempt["route_decision_ref"]}
             with self.store._lock, self.store._connection() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 self.store._record_command(conn, command_id, operation, request_hash, result)
@@ -718,9 +730,16 @@ class DeterministicRuntime:
             raise RuntimeDenied("CHILD_RUN_CLASSIFICATION_DOWNGRADE")
         self._assert_classification_scope(event_classification_assertion_ref, "TRACE_EVENT", "evt-" + command_id + "-create-run", child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
         self._assert_classification_scope(ready_event_classification_assertion_ref, "TRACE_EVENT", "evt-" + command_id + "-ready", child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
+        self._assert_classification_scope(cancelled_event_classification_assertion_ref, "TRACE_EVENT", "evt-" + command_id + "-setup-cancel", child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
         self._authorize(child_grant_id, task_id, child_run_id, "RUN_CREATE", command_id + "-create-run-authorize")
         self._authorize(child_grant_id, task_id, child_run_id, "RUN_TRANSITION", command_id + "-ready-authorize")
+        self._authorize(child_grant_id, task_id, child_run_id, "RUN_TRANSITION", command_id + "-setup-cancel-authorize")
         self._authorize(child_grant_id, task_id, child_run_id, "OBJECT_WRITE", command_id + "-bind-manifest-authorize")
+        resumed_disposition = self._resume_setup_compensation(command_id=command_id, request_hash=request_hash, child_run_id=child_run_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, operation=operation)
+        if resumed_disposition is not None:
+            if resumed_disposition["status"] == "READY":
+                return resumed_disposition
+            raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED")
         account_id = contract["budget_account_ref"]
         budget_snapshot = self._budget_snapshot(account_id)
         route_id = None
@@ -813,14 +832,52 @@ class DeterministicRuntime:
         self._assert_classification_scope(manifest_classification_assertion_ref, "OBJECT", manifest_object_id, child_principals, child_boundary, at_least_level=child_class["sensitivity_level"], required_tags=set(json.loads(child_class["handling_tags_json"])))
         reservation_id = self.budget.reserve(command_id=command_id + "-budget", account_id=account_id, task_id=task_id, run_id=child_run_id, amount=reserve_amount, model_calls=1 if selected_profile else 0, tool_calls=1 if descriptor else 0, child_runs=1)
         child_run = {"schema_id": "nexus.run", "schema_version": 1, "run_id": child_run_id, "task_id": task_id, "subtask_id": subtask_id, "parent_run_id": root_run_id, "executor_kind": node["requested_executor"], "status": "CREATED", "grant_id": child_grant_id, "budget_reservation_ref": reservation_id, "data_boundary": child_boundary, "classification_assertion_ref": child_classification_assertion_ref, "created_at": node["created_at"]}
-        self.trace.create_run(child_run, command_id=command_id + "-create-run", event_classification_assertion_ref=event_classification_assertion_ref)
+        try:
+            self.trace.create_run(child_run, command_id=command_id + "-create-run", event_classification_assertion_ref=event_classification_assertion_ref)
+        except (RuntimeDenied, TraceAdmissionDenied, InvalidRunTransition) as exc:
+            disposition = self._compensate_schedule_setup(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=reservation_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=_safe_setup_failure_code(exc))
+            if disposition["status"] == "READY":
+                return disposition
+            raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + _safe_setup_failure_code(exc)) from exc
         child_input_refs = [contract_ref, *node["input_object_refs"]]
         common = {"schema_id": "nexus.run_manifest", "schema_version": 1, "executor_kind": node["requested_executor"], "runtime_version": "0.1", "policy_version": self.authority.policy["policy_version"], "schema_versions": {"nexus.run_manifest": 1, "nexus.task_contract": 1, "nexus.subtask": 1}, "input_object_refs": child_input_refs, "authority_grant_ref": child_grant_id, "budget_reservation_ref": reservation_id, "data_boundary": child_boundary, "classification_assertion_ref": child_classification_assertion_ref}
         if selected_profile:
             manifest = {**common, "model_id": selected_profile["model_id"], "provider": selected_profile["provider"], "model_class": selected_profile["model_class"], "model_adapter_version": selected_profile["model_adapter_version"], "prompt_version": "fake-v0", "context_object_refs": child_input_refs, "route_decision_ref": route_id}
         else:
             manifest = {**common, "tool_id": descriptor["tool_id"], "tool_descriptor_version": descriptor["version"], "tool_adapter_version": "fake-v0", "input_ref": node["input_object_refs"][0]}
-        self.bind_manifest(command_id=command_id + "-bind-manifest", run_id=child_run_id, manifest_object_id=manifest_object_id, manifest_classification_assertion_ref=manifest_classification_assertion_ref, manifest=manifest)
+        try:
+            self.bind_manifest(command_id=command_id + "-bind-manifest", run_id=child_run_id, manifest_object_id=manifest_object_id, manifest_classification_assertion_ref=manifest_classification_assertion_ref, manifest=manifest)
+        except (RuntimeDenied, TraceAdmissionDenied, InvalidRunTransition) as exc:
+            disposition = self._compensate_schedule_setup(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=reservation_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=_safe_setup_failure_code(exc))
+            if disposition["status"] == "READY":
+                return disposition
+            raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + _safe_setup_failure_code(exc)) from exc
+        try:
+            attempt_id, attempt_no, capability = self._register_scheduled_attempt(command_id=command_id, task_id=task_id, subtask_id=subtask_id, child_run_id=child_run_id, route_id=route_id, requested_capability=requested_capability, selected_profile=selected_profile, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
+        except (RuntimeDenied, TraceAdmissionDenied, InvalidRunTransition) as exc:
+            disposition = self._compensate_schedule_setup(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=reservation_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=_safe_setup_failure_code(exc))
+            if disposition["status"] == "READY":
+                return disposition
+            raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + _safe_setup_failure_code(exc)) from exc
+        try:
+            self.trace.transition_run(command_id=command_id + "-ready", run_id=child_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
+        except (RuntimeDenied, TraceAdmissionDenied, InvalidRunTransition) as exc:
+            disposition = self._compensate_schedule_setup(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=reservation_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=_safe_setup_failure_code(exc))
+            if disposition["status"] == "READY":
+                return disposition
+            raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + _safe_setup_failure_code(exc)) from exc
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                result = {"run_id": child_run_id, "attempt_id": attempt_id, "attempt_no": attempt_no, "requested_capability": capability, "status": "READY", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id, "route_decision_ref": route_id}
+                self.store._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return result
+
+    def _register_scheduled_attempt(self, *, command_id: str, task_id: str, subtask_id: str, child_run_id: str, route_id: str, requested_capability: str | None, selected_profile: dict[str, Any] | None, attempt_reason: str, predecessor_attempt_id: str | None) -> tuple[str, int, str]:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -833,22 +890,82 @@ class DeterministicRuntime:
                 attempt_no = (previous["attempt_no"] if previous else 0) + 1
                 attempt_id = f"{subtask_id}:attempt:{attempt_no}"
                 capability = requested_capability or (selected_profile["model_class"] if selected_profile else "TOOL")
-                now = _now()
-                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, now))
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now()))
                 if current["scheduled_run_id"] is None:
                     conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL", (child_run_id, task_id, subtask_id))
                 conn.commit()
+                return attempt_id, attempt_no, capability
             except Exception:
                 conn.rollback()
                 raise
-        self.trace.transition_run(command_id=command_id + "-ready", run_id=child_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_event_classification_assertion_ref)
+
+    def _compensate_schedule_setup(self, *, command_id: str, operation: str, request_hash: str, child_run_id: str, reservation_id: str, cancelled_event_classification_assertion_ref: str, failure_code: str) -> dict[str, Any]:
+        """Governed cleanup for a confirmed domain rejection during child setup.
+
+        Generic exceptions are deliberately not caught by schedule_node: they may
+        represent response loss and remain recoverable by exact-command retry.
+        """
+        intent_id = command_id + "-setup-intent"
+        intent_operation = "schedule_setup_compensation_intent"
+        intent_hash = self.store._request_hash(intent_operation, {"schedule_request_hash": request_hash})
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                result = {"run_id": child_run_id, "attempt_id": attempt_id, "attempt_no": attempt_no, "requested_capability": capability, "status": "READY", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id, "route_decision_ref": route_id}
-                self.store._record_command(conn, command_id, operation, request_hash, result)
+                if self.store._replay_command(conn, intent_id, intent_operation, intent_hash) is None:
+                    self.store._record_command(conn, intent_id, intent_operation, intent_hash, {"run_id": child_run_id, "reservation_id": reservation_id, "failure_code": failure_code})
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
+        return self._finish_schedule_compensation(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=reservation_id, cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=failure_code)
+
+    def _resume_setup_compensation(self, *, command_id: str, request_hash: str, child_run_id: str, cancelled_event_classification_assertion_ref: str, operation: str) -> dict[str, Any] | None:
+        intent_id = command_id + "-setup-intent"
+        with self.store._connection() as conn:
+            row = conn.execute("SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?", (intent_id,)).fetchone()
+        if not row:
+            return None
+        intent_operation = "schedule_setup_compensation_intent"
+        intent_hash = self.store._request_hash(intent_operation, {"schedule_request_hash": request_hash})
+        if row["operation"] != intent_operation or row["request_hash"] != intent_hash:
+            raise RuntimeDenied("SCHEDULE_SETUP_INTENT_COMMAND_CONFLICT")
+        intent = json.loads(row["result_json"])
+        if intent["run_id"] != child_run_id:
+            raise RuntimeDenied("SCHEDULE_SETUP_INTENT_BINDING_MISMATCH")
+        return self._finish_schedule_compensation(command_id=command_id, operation=operation, request_hash=request_hash, child_run_id=child_run_id, reservation_id=intent["reservation_id"], cancelled_event_classification_assertion_ref=cancelled_event_classification_assertion_ref, failure_code=intent["failure_code"])
+
+    def _finish_schedule_compensation(self, *, command_id: str, operation: str, request_hash: str, child_run_id: str, reservation_id: str, cancelled_event_classification_assertion_ref: str, failure_code: str) -> dict[str, Any]:
+        try:
+            with self.store._connection() as conn:
+                run = conn.execute("SELECT status,manifest_ref,budget_reservation_ref FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
+            completed_result = None
+            if run and run["status"] == "READY":
+                with self.store._connection() as conn:
+                    attempt = conn.execute("SELECT attempt_id,attempt_no,requested_capability,route_decision_ref,outcome FROM subtask_attempts WHERE run_id=?", (child_run_id,)).fetchone()
+                    reservation = conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (run["budget_reservation_ref"],)).fetchone()
+                    node = conn.execute("SELECT status FROM subtasks WHERE subtask_id=(SELECT subtask_id FROM runs WHERE run_id=?)", (child_run_id,)).fetchone()
+                if not attempt or attempt["outcome"] != "READY" or not node or node["status"] != "READY" or not reservation or reservation["state"] != "RESERVED" or not run["manifest_ref"]:
+                    raise RuntimeDenied("SCHEDULE_SETUP_READY_PROJECTION_MISMATCH")
+                completed_result = {"run_id": child_run_id, "attempt_id": attempt["attempt_id"], "attempt_no": attempt["attempt_no"], "requested_capability": attempt["requested_capability"], "status": "READY", "manifest_ref": run["manifest_ref"], "reservation_ref": run["budget_reservation_ref"], "route_decision_ref": attempt["route_decision_ref"]}
+            elif run and run["status"] == "CREATED":
+                self.trace.transition_run(command_id=command_id + "-setup-cancel", run_id=child_run_id, expected_state="CREATED", next_state="CANCELLED", classification_assertion_ref=cancelled_event_classification_assertion_ref)
+            elif run and run["status"] != "CANCELLED":
+                raise RuntimeDenied("SCHEDULE_SETUP_RUN_ALREADY_EXECUTABLE")
+            if completed_result is None:
+                self.budget.release(command_id=command_id + "-budget-release", reservation_id=reservation_id)
+                result = {"run_id": child_run_id, "status": "SETUP_FAILED", "reservation_ref": reservation_id, "failure_code": failure_code}
+            elif run and run["status"] != "CANCELLED":
+                result = completed_result
+            else:
+                result = {"run_id": child_run_id, "status": "SETUP_FAILED", "reservation_ref": reservation_id, "failure_code": failure_code}
+            with self.store._lock, self.store._connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store._record_command(conn, command_id, operation, request_hash, result)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+        except Exception as exc:
+            raise RuntimeError("SCHEDULE_SETUP_COMPENSATION_FAILED") from exc
         return result
