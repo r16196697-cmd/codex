@@ -360,6 +360,25 @@ class AuthorityService:
             raise AuthorizationDenied("CLASSIFICATION_POLICY_VERSION_MISMATCH")
         if assertion["sensitivity_level"] not in self.policy["classification"]["sensitivity_rank"]:
             raise AuthorizationDenied("CLASSIFICATION_LEVEL_UNRANKED")
+        operation = "record_classification_assertion"
+        # Revocation blocks new authority-bearing work, not a mutation already
+        # committed under valid authority. Exact ledger replay only returns
+        # that immutable result; it never performs the protected mutation again.
+        # Keep the historical request shape stable: authorization context was
+        # intentionally not part of this command hash.
+        request_hash = self.store._request_hash(operation, {"assertion": assertion, "grant_id": grant_id})
+        with self.store._connection() as conn:
+            committed = self.store._replay_command(conn, command_id, operation, request_hash)
+            if committed is not None:
+                row = conn.execute("SELECT * FROM classification_assertions WHERE assertion_id=?", (assertion["assertion_id"],)).fetchone()
+                expected = (assertion["subject_type"], assertion["subject_ref"], assertion["sensitivity_level"],
+                            json.dumps(assertion["handling_tags"], sort_keys=True), assertion["policy_version"],
+                            assertion["reason"], assertion["actor_id"], assertion.get("supersedes"))
+                persisted = None if row is None else (row["subject_type"], row["subject_ref"], row["sensitivity_level"],
+                            row["handling_tags_json"], row["policy_version"], row["reason"], row["actor_id"], row["supersedes"])
+                if committed != {"assertion_id": assertion["assertion_id"]} or persisted != expected:
+                    raise AuthorizationDenied("CLASSIFICATION_REPLAY_PROJECTION_MISMATCH")
+                return
         chain = self.validate_delegation_chain(grant_id)
         if chain[-1]["granted_to"] != assertion["actor_id"]:
             raise AuthorizationDenied("CLASSIFICATION_ACTOR_MISMATCH")
@@ -386,8 +405,6 @@ class AuthorityService:
             raise ApprovalDenied("CLASSIFICATION_LOWER_REQUIRES_APPROVAL")
         request = {"task": task_id, "resource": assertion["subject_ref"], "action": action, "audience": audience}
         self.evaluate_authorization(grant_id, request, command_id + "-authorize", approval_id)
-        operation = "record_classification_assertion"
-        request_hash = self.store._request_hash(operation, {"assertion": assertion, "grant_id": grant_id})
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:

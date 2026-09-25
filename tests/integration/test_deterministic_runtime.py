@@ -1013,6 +1013,30 @@ class DeterministicRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeDenied, "SUBTASK_NOT_SCHEDULABLE"):
             self._schedule("node-e1", "run-illegal-third", "model-agent", "grant-illegal-third", "route-illegal-third", command_id="cmd-illegal-third", requested_capability="E2", attempt_reason="RETRY", predecessor_attempt_id=second["attempt_id"])
 
+    def test_effect_descriptor_exact_replay_after_grant_revocation(self):
+        effects = DeterministicEffectService(self.store, self.authority, self.trace, self.budget)
+        descriptor = {"schema_id":"nexus.tool_descriptor", "schema_version":1, "tool_id":"tool-read", "version":"replay-test", "input_schema_id":"nexus.object@1.schema.json", "output_schema_id":"nexus.object@1.schema.json", "effect_class":"EXTERNAL_REVERSIBLE", "required_authority":["FAKE_WRITE"], "required_classifications":["PUBLIC"], "idempotency_support":True, "reconciliation_capability":"fake-authoritative", "compensation_capability":"fake-compensate", "network_egress":False, "risk_tags":["synthetic"], "review_status":"APPROVED"}
+        request = {"command_id":"cmd-descriptor-replay", "grant_id":"grant-root", "task_id":"task-1", "descriptor":descriptor}
+        effects.register_descriptor(**request)
+        self.authority.revoke_grant("grant-root", "cmd-descriptor-replay-revoke")
+        with self.store._connection() as conn:
+            before = (conn.execute("SELECT COUNT(*) FROM tool_descriptors WHERE tool_id='tool-read' AND version='replay-test'").fetchone()[0],
+                      conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='cmd-descriptor-replay'").fetchone()[0],
+                      conn.execute("SELECT COUNT(*) FROM authority_events").fetchone()[0])
+        self.assertIsNone(effects.register_descriptor(**request))
+        with self.assertRaises(CommandConflict):
+            effects.register_descriptor(**{**request, "descriptor":{**descriptor, "risk_tags":["changed"]}})
+        with self.store._connection() as conn:
+            after_replay = (conn.execute("SELECT COUNT(*) FROM tool_descriptors WHERE tool_id='tool-read' AND version='replay-test'").fetchone()[0],
+                            conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='cmd-descriptor-replay'").fetchone()[0],
+                            conn.execute("SELECT COUNT(*) FROM authority_events").fetchone()[0])
+            self.assertEqual(json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id='cmd-descriptor-replay'").fetchone()[0]), {"tool_id":"tool-read", "version":"replay-test"})
+        self.assertEqual(after_replay, before)
+        with self.assertRaises(AuthorizationDenied):
+            effects.register_descriptor(**{**request, "command_id":"cmd-descriptor-new-after-revoke", "descriptor":{**descriptor, "version":"fresh"}})
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tool_descriptors WHERE tool_id='tool-read'").fetchone()[0], 1)
+
     def test_unknown_effect_is_reconciled_without_retry_and_compensation_is_independent(self):
         class FakeDispatcher:
             def __init__(self): self.calls = 0

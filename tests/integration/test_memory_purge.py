@@ -806,6 +806,109 @@ class MemoryPurgeTests(unittest.TestCase):
         finally:
             restored.close()
 
+    def test_proof_purge_preserves_verification_and_memory_reference_residue(self):
+        self.memory.retain_raw(command_id="retain-proof-claim", object_id=self.claim, run_id="run-7")
+        integrity = self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7")
+        self.assertEqual(integrity["verdict"], "PASS")
+        human = self._human_verification("verify-proof-human")
+        candidate = self.memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=human["verification_id"], review_trigger="purge proof")
+        self.assertEqual(candidate["status"], "ADMITTED")
+        inspect_grant_id = "inspect-proof-task"
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant", "schema_version":1, "grant_id":inspect_grant_id, "issued_by":"human-root", "granted_to":"agent", "task_scope":["task-7"], "resource_scope":["task:task-7"], "action_scope":["INSPECT"], "audience_scope":["nexus-inspect"], "issued_at":now.isoformat(), "expires_at":(now+timedelta(days=1)).isoformat(), "status":"ACTIVE", "policy_version":"1"}, "create-inspect-proof-grant")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+
+        # Preserve a real pre-purge database/object snapshot; the independent
+        # journal remains external and will later be replayed onto this copy.
+        backup_root = self.root / "proof-old-backup"
+        (backup_root / "objects").mkdir(parents=True)
+        destination = sqlite3.connect(backup_root / "nexus.sqlite")
+        try:
+            with self.store._connection() as source:
+                source.backup(destination)
+        finally:
+            destination.close()
+        shutil.copytree(self.data_root / "objects", backup_root / "objects", dirs_exist_ok=True)
+
+        plan = self.purge.plan(command_id="proof-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim, self.evidence])
+        self._approve_purge(plan["plan_hash"])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        outcome = self.purge.execute(command_id="proof-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(outcome["status"], "COMPLETED")
+
+        def residue(store):
+            with store._connection() as conn:
+                verification_rows = [dict(row) for row in conn.execute("SELECT verification_id,target_ref,evidence_used_json,result_json FROM verification_results WHERE verification_id IN ('verify-proof-integrity','verify-proof-human') ORDER BY verification_id")]
+                candidate_row = dict(conn.execute("SELECT candidate_id,claim_ref,metadata_json,status FROM memory_candidates WHERE candidate_id='candidate-7'").fetchone())
+                evidence_rows = [dict(row) for row in conn.execute("SELECT candidate_id,evidence_object_id FROM memory_candidate_evidence WHERE candidate_id='candidate-7'")]
+                command_rows = [dict(row) for row in conn.execute("SELECT command_id,operation,request_hash,result_json FROM command_ledger WHERE command_id IN ('put-claim-7','put-evidence-7','retain-proof-claim','verify-verify-proof-integrity','verify-verify-proof-human','candidate-proof','proof-purge-execute') ORDER BY command_id")]
+                states = {row["object_id"]:row["payload_state"] for row in conn.execute("SELECT object_id,payload_state FROM object_states WHERE object_id IN (?,?)", (self.claim,self.evidence))}
+            return verification_rows,candidate_row,evidence_rows,command_rows,states
+
+        verified, memory_row, candidate_evidence, commands, object_states = residue(self.store)
+        self.assertEqual(object_states, {self.claim:"PURGED", self.evidence:"PURGED"})
+        self.assertEqual(len(verified), 2)
+        for row in verified:
+            self.assertEqual(row["target_ref"], self.claim)
+            self.assertIn(self.evidence, row["evidence_used_json"])
+            self.assertIn(self.claim, row["result_json"])
+            self.assertIn(self.evidence, row["result_json"])
+        self.assertEqual(memory_row["claim_ref"], self.claim)
+        self.assertEqual(memory_row["status"], "PURGED")
+        self.assertIn(self.claim, memory_row["metadata_json"])
+        self.assertIn(self.evidence, memory_row["metadata_json"])
+        self.assertEqual(candidate_evidence, [{"candidate_id":"candidate-7", "evidence_object_id":self.evidence}])
+
+        # Normal read APIs/inspect and the paused verifier replay candidate are
+        # measured without changing those APIs in this proof-only task.
+        self.assertEqual(self.verifier.get("verify-proof-integrity")["target_ref"], self.claim)
+        self.assertEqual(self.verifier.get("verify-proof-integrity")["evidence_used"], [self.evidence])
+        self.assertEqual(self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7"), integrity)
+        inspection = InspectService(self.store, self.authority).task(grant_id=inspect_grant_id, task_id="task-7")
+        inspected = {item["verification_id"]:item for item in inspection["verifications"]}
+        self.assertEqual(inspected["verify-proof-integrity"]["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(self.memory.search_raw(query="synthetic Nexus fact", run_id="run-7"), [])
+        self.assertEqual(self.memory.search_admitted(query="synthetic Nexus fact", run_id="run-7"), [])
+        with self.assertRaises(PurgedObject):
+            self.memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+
+        command_ids = {row["command_id"] for row in commands}
+        self.assertIn("candidate-proof", command_ids)
+        self.assertIn("verify-verify-proof-integrity", command_ids)
+        command_by_id = {row["command_id"]:row for row in commands}
+        self.assertIn(self.claim, command_by_id["put-claim-7"]["result_json"])
+        self.assertIn(self.evidence, command_by_id["put-evidence-7"]["result_json"])
+        self.assertIn(self.claim, command_by_id["retain-proof-claim"]["result_json"])
+        self.assertIn("verify-proof-integrity", command_by_id["verify-verify-proof-integrity"]["result_json"])
+        self.assertNotIn(self.claim, command_by_id["verify-verify-proof-integrity"]["result_json"])
+        self.assertIn("candidate-7", command_by_id["candidate-proof"]["result_json"])
+        purge_result = json.loads(command_by_id["proof-purge-execute"]["result_json"])
+        self.assertTrue({self.claim,self.evidence}.issubset(set(purge_result["purged_refs"])))
+        self.assertTrue(all(row["request_hash"] for row in commands))
+        # request_hash is an opaque commitment; no attempt is made to recover
+        # its input from the digest.
+
+        restored = ObjectStore(backup_root)
+        try:
+            restored_memory = MemoryService(restored, self.authority, VerificationService(restored, self.authority))
+            restored_purge = PurgeService(restored, self.authority, restored_memory, independent_journal_path=self.journal_path)
+            replay = restored_purge.replay_independent_journal()
+            self.assertTrue(replay["normal_allowed"])
+            restored_residue = residue(restored)
+            r_verified, r_candidate, r_evidence, r_commands, r_states = restored_residue
+            self.assertEqual(r_states, {self.claim:"PURGED", self.evidence:"PURGED"})
+            self.assertEqual([(row["verification_id"],row["target_ref"],row["evidence_used_json"],row["result_json"]) for row in r_verified], [(row["verification_id"],row["target_ref"],row["evidence_used_json"],row["result_json"]) for row in verified])
+            self.assertEqual((r_candidate["claim_ref"],r_candidate["metadata_json"],r_candidate["status"]), (memory_row["claim_ref"],memory_row["metadata_json"],"PURGED"))
+            self.assertEqual(r_evidence, candidate_evidence)
+            self.assertTrue(all(row["request_hash"] for row in r_commands))
+            with self.assertRaises(PurgedObject):
+                restored.get_payload(self.claim)
+            self.assertEqual(VerificationService(restored, self.authority).get("verify-proof-integrity")["evidence_used"], [self.evidence])
+        finally:
+            restored.close()
+
     def _seed_purge_identifier_audit(self):
         target = "https://private.example/recipient/42"
         digest = hashlib.sha256(self.store.get_payload(self.claim)).hexdigest()

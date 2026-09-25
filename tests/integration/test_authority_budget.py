@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from kernel.authority import ApprovalDenied, AuthorityService, AuthorizationDenied, InvalidDelegation
+from kernel.object.errors import CommandConflict
 from kernel.budget import BudgetExceeded, BudgetService
 from adapters.storage import ObjectStore
 
@@ -158,6 +159,44 @@ class AuthorityBudgetTests(unittest.TestCase):
         self.authority.create_approval(approval, "cmd-approval-lower")
         self.authority.record_classification_assertion(lowered, grant_id="grant-root", task_id="task-1", audience="local", command_id="cmd-class-lowered-ok", approval_id="approval-lower")
         self.assertEqual(self.authority.effective_classification(["class-secret", "class-lowered"]), ("SECRET", {"NO_EXTERNAL_EGRESS"}))
+
+    def test_classification_exact_replay_after_grant_revocation(self):
+        self._grant("grant-class-replay", "human-root", "agent", resources=["object-replay"], actions=["CLASSIFY", "DELEGATE"], audiences=["local"])
+        self._grant("grant-class-replay-alt", "human-root", "agent", resources=["object-replay"], actions=["CLASSIFY", "DELEGATE"], audiences=["local"])
+        assertion = {"schema_id":"nexus.classification_assertion", "schema_version":1, "assertion_id":"class-replay", "subject_type":"OBJECT", "subject_ref":"object-replay", "sensitivity_level":"PUBLIC", "handling_tags":[], "policy_version":"1", "reason":"replay fixture", "actor_id":"agent"}
+        args = {"assertion":assertion, "grant_id":"grant-class-replay", "task_id":"task-1", "audience":"local", "command_id":"cmd-class-replay"}
+        self.authority.record_classification_assertion(**args)
+        self.authority.revoke_grant("grant-class-replay", "cmd-class-replay-revoke")
+        with self.store._connection() as conn:
+            before = (conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE assertion_id='class-replay'").fetchone()[0],
+                      conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='cmd-class-replay'").fetchone()[0],
+                      conn.execute("SELECT COUNT(*) FROM authority_events").fetchone()[0])
+        self.assertIsNone(self.authority.record_classification_assertion(**args))
+        with self.assertRaises(CommandConflict):
+            self.authority.record_classification_assertion(**{**args, "assertion":{**assertion, "reason":"changed"}})
+        with self.assertRaises(CommandConflict):
+            self.authority.record_classification_assertion(**{**args, "grant_id":"grant-class-replay-alt"})
+        with self.store._connection() as conn:
+            after_replay = (conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE assertion_id='class-replay'").fetchone()[0],
+                            conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='cmd-class-replay'").fetchone()[0],
+                            conn.execute("SELECT COUNT(*) FROM authority_events").fetchone()[0])
+        self.assertEqual(after_replay, before)
+        with self.assertRaises((AuthorizationDenied, InvalidDelegation)):
+            self.authority.record_classification_assertion(**{**args, "command_id":"cmd-class-replay-fresh"})
+
+    def test_committed_classification_replays_after_approval_expiry(self):
+        self._grant("grant-class-expiry", "human-root", "agent", resources=["object-expiry"], actions=["CLASSIFY", "CLASSIFICATION_LOWER", "DELEGATE"], audiences=["local"])
+        initial = {"schema_id":"nexus.classification_assertion", "schema_version":1, "assertion_id":"class-expiry-high", "subject_type":"OBJECT", "subject_ref":"object-expiry", "sensitivity_level":"SECRET", "handling_tags":["NO_EXTERNAL_EGRESS"], "policy_version":"1", "reason":"initial", "actor_id":"agent"}
+        self.authority.record_classification_assertion(initial, grant_id="grant-class-expiry", task_id="task-1", audience="local", command_id="cmd-class-expiry-high")
+        lowered = {**initial, "assertion_id":"class-expiry-low", "sensitivity_level":"PUBLIC", "handling_tags":[], "reason":"lowered", "supersedes":"class-expiry-high"}
+        now = datetime.now(timezone.utc)
+        approval = {"schema_id":"nexus.approval_decision", "schema_version":1, "approval_id":"approval-class-expiry", "approver_principal_id":"human-root", "target_type":"CLASSIFICATION_LOWER", "target_ref":"object-expiry", "decision":"APPROVE", "approved_scope":["CLASSIFICATION_LOWER", "object-expiry"], "policy_version":"1", "issued_at":now.isoformat(), "expires_at":(now + timedelta(seconds=5)).isoformat()}
+        self.authority.create_approval(approval, "cmd-approval-class-expiry")
+        args = {"assertion":lowered, "grant_id":"grant-class-expiry", "task_id":"task-1", "audience":"local", "command_id":"cmd-class-expiry-lower", "approval_id":"approval-class-expiry"}
+        self.authority.record_classification_assertion(**args)
+        from unittest import mock
+        with mock.patch("kernel.authority.service._now", return_value=now + timedelta(seconds=10)):
+            self.assertIsNone(self.authority.record_classification_assertion(**args))
 
     def test_budget_reservation_is_atomic_idempotent_and_task_unique(self):
         self.budget.create_account(command_id="cmd-budget-account", account_id="budget-1", task_id="task-1", amount_limit=10, unit="microcredits", model_call_limit=1, tool_call_limit=2, child_run_limit=2)

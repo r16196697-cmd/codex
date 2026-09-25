@@ -50,17 +50,19 @@ class DeterministicEffectService:
             if not schema_id.endswith(".schema.json") or "/" in schema_id or "\\" in schema_id:
                 raise RuntimeDenied("TOOL_SCHEMA_REFERENCE_INVALID")
             self.store._schema(schema_id)
-        self.authority.evaluate_authorization(grant_id, {"task": task_id, "resource": descriptor["tool_id"], "action": "RUNTIME_CONFIGURE", "audience": "nexus-runtime"}, command_id + "-authorize")
         operation = "register_effect_tool_descriptor"
+        # Revocation prevents fresh registrations; exact replay only returns a
+        # previously committed result and cannot register or mutate anything.
         request = {"task_id": task_id, "descriptor": descriptor}
         digest = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
-            if self.store._replay_command(conn, command_id, operation, digest) is not None:
+            if self._replay_descriptor(conn, command_id, operation, digest, descriptor):
                 return
+        self.authority.evaluate_authorization(grant_id, {"task": task_id, "resource": descriptor["tool_id"], "action": "RUNTIME_CONFIGURE", "audience": "nexus-runtime"}, command_id + "-authorize")
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                if self.store._replay_command(conn, command_id, operation, digest) is not None:
+                if self._replay_descriptor(conn, command_id, operation, digest, descriptor):
                     conn.commit(); return
                 self._authorize_locked(grant_id, {"task": task_id, "resource": descriptor["tool_id"], "action": "RUNTIME_CONFIGURE", "audience": "nexus-runtime"}, None, None, command_id + "-recheck")
                 conn.execute("INSERT INTO tool_descriptors(tool_id,version,descriptor_json) VALUES(?,?,?)", (descriptor["tool_id"], descriptor["version"], _canonical(descriptor)))
@@ -68,6 +70,16 @@ class DeterministicEffectService:
                 conn.commit()
             except Exception:
                 conn.rollback(); raise
+
+    def _replay_descriptor(self, conn, command_id: str, operation: str, digest: str, descriptor: dict[str, Any]) -> bool:
+        prior = self.store._replay_command(conn, command_id, operation, digest)
+        if prior is None:
+            return False
+        expected = {"tool_id": descriptor["tool_id"], "version": descriptor["version"]}
+        row = conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (descriptor["tool_id"], descriptor["version"])).fetchone()
+        if prior != expected or row is None or row["descriptor_json"] != _canonical(descriptor):
+            raise RuntimeDenied("EFFECT_DESCRIPTOR_REPLAY_PROJECTION_MISMATCH")
+        return True
 
     def create_effect(self, *, command_id: str, effect: dict[str, Any], payload_object_ref: str, classification_assertion_ref: str, compensates_effect_id: str | None = None) -> None:
         self.modes.require("core_write")
