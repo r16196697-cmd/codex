@@ -228,12 +228,12 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 7)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64)])
 
-    def test_v6_snapshot_replays_v7_runtime_mode_migration(self) -> None:
+    def test_v6_snapshot_replays_v7_v8_v9_and_v10_migrations_deterministically(self) -> None:
         database_path = self.root / "data" / "nexus.sqlite"
         self.store.close()
         legacy_conn = sqlite3.connect(database_path)
@@ -244,7 +244,30 @@ raise SystemExit(0)
             conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_delete")
             conn.execute("DROP TABLE IF EXISTS runtime_mode_events")
             conn.execute("DROP TABLE IF EXISTS runtime_mode_state")
-            conn.execute("DELETE FROM schema_migrations WHERE version=7")
+            conn.execute("DROP TRIGGER IF EXISTS approval_decisions_no_update")
+            conn.execute("DROP TRIGGER IF EXISTS effects_identity_immutable")
+            conn.execute("DROP TRIGGER IF EXISTS trace_events_no_update")
+            conn.execute("DROP TRIGGER IF EXISTS purge_refs_no_update")
+            conn.executescript("""
+                CREATE TRIGGER approval_decisions_no_update BEFORE UPDATE ON approval_decisions BEGIN SELECT RAISE(ABORT,'APPROVAL_DECISION_IMMUTABLE'); END;
+                CREATE TRIGGER effects_identity_immutable BEFORE UPDATE ON effects
+                WHEN NEW.effect_id<>OLD.effect_id OR NEW.run_id<>OLD.run_id OR NEW.tool_id<>OLD.tool_id
+                 OR NEW.tool_descriptor_version<>OLD.tool_descriptor_version OR NEW.action_type<>OLD.action_type
+                 OR NEW.target_ref<>OLD.target_ref OR NEW.payload_integrity_hash<>OLD.payload_integrity_hash
+                 OR NEW.payload_object_ref<>OLD.payload_object_ref OR NEW.idempotency_key<>OLD.idempotency_key
+                 OR NEW.grant_id<>OLD.grant_id OR NEW.approval_ref IS NOT OLD.approval_ref
+                 OR NEW.budget_reservation_ref<>OLD.budget_reservation_ref OR NEW.created_at<>OLD.created_at
+                 OR (OLD.effect_outcome IN ('COMMITTED','NOT_COMMITTED') AND NEW.effect_outcome<>OLD.effect_outcome)
+                 OR NOT ((OLD.execution_state='DECLARED' AND NEW.execution_state IN ('PREPARED','CANCELLED'))
+                   OR (OLD.execution_state='PREPARED' AND NEW.execution_state IN ('AUTHORIZED','CANCELLED'))
+                   OR (OLD.execution_state='AUTHORIZED' AND NEW.execution_state IN ('COMMITTING','CANCELLED'))
+                   OR (OLD.execution_state='COMMITTING' AND NEW.execution_state='FINISHED')
+                   OR (OLD.execution_state='FINISHED' AND NEW.execution_state='FINISHED'))
+                BEGIN SELECT RAISE(ABORT,'INVALID_EFFECT_TRANSITION'); END;
+                CREATE TRIGGER trace_events_no_update BEFORE UPDATE ON trace_events BEGIN SELECT RAISE(ABORT,'TRACE_EVENT_IMMUTABLE'); END;
+                CREATE TRIGGER purge_refs_no_update BEFORE UPDATE ON purge_execution_refs BEGIN SELECT RAISE(ABORT,'PURGE_EXECUTION_REF_IMMUTABLE'); END;
+            """)
+            conn.execute("DELETE FROM schema_migrations WHERE version>=7")
             conn.execute("PRAGMA user_version=6")
             conn.commit()
         finally:
@@ -252,9 +275,9 @@ raise SystemExit(0)
 
         self.store = ObjectStore(self.root / "data")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 7)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 10)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (7, "0007_runtime_modes.sql"))
+            self.assertEqual(tuple(row), (10, "0010_purge_run_manifest_indexes.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 

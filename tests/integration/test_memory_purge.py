@@ -38,7 +38,7 @@ class MemoryPurgeTests(unittest.TestCase):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "anchor-root")
         self.actions = ["RUN_CREATE", "TRACE_APPEND", "VERIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
-        self.resources = ["run-7", "claim-7", "evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "plan-7", "record-7", "evt-purge-ref-event"]
+        self.resources = ["run-7", "claim-7", "evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "candidate-human-conflict", "plan-7", "record-7", "evt-purge-ref-event"]
         now = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-7", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-7"], "resource_scope": self.resources, "action_scope": self.actions, "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "grant-7")
         self._seed_task_run()
@@ -118,6 +118,9 @@ class MemoryPurgeTests(unittest.TestCase):
         admitted = self.memory.create_candidate(command_id="candidate-human", candidate_id="candidate-human", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=human_result["verification_id"], review_trigger="contradiction or expiry")
         self.assertEqual((admitted["status"], admitted["truth_state"]), ("ADMITTED", "VERIFIED"))
         self.assertEqual(len(self.memory.search_admitted(query="governed memory", run_id="run-7")), 1)
+        conflicted = self.memory.create_candidate(command_id="candidate-human-conflict", candidate_id="candidate-human-conflict", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=human_result["verification_id"], review_trigger="resolve contradictory source", conflicts=[self.evidence])
+        self.assertEqual((conflicted["status"], conflicted["truth_state"]), ("QUARANTINED", "UNKNOWN"))
+        self.assertEqual(conflicted["conflicts"], [self.evidence])
         with self.assertRaises(RuntimeDenied):
             self.verifier.verify_object_integrity(verification_id="verify-lying-axes", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7", independence={"generator_independence": "INDEPENDENT", "evidence_independence": "INDEPENDENT", "method_independence": "INDEPENDENT"})
 
@@ -265,6 +268,7 @@ class MemoryPurgeTests(unittest.TestCase):
         shutil.copytree(self.data_root / "objects", backup_root / "objects", dirs_exist_ok=True)
         with self.store._connection() as conn:
             conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        purged_payload_hash = hashlib.sha256(self.store.get_payload(self.claim)).hexdigest()
         outcome = self.purge.execute(command_id="purge-execute-success", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(outcome["status"], "COMPLETED")
         with self.assertRaises(PurgedObject):
@@ -289,11 +293,27 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM raw_history_fts WHERE raw_history_fts MATCH 'governed' ").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM admitted_memory_fts WHERE admitted_memory_fts MATCH 'governed' ").fetchone()[0], 0)
-            # The immutable audit outcome survives; ordinary Inspect redacts its
-            # payload-derived target/hash after the source Object is Purged.
+            # Purge erases payload-derived identifiers but preserves immutable
+            # identity, decision and outcome facts.
             retained_effect = conn.execute("SELECT effect_outcome,payload_integrity_hash,target_ref FROM effects WHERE effect_id=?", (effect_id,)).fetchone()
-            self.assertEqual((retained_effect["effect_outcome"], retained_effect["payload_integrity_hash"]), ("NOT_COMMITTED", hashlib.sha256(b"The synthetic Nexus fact is governed memory.").hexdigest()))
-            self.assertEqual(retained_effect["target_ref"], "https://private.example/recipient/42")
+            self.assertEqual((retained_effect["effect_outcome"], retained_effect["payload_integrity_hash"], retained_effect["target_ref"]), ("NOT_COMMITTED", "0" * 64, "REDACTED_PURGED"))
+            approval_fact = conn.execute("SELECT decision,approver_principal_id,target_ref,payload_integrity_hash,approved_scope_json FROM approval_decisions WHERE approval_id=?", (approval_id,)).fetchone()
+            self.assertEqual((approval_fact["decision"], approval_fact["approver_principal_id"], approval_fact["target_ref"], approval_fact["payload_integrity_hash"], approval_fact["approved_scope_json"]), ("APPROVE", "human-root", "REDACTED_PURGED", None, "[]"))
+            trace_fact = conn.execute("SELECT event_json FROM trace_events WHERE event_id='evt-purge-ref-event'").fetchone()[0]
+            self.assertNotIn("https://private.example/recipient/42", trace_fact)
+            self.assertNotIn(purged_payload_hash, trace_fact)
+            self.assertEqual(json.loads(trace_fact)["typed_metadata"], {
+                "execution_state": "CANCELLED",
+                "effect_outcome": "NOT_COMMITTED",
+                "reconciliation_status": "NOT_REQUIRED",
+            })
+            self.assertNotIn(effect_id, trace_fact)
+            self.assertTrue(conn.execute("SELECT 1 FROM json_each(?, '$.object_refs') WHERE value='REDACTED_PURGED'", (trace_fact,)).fetchone())
+            purge_ref = conn.execute("SELECT payload_uri,integrity_hash FROM purge_execution_refs WHERE record_id='record-7' AND object_id=?", (self.claim,)).fetchone()
+            self.assertEqual((purge_ref["payload_uri"], purge_ref["integrity_hash"]), (None, None))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM run_manifest_inputs WHERE input_object_id IN (?,?) OR manifest_object_id IN (?,?)", (self.claim,"manifest-7",self.claim,"manifest-7")).fetchone()[0], 0)
+            self.assertNotIn("https://private.example/recipient/42", json.dumps([tuple(row) for row in conn.execute("SELECT target_ref,payload_integrity_hash FROM effects UNION ALL SELECT target_ref,payload_integrity_hash FROM approval_decisions")]))
+            self.assertNotIn(purged_payload_hash, json.dumps([tuple(row) for row in conn.execute("SELECT target_ref,payload_integrity_hash FROM effects UNION ALL SELECT target_ref,payload_integrity_hash FROM approval_decisions")]))
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE runs SET status='READY' WHERE run_id='run-pending'")
         restored = ObjectStore(backup_root)
@@ -318,6 +338,10 @@ class MemoryPurgeTests(unittest.TestCase):
             with restored._connection() as conn:
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
                 self.assertEqual([row[0] for row in conn.execute("SELECT action FROM purge_ledger ORDER BY ledger_seq")], ["BARRIER_INSTALLED", "BARRIER_RELEASED"])
+                raw_effect = conn.execute("SELECT effect_outcome,target_ref,payload_integrity_hash FROM effects WHERE effect_id=?", (effect_id,)).fetchone()
+                self.assertEqual(tuple(raw_effect), ("NOT_COMMITTED", "REDACTED_PURGED", "0" * 64))
+                self.assertEqual(tuple(conn.execute("SELECT target_ref,payload_integrity_hash FROM approval_decisions WHERE approval_id=?", (approval_id,)).fetchone()), ("REDACTED_PURGED", None))
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM run_manifest_inputs WHERE input_object_id IN (?,?) OR manifest_object_id IN (?,?)", (self.claim,"manifest-7",self.claim,"manifest-7")).fetchone()[0], 0)
         finally:
             restored.close()
 
@@ -339,9 +363,17 @@ class MemoryPurgeTests(unittest.TestCase):
                 (effect_id,"run-7","synthetic-tool","1","FAKE_ACTION",target,digest,self.claim,"purge-sensitive-key","grant-7",approval_id,reservation,"CANCELLED","NOT_COMMITTED","NOT_REQUIRED",None,json.dumps(effect,sort_keys=True),now,now))
             conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
         self._classify("class-purge-ref-event","TRACE_EVENT","evt-purge-ref-event")
-        trace = TraceRuntime(self.store,self.authority)
-        trace.append_trace_event(command_id="purge-ref-event",run_id="run-7",event_type="nexus.object.created",
-            classification_assertion_ref="class-purge-ref-event",typed_metadata={"object_type":"artifact"},object_refs=[self.claim],effect_refs=[effect_id])
+        # Seed a schema-valid immutable fact as if emitted by EffectService;
+        # ordinary callers cannot append this reserved Kernel event type.
+        event = {"schema_id":"nexus.trace_event","schema_version":1,"event_id":"evt-purge-ref-event",
+            "run_id":"run-7","seq_no":1,"event_type":"nexus.effect.outcome_recorded","occurred_at":now,
+            "actor_id":"agent","object_refs":[self.claim],"effect_refs":[effect_id],"policy_refs":[],"authority_refs":[],
+            "data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},
+            "classification_assertion_ref":"class-purge-ref-event",
+            "typed_metadata":{"effect_id":effect_id,"execution_state":"CANCELLED","effect_outcome":"NOT_COMMITTED","reconciliation_status":"NOT_REQUIRED"}}
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO trace_events(event_id,run_id,seq_no,event_type,occurred_at,actor_id,event_json) VALUES(?,?,?,?,?,?,?)",
+                (event["event_id"],event["run_id"],event["seq_no"],event["event_type"],event["occurred_at"],event["actor_id"],json.dumps(event,sort_keys=True)))
         now_dt = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"purge-audit-inspect",
             "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],
@@ -381,6 +413,24 @@ class MemoryPurgeTests(unittest.TestCase):
                 conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-event-class", "TRACE_EVENT", "evt-enter-recovery", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
             trace.create_run({"schema_id":"nexus.run","schema_version":1,"run_id":"recovery-mode-root","task_id":"recovery-mode-task","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"recovery-mode-grant","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"recovery-mode-run-class","created_at":now.isoformat()}, command_id="recovery-mode-root-create", event_classification_assertion_ref="recovery-mode-root-event-class")
             modes = RuntimeModeService(snapshot_store, snapshot_authority)
+            snapshot_memory = MemoryService(snapshot_store, snapshot_authority, VerificationService(snapshot_store, snapshot_authority))
+            for target_mode in ("SAFE", "STATELESS", "NORMAL"):
+                command = "enter-" + target_mode.lower()
+                assertion = "class-" + command
+                with snapshot_store._connection() as conn:
+                    conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", (assertion, "TRACE_EVENT", "evt-" + command, "PUBLIC", "[]", "1", "authorized isolated recovery mode test", "agent"))
+                result = modes.set_mode(command_id=command, grant_id="recovery-mode-grant", task_id="recovery-mode-task", mode=target_mode, classification_assertion_ref=assertion)
+                self.assertEqual(result["mode"], target_mode)
+                if target_mode == "STATELESS":
+                    with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_MODE_DENIED"):
+                        snapshot_memory.search_raw(query="governed memory", run_id="run-7")
+            snapshot_store.close()
+            snapshot_store = ObjectStore(snapshot_root, policy=self.authority.policy)
+            snapshot_authority = AuthorityService(snapshot_store, self.authority.policy)
+            modes = RuntimeModeService(snapshot_store, snapshot_authority)
+            self.assertEqual(modes.current()["mode"], "NORMAL")
+            with snapshot_store._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             modes.set_mode(command_id="enter-recovery", grant_id="recovery-mode-grant", task_id="recovery-mode-task", mode="RECOVERY", classification_assertion_ref="recovery-mode-event-class")
             self.assertEqual(modes.current()["mode"], "RECOVERY")
         finally:

@@ -177,6 +177,7 @@ class PurgeService:
 
     def _purge_payloads_and_indexes(self, refs):
         with self.store._lock, self.store._connection() as conn:
+            conn.execute("PRAGMA secure_delete=ON")
             conn.execute("BEGIN IMMEDIATE")
             try:
                 for ref in sorted(set(refs)):
@@ -186,10 +187,81 @@ class PurgeService:
                     self.memory.purge_refs(conn, [ref])
                     conn.execute("UPDATE object_states SET payload_state='PURGED',validity='INVALIDATED',lifecycle='RETIRED' WHERE object_id=?", (ref,))
                     conn.execute("DELETE FROM object_envelopes WHERE object_id=?", (ref,))
+                # This is a rebuildable manifest-input projection, not an
+                # immutable audit record. Remove rows only after the referenced
+                # input or manifest has become a Purged tombstone; Trace keeps
+                # the binding event with its governed references redacted.
+                conn.execute(
+                    "DELETE FROM run_manifest_inputs WHERE input_object_id IN "
+                    "(SELECT object_id FROM object_states WHERE payload_state='PURGED') "
+                    "OR manifest_object_id IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
+                )
+                self._redact_purged_identifiers(conn)
                 conn.commit()
+                checkpoint = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint and checkpoint[0] != 0:
+                    raise RuntimeDenied("PURGE_WAL_CHECKPOINT_BUSY")
             except Exception:
                 conn.rollback()
                 raise
+
+    @staticmethod
+    def _redact_purged_identifiers(conn):
+        """Erase payload-derived identifiers while retaining minimum audit facts."""
+        purged = {row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE payload_state='PURGED'")}
+        if not purged:
+            return
+        effects = conn.execute(
+            "SELECT e.* FROM effects e JOIN object_states s ON s.object_id=e.payload_object_ref WHERE s.payload_state='PURGED' AND e.target_ref<>'REDACTED_PURGED'"
+        ).fetchall()
+        effect_ids = {row["effect_id"] for row in effects}
+        for row in effects:
+            effect_json = json.loads(row["effect_json"])
+            effect_json.update({
+                "target_ref": "REDACTED_PURGED",
+                "payload_integrity_hash": "0" * 64,
+                "idempotency_key": "REDACTED_PURGED:" + row["effect_id"],
+            })
+            conn.execute(
+                "UPDATE effects SET target_ref='REDACTED_PURGED',payload_integrity_hash=?,idempotency_key=?,external_receipt_ref=NULL,effect_json=? WHERE effect_id=?",
+                ("0" * 64, "REDACTED_PURGED:" + row["effect_id"], _canon(effect_json), row["effect_id"]),
+            )
+        for row in conn.execute("SELECT * FROM approval_decisions WHERE effect_id IN (SELECT effect_id FROM effects WHERE target_ref='REDACTED_PURGED') AND target_ref<>'REDACTED_PURGED'").fetchall():
+            conn.execute(
+                "UPDATE approval_decisions SET target_ref='REDACTED_PURGED',payload_integrity_hash=NULL,approved_scope_json='[]',reason=NULL,request_ref=NULL WHERE approval_id=?",
+                (row["approval_id"],),
+            )
+        refs = sorted(purged)
+        marks = ",".join("?" for _ in refs)
+        conn.execute(f"UPDATE purge_execution_refs SET payload_uri=NULL,integrity_hash=NULL WHERE object_id IN ({marks}) AND payload_uri IS NOT NULL", refs)
+        for row in conn.execute("SELECT event_id,event_json FROM trace_events").fetchall():
+            event = json.loads(row["event_json"])
+            objects = list(event.get("object_refs", []))
+            effects_in_trace = list(event.get("effect_refs", []))
+            protected_objects = [item for item in objects if item in purged]
+            protected_effects = [item for item in effects_in_trace if item in effect_ids]
+            if not protected_objects and not protected_effects:
+                continue
+            event["object_refs"] = [item for item in objects if item not in purged]
+            event["effect_refs"] = [item for item in effects_in_trace if item not in effect_ids]
+            if protected_objects:
+                event["object_refs"] = sorted(set(event["object_refs"] + ["REDACTED_PURGED"]))
+            if protected_effects:
+                event["effect_refs"] = sorted(set(event["effect_refs"] + ["REDACTED_PURGED"]))
+            # Keep only the three non-identifying Effect state axes. Their enum
+            # values preserve the historical state fact; all IDs, targets,
+            # hashes, paths, receipts and free-form metadata are erased.
+            state_values = {
+                "execution_state": {"DECLARED", "PREPARED", "AUTHORIZED", "COMMITTING", "FINISHED", "CANCELLED"},
+                "effect_outcome": {"UNDETERMINED", "COMMITTED", "NOT_COMMITTED", "UNKNOWN"},
+                "reconciliation_status": {"NOT_REQUIRED", "PENDING", "RETRYING", "EXHAUSTED", "HUMAN_REQUIRED", "BLOCK_AND_ALERT", "RESOLVED"},
+            }
+            metadata = event.get("typed_metadata", {})
+            event["typed_metadata"] = {
+                key: value for key, value in metadata.items()
+                if key in state_values and isinstance(value, str) and value in state_values[key]
+            }
+            conn.execute("UPDATE trace_events SET event_json=? WHERE event_id=?", (_canon(event), row["event_id"]))
 
     def _release(self, command_id, record_id, barrier_id, plan, refs, request_hash):
         with self.store._lock, self.store._connection() as conn:

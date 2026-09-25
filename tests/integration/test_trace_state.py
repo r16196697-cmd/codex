@@ -73,15 +73,25 @@ class TraceStateTests(unittest.TestCase):
 
     def test_transition_retry_returns_recorded_result_before_stale_state_check(self):
         self.assertEqual(self._create_run()["seq_no"], 1)
+        before = self._event_count()
+        self.runtime.create_run(self.run, command_id="cmd-create-run", event_classification_assertion_ref=self.run_event_class_ref)
+        self.assertEqual(self._event_count(), before)
         self._prepare_manifest()
         ready_class = self._event_classification("cmd-ready")
         result = self.runtime.transition_run(command_id="cmd-ready", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_class)
         self.assertEqual(result["seq_no"], 2)
+        before_retry = self._event_count()
         self.store.close()
         self.store = ObjectStore(Path(self.temp.name) / "data")
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.runtime = TraceRuntime(self.store, self.authority)
+        with self.store._connection() as conn:
+            created_at = conn.execute("SELECT created_at FROM tasks WHERE task_id='task-1'").fetchone()[0]
+        self.runtime.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-1", "requester_id": "human-root", "status": "CREATED", "created_at": created_at, "command_id": "cmd-task"})
+        self.assertEqual(self._event_count(), before_retry)
+        self.runtime.create_run(self.run, command_id="cmd-create-run", event_classification_assertion_ref=self.run_event_class_ref)
+        self.assertEqual(self._event_count(), before_retry)
         self.assertEqual(self.runtime.transition_run(command_id="cmd-ready", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_class), result)
         stale_class = self._event_classification("cmd-stale")
         with self.assertRaises(InvalidRunTransition):
