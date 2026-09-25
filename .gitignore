@@ -1,13 +1,52 @@
-# Local runtime and test artifacts
+# Secrets and local-only credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+credentials/
+secrets/
+*.secret
+*.secrets
+*.local
+
+# Python environments and generated files
 .venv/
+venv/
 __pycache__/
 *.py[cod]
-*.bak-*
 .pytest_cache/
-coverage.xml
+.mypy_cache/
+.ruff_cache/
 .coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
-# Nexus payload, database, recovery and purge data must never enter Git
+# Local databases, runtime payloads, and recovery data
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.sqlite-*
+*.wal
+*.shm
 nexus/data/
-nexus/purge-ledger/
 nexus/backups/
+nexus/purge-ledger/
+nexus/objects/
+nexus/artifacts/
+object-store/
+artifacts/
+
+# Local logs, temporary output, and editor/OS files
+*.log
+logs/
+test-results/
+tmp/
+*.bak-*
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/

@@ -218,7 +218,7 @@ Open blockers:
 Known UNKNOWN Effects: None in the persistent pilot.
 Pending Purge: None; no persistent pilot object has been Purged.
 Pending migration: none; persistent pilot schema migration version is 11.
-Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Rollback point: Step 7 checkpoint `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; verified external Step 0 snapshot (local path omitted for privacy).
 Last verified state: full suite **82 passed, 1 optional search-receipt test skipped** in 40.975s; `compileall`, `pip check`, `git diff --check`, and tracked-change secret scan passed. Persistent root is schema 11, SQLite integrity `ok`, mode `NORMAL`, with 16/16 object payload hashes verified and no new persistent test Task/Run. T1–T12 Hosted-required conditions are PASS per the regression report. Live Codex multi-tier switching is unavailable and not claimed. Current T10 Runtime implementation checkpoint is `e42b0340a2828cdd868414887d3bc2b8c9770fe8`.
 Next allowed action: final independent review and commit of this acceptance closeout; retain `Standalone Nexus: NOT IMPLEMENTED / DEFERRED`.
 
@@ -314,7 +314,7 @@ FAIL handling:
 Failures were fixed within Step 3; preserve the five frozen contracts and do not proceed to Step 4 until this checkpoint is committed.
 
 Rollback point:
-Step 2 checkpoint `b09251f1318cc23b66643887506dbccc524bafb8`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Step 2 checkpoint `b09251f1318cc23b66643887506dbccc524bafb8`; verified external Step 0 snapshot (local path omitted for privacy).
 
 Do NOT:
 - Add a sixth Foundation Contract or broaden any grant.
@@ -381,7 +381,7 @@ FAIL handling:
 Initial failures were fixed within Step 4; keep event admission independent of OTel export and do not advance until its checkpoint is committed.
 
 Rollback point:
-Step 3 checkpoint `59f077179c5f895c8dc3e28b5ac292ce3eeb775b`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Step 3 checkpoint `59f077179c5f895c8dc3e28b5ac292ce3eeb775b`; verified external Step 0 snapshot (local path omitted for privacy).
 
 Do NOT:
 - Put full prompts, outputs, documents, tools results, secrets, or arbitrary previews in Trace.
@@ -515,7 +515,7 @@ FAIL handling:
 Fix only Step 6 and its migration/tests; do not enter Step 7 until T3/T7 behavior and recovery tests pass and this checkpoint is committed.
 
 Rollback point:
-Step 5 checkpoint `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+Step 5 checkpoint `ac208477d70d623ebb7deb44b0dd55dc2aadfdc2`; verified external Step 0 snapshot (local path omitted for privacy).
 
 Do NOT:
 - Treat timeout as failure or automatically retry a commit.
@@ -639,7 +639,7 @@ FAIL handling:
 If host identity or schema fields cannot be truthfully established, record only verifiable host facts and defer the exact unsupported subcase; do not modify frozen semantics or invent IDs. Independent provider work stays deferred.
 
 Rollback point:
-Step 7 commit `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`. Status-file pre-edit backup: `docs/operator/IMPLEMENTATION_STATUS.md.bak-20260925-002245` (SHA-256 matched original before editing).
+Step 7 commit `09550fb7cb6db1bb3d9b2defccdbf09567f9e425`; verified external Step 0 snapshot (local path omitted for privacy). The status-file pre-edit backup was hash-verified before the original edit; its machine-local path is omitted.
 
 Do NOT:
 - Guess a Provider from Codex host configuration or inspect secret values to find one.
@@ -655,7 +655,7 @@ Known limitations:
 - SQLite 3.38 lacks `contentless_delete`; purge therefore clears and safely rebuilds contentless indexes from available, verified objects while the barrier is active.
 
 Rollback point:
-- Step 6 commit `0fbc795943c166894d31ca8beca9456f05028729`; Step 0 snapshot `<LOCAL_PATH_REDACTED>`.
+- Step 6 commit `0fbc795943c166894d31ca8beca9456f05028729`; verified external Step 0 snapshot (local path omitted for privacy).
 
 Next:
 STEP 9 — only after the documented Runtime mode and controlled inspect API prerequisites are resolved.
