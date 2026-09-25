@@ -115,6 +115,33 @@ class DeterministicRuntimeTests(unittest.TestCase):
         classification = self._event_class(command_id, actor_id)
         return self.trace.transition_run(command_id=command_id, run_id=run_id, expected_state=expected, next_state=target, classification_assertion_ref=classification)
 
+    def test_kernel_recovery_identity_is_denied_by_normal_authority_apis(self):
+        now = datetime.now(timezone.utc)
+        base = {"schema_id": "nexus.delegation_grant", "schema_version": 1,
+            "grant_id": "grant-reserved-recovery", "parent_grant_id": "grant-root",
+            "issued_by": "agent", "granted_to": "nexus-core-recovery", "task_scope": ["task-1"],
+            "resource_scope": ["run-root"], "action_scope": ["RUN_CREATE"], "audience_scope": ["nexus-runtime"],
+            "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(),
+            "status": "ACTIVE", "policy_version": "1"}
+        with self.assertRaisesRegex(InvalidDelegation, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
+            self.authority.create_grant(base, "cmd-grant-to-recovery")
+        with self.assertRaisesRegex(InvalidDelegation, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
+            self.authority.create_grant({**base, "grant_id": "grant-issued-by-recovery", "issued_by": "nexus-core-recovery", "granted_to": "model-agent"}, "cmd-grant-from-recovery")
+        policy = dict(self.authority.policy)
+        policy["trust_anchors"] = [*policy["trust_anchors"], "nexus-core-recovery"]
+        configured_authority = AuthorityService(self.store, policy)
+        with self.assertRaisesRegex(InvalidDelegation, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
+            configured_authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1,
+                "anchor_id": "anchor-recovery", "principal_id": "nexus-core-recovery", "policy_ref": "1"}, "cmd-anchor-recovery")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
+            self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": "task-recovery-requester",
+                "requester_id": "nexus-core-recovery", "status": "CREATED", "created_at": self._now(),
+                "command_id": "cmd-task-recovery-requester"})
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE issued_by='nexus-core-recovery' OR granted_to='nexus-core-recovery'").fetchone()[0], 0)
+            self.assertIsNone(conn.execute("SELECT 1 FROM trust_anchors WHERE principal_id='nexus-core-recovery'").fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM tasks WHERE requester_id='nexus-core-recovery'").fetchone())
+
     def test_cycle_is_rejected_and_dag_route_budget_and_child_manifests_pass(self):
         nodes = self._nodes()
         nodes[0]["dependency_ids"] = ["node-e1"]
@@ -825,6 +852,121 @@ class DeterministicRuntimeTests(unittest.TestCase):
             reservations = conn.execute("SELECT COUNT(DISTINCT run_id) FROM budget_reservations WHERE run_id IN ('run-e1','run-e2')").fetchone()[0]
             attempt_count = conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE subtask_id='node-e1'").fetchone()[0]
         self.assertEqual((reservations, attempt_count), (2, 2))
+
+    def test_attempt_two_setup_compensation_survives_revocation_and_reopen(self):
+        """A retry attempt is owned by subtask_attempts, not the legacy first-run pointer."""
+        self.runtime.create_dag(command_id="cmd-attempt2-recovery-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e1", "E1", 1)
+        self._model_profile("model-e2", "E2", 2)
+        first = self._schedule("node-e1", "run-e1", "model-agent", "grant-attempt2-first", "route-attempt2-first",
+            command_id="cmd-attempt2-first", requested_capability="E1")
+        self._advance("run-e1", "cmd-attempt2-first-running", "READY", "RUNNING", "model-agent")
+        self._advance("run-e1", "cmd-attempt2-first-failed", "RUNNING", "FAILED", "model-agent")
+
+        command_id = "cmd-attempt2-recovery"
+        args = {
+            "command_id": command_id, "task_id": "task-1", "root_run_id": "run-root", "subtask_id": "node-e1",
+            "child_run_id": "run-e2", "child_grant_id": "grant-attempt2-retry",
+            "child_classification_assertion_ref": "class-run-e2",
+            "event_classification_assertion_ref": "class-evt-" + command_id + "-create-run",
+            "ready_event_classification_assertion_ref": "class-evt-" + command_id + "-ready",
+            "cancelled_event_classification_assertion_ref": "class-evt-" + command_id + "-setup-cancel",
+            "route_object_id": "route-e2", "route_classification_assertion_ref": "class-route-e2",
+            "manifest_object_id": "manifest-run-e2", "manifest_classification_assertion_ref": "class-manifest-run-e2",
+            "requested_capability": "E2", "attempt_reason": "VERIFIER_REQUIRED_ESCALATION",
+            "predecessor_attempt_id": first["attempt_id"],
+        }
+        self._child_grant("run-e2", "model-agent", "grant-attempt2-retry")
+        for assertion, subject_type, subject_ref, actor in (
+            ("class-run-e2", "RUN", "run-e2", "model-agent"),
+            (args["event_classification_assertion_ref"], "TRACE_EVENT", "evt-" + command_id + "-create-run", "model-agent"),
+            (args["ready_event_classification_assertion_ref"], "TRACE_EVENT", "evt-" + command_id + "-ready", "model-agent"),
+            (args["cancelled_event_classification_assertion_ref"], "TRACE_EVENT", "evt-" + command_id + "-setup-cancel", "model-agent"),
+            ("class-route-e2", "OBJECT", "route-e2", "agent"),
+            ("class-manifest-run-e2", "OBJECT", "manifest-run-e2", "model-agent"),
+        ):
+            self._classify(assertion, subject_type, subject_ref, actor)
+
+        original_insert_event = self.trace._insert_event
+        original_transition = self.trace.transition_run
+        def interrupt_recovery_trace(conn, event):
+            if event["actor_id"] == "nexus-core-recovery":
+                raise RuntimeError("injected attempt-2 recovery interruption")
+            return original_insert_event(conn, event)
+
+        def reject_attempt2_ready(**kwargs):
+            if kwargs["command_id"] == command_id + "-ready":
+                raise InvalidRunTransition("INJECTED_ATTEMPT2_READY_REJECTION")
+            return original_transition(**kwargs)
+
+        with patch.object(self.trace, "transition_run", side_effect=reject_attempt2_ready), \
+             patch.object(self.trace, "_insert_event", side_effect=interrupt_recovery_trace):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self.runtime.schedule_node(**args)
+        with self.store._connection() as conn:
+            intent = conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (command_id + "-setup-intent",)).fetchone()
+            self.assertIsNotNone(intent)
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e2'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id='run-e2'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT scheduled_run_id,status FROM subtasks WHERE subtask_id='node-e1'").fetchone()[0:2], ("run-e1", "WAITING"))
+            reservation_id = json.loads(intent["result_json"])["reservation_id"]
+        self.authority.revoke_grant("grant-attempt2-retry", command_id + "-revoke")
+
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        schedule_request = {key: args[key] for key in (
+            "task_id", "root_run_id", "subtask_id", "child_run_id", "child_grant_id", "child_classification_assertion_ref",
+            "event_classification_assertion_ref", "ready_event_classification_assertion_ref", "route_object_id",
+            "route_classification_assertion_ref", "manifest_object_id", "manifest_classification_assertion_ref",
+            "requested_capability", "attempt_reason", "predecessor_attempt_id")}
+        schedule_request["cancelled_event_classification_assertion_ref"] = args["cancelled_event_classification_assertion_ref"]
+        recovery_request = {"schedule_command_id": command_id, "schedule_request_hash": self.store._request_hash("schedule_subtask", schedule_request),
+            "task_id": "task-1", "root_run_id": "run-root", "subtask_id": "node-e1", "run_id": "run-e2", "reservation_id": reservation_id}
+        # Attack the persisted attempt projection in this disposable database;
+        # recovery must reject both a mismatched command and a non-latest attempt.
+        with self.store._connection() as conn:
+            conn.execute("DROP TRIGGER subtask_attempts_identity_immutable")
+            conn.execute("UPDATE subtask_attempts SET command_id='tampered-attempt-command' WHERE run_id='run-e2'")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_ATTEMPT_PROJECTION_MISMATCH"):
+            self.trace._cancel_created_run_for_recovery(**recovery_request)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE subtask_attempts SET command_id=? WHERE run_id='run-e2'", (command_id,))
+            conn.execute("UPDATE subtask_attempts SET attempt_no=3 WHERE run_id='run-e1'")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_ATTEMPT_PROJECTION_MISMATCH"):
+            self.trace._cancel_created_run_for_recovery(**recovery_request)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE subtask_attempts SET attempt_no=1 WHERE run_id='run-e1'")
+            conn.execute("""CREATE TRIGGER subtask_attempts_identity_immutable
+                BEFORE UPDATE ON subtask_attempts
+                WHEN NEW.attempt_id <> OLD.attempt_id OR NEW.task_id <> OLD.task_id OR NEW.subtask_id <> OLD.subtask_id
+                  OR NEW.attempt_no <> OLD.attempt_no OR NEW.run_id <> OLD.run_id
+                  OR NEW.route_decision_ref IS NOT OLD.route_decision_ref OR NEW.requested_capability <> OLD.requested_capability
+                  OR NEW.attempt_reason <> OLD.attempt_reason OR NEW.predecessor_attempt_id IS NOT OLD.predecessor_attempt_id
+                  OR NEW.command_id <> OLD.command_id OR NEW.created_at <> OLD.created_at
+                  OR NOT (OLD.outcome=NEW.outcome OR (OLD.outcome='CREATED' AND NEW.outcome IN ('READY','RUNNING','FAILED','CANCELLED','POLICY_DENIED','BUDGET_DENIED'))
+                       OR (OLD.outcome='READY' AND NEW.outcome IN ('RUNNING','FAILED','CANCELLED','POLICY_DENIED','BUDGET_DENIED'))
+                       OR (OLD.outcome='RUNNING' AND NEW.outcome IN ('SUCCEEDED','FAILED','CANCELLED','INCONCLUSIVE')))
+                BEGIN SELECT RAISE(ABORT, 'INVALID_SUBTASK_ATTEMPT_TRANSITION'); END""")
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self.runtime.schedule_node(**args)
+        self.assertEqual(self.trace.replay_run("run-e2")["status"], "CANCELLED")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id='run-e2'").fetchone()[0], "CANCELLED")
+            node = conn.execute("SELECT status,final_outcome FROM subtasks WHERE subtask_id='node-e1'").fetchone()
+            self.assertEqual(tuple(node), ("CANCELLED", "CANCELLED"))
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (reservation_id,)).fetchone()[0], "RELEASED")
+            self.assertEqual(json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()[0])["status"], "SETUP_FAILED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='run-e2' AND actor_id='nexus-core-recovery'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_ledger WHERE reservation_id=? AND action='RELEASED'", (reservation_id,)).fetchone()[0], 1)
+        self.assertEqual(self.trace.replay_run("run-e2")["status"], "CANCELLED")
 
     def test_escalation_failure_finalizes_once_as_inconclusive(self):
         nodes = self._nodes()

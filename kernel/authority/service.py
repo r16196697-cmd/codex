@@ -9,6 +9,8 @@ from jsonschema import Draft202012Validator
 from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, InvalidDelegation
 from adapters.storage import ObjectStore
 
+KERNEL_RECOVERY_PRINCIPAL_ID = "nexus-core-recovery"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -63,6 +65,8 @@ class AuthorityService:
     def register_trust_anchor(self, anchor: dict[str, Any], command_id: str) -> None:
         self.store._require_mode("core_write")
         self.store._validate("nexus.trust_anchor@1.schema.json", anchor)
+        if anchor["principal_id"] == KERNEL_RECOVERY_PRINCIPAL_ID:
+            raise InvalidDelegation("KERNEL_RECOVERY_IDENTITY_RESERVED")
         if anchor["principal_id"] not in self.policy["trust_anchors"]:
             raise InvalidDelegation("TRUST_ANCHOR_NOT_CONFIGURED_BY_POLICY")
         if anchor["policy_ref"] != self.policy["policy_version"]:
@@ -91,6 +95,8 @@ class AuthorityService:
         self.store._require_mode("core_write")
         self.store._validate("nexus.delegation_grant@1.schema.json", grant)
         self._validate_grant_shape(grant)
+        if KERNEL_RECOVERY_PRINCIPAL_ID in {grant["issued_by"], grant["granted_to"]}:
+            raise InvalidDelegation("KERNEL_RECOVERY_IDENTITY_RESERVED")
         operation = "create_grant"
         request_hash = self.store._request_hash(operation, grant)
         with self.store._lock, self.store._connection() as conn:
@@ -215,6 +221,8 @@ class AuthorityService:
                 if not row:
                     raise InvalidDelegation("GRANT_NOT_FOUND")
                 grant = dict(row)
+                if KERNEL_RECOVERY_PRINCIPAL_ID in {grant["issued_by"], grant["granted_to"]}:
+                    raise InvalidDelegation("KERNEL_RECOVERY_IDENTITY_RESERVED")
                 if grant["status"] != "ACTIVE":
                     raise InvalidDelegation("GRANT_NOT_ACTIVE")
                 if grant["policy_version"] != self.policy["policy_version"]:

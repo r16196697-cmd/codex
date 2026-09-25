@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from adapters.storage import ObjectStore
-from kernel.authority import AuthorityService
+from kernel.authority import AuthorityService, KERNEL_RECOVERY_PRINCIPAL_ID
 from kernel.object.errors import SchemaUnsupported
 from kernel.run.errors import InvalidRunTransition, TraceAdmissionDenied
 from kernel.runtime.modes import RuntimeModeService
@@ -67,6 +67,8 @@ class TraceRuntime:
     def create_task(self, task: dict[str, Any]) -> None:
         self.modes.require("core_write")
         self.store._validate("nexus.task@1.schema.json", task)
+        if task["requester_id"] == KERNEL_RECOVERY_PRINCIPAL_ID:
+            raise TraceAdmissionDenied("KERNEL_RECOVERY_IDENTITY_RESERVED")
         if task["status"] != "CREATED" or "root_run_id" in task:
             raise TraceAdmissionDenied("TASK_MUST_START_CREATED_WITHOUT_ROOT")
         command_id = task["command_id"]
@@ -462,7 +464,7 @@ class TraceRuntime:
         request = {"schedule_command_id": schedule_command_id, "schedule_request_hash": schedule_request_hash, "task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "run_id": run_id, "reservation_id": reservation_id, "intent_command_id": intent_command_id}
         request_hash = self.store._request_hash(operation, request)
         command_id = schedule_command_id + "-setup-core-cancel"
-        actor_id = "nexus-core-recovery"
+        actor_id = KERNEL_RECOVERY_PRINCIPAL_ID
 
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -503,7 +505,8 @@ class TraceRuntime:
                         class_row = conn.execute("SELECT subject_type,subject_ref,actor_id,policy_version,reason,sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?", (classification_id,)).fetchone()
                         event = json.loads(event_row["event_json"]) if event_row else None
                         run_class_row = conn.execute("SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?", (run["classification_assertion_ref"],)).fetchone()
-                        attempt_row = conn.execute("SELECT attempt_id,outcome FROM subtask_attempts WHERE task_id=? AND subtask_id=? AND run_id=?", (task_id, subtask_id, run_id)).fetchone()
+                        attempt_row = conn.execute("SELECT attempt_id,attempt_no,command_id,outcome FROM subtask_attempts WHERE task_id=? AND subtask_id=? AND run_id=?", (task_id, subtask_id, run_id)).fetchone()
+                        latest_attempt = conn.execute("SELECT attempt_id FROM subtask_attempts WHERE task_id=? AND subtask_id=? ORDER BY attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
                         metadata = event.get("typed_metadata", {}) if event else {}
                         if event:
                             self.store._validate("nexus.trace_event@1.schema.json", event)
@@ -519,7 +522,8 @@ class TraceRuntime:
                                 or class_row["policy_version"] != self.authority.policy["policy_version"] or class_row["reason"] != "kernel recovery cleanup"
                                 or not run_class_row or class_row["sensitivity_level"] != run_class_row["sensitivity_level"]
                                 or set(json.loads(class_row["handling_tags_json"])) != set(json.loads(run_class_row["handling_tags_json"]))
-                                or (attempt_row is not None and (attempt_row["outcome"] != "CANCELLED" or subtask["status"] != "CANCELLED"
+                                or (attempt_row is not None and (attempt_row["outcome"] != "CANCELLED" or attempt_row["command_id"] != schedule_command_id
+                                    or not latest_attempt or latest_attempt["attempt_id"] != attempt_row["attempt_id"] or subtask["status"] != "CANCELLED"
                                     or subtask["final_attempt_id"] != attempt_row["attempt_id"] or subtask["final_outcome"] != "CANCELLED"))):
                             raise TraceAdmissionDenied("RECOVERY_COMMAND_PROJECTION_MISMATCH")
                         if self.replay_run(run_id)["status"] != "CANCELLED":
@@ -533,11 +537,14 @@ class TraceRuntime:
                     conn.commit()
                     return result
 
-                attempt = conn.execute("SELECT attempt_id,outcome FROM subtask_attempts WHERE task_id=? AND subtask_id=? AND run_id=?", (task_id, subtask_id, run_id)).fetchone()
+                attempt = conn.execute("SELECT attempt_id,attempt_no,command_id,outcome FROM subtask_attempts WHERE task_id=? AND subtask_id=? AND run_id=?", (task_id, subtask_id, run_id)).fetchone()
                 if attempt:
-                    if (attempt["outcome"] != "CREATED" or subtask["scheduled_run_id"] != run_id
+                    latest_attempt = conn.execute("SELECT attempt_id FROM subtask_attempts WHERE task_id=? AND subtask_id=? ORDER BY attempt_no DESC LIMIT 1", (task_id, subtask_id)).fetchone()
+                    setup_subtask_status = "PENDING" if attempt["attempt_no"] == 1 else "WAITING"
+                    if (attempt["outcome"] != "CREATED" or attempt["command_id"] != schedule_command_id
+                            or not latest_attempt or latest_attempt["attempt_id"] != attempt["attempt_id"]
                             or subtask["final_attempt_id"] is not None or subtask["final_outcome"] is not None
-                            or subtask["status"] not in {"PENDING", "WAITING"}):
+                            or subtask["status"] != setup_subtask_status):
                         raise TraceAdmissionDenied("RECOVERY_ATTEMPT_PROJECTION_MISMATCH")
                 elif subtask["scheduled_run_id"] == run_id:
                     raise TraceAdmissionDenied("RECOVERY_ATTEMPT_PROJECTION_MISMATCH")
