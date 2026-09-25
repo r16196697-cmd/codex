@@ -120,6 +120,7 @@ class TraceRuntime:
                     if not parent or parent["task_id"] != run["task_id"]:
                         raise TraceAdmissionDenied("PARENT_RUN_INVALID")
                     self._assert_child_boundary(run, parent)
+                    self._validate_child_budget_reservation(conn, run)
                 else:
                     if task["status"] != "CREATED" or task["root_run_id"] is not None:
                         raise TraceAdmissionDenied("TASK_ALREADY_HAS_ROOT_RUN")
@@ -153,6 +154,30 @@ class TraceRuntime:
             except Exception:
                 conn.rollback()
                 raise
+
+    @staticmethod
+    def _validate_child_budget_reservation(conn, run: dict[str, Any]) -> None:
+        reservation_id = run.get("budget_reservation_ref")
+        if not reservation_id or run["executor_kind"] not in {"MODEL", "TOOL"}:
+            raise TraceAdmissionDenied("CHILD_RUN_BUDGET_RESERVATION_REQUIRED")
+        reservation = conn.execute(
+            "SELECT br.run_id,br.state,br.model_calls,br.tool_calls,br.child_runs,ba.task_id "
+            "FROM budget_reservations br JOIN budget_accounts ba USING(account_id) "
+            "WHERE br.reservation_id=?",
+            (reservation_id,),
+        ).fetchone()
+        expected_model = 1 if run["executor_kind"] == "MODEL" else 0
+        expected_tool = 1 if run["executor_kind"] == "TOOL" else 0
+        if (
+            not reservation
+            or reservation["run_id"] != run["run_id"]
+            or reservation["task_id"] != run["task_id"]
+            or reservation["state"] != "RESERVED"
+            or reservation["child_runs"] != 1
+            or reservation["model_calls"] != expected_model
+            or reservation["tool_calls"] != expected_tool
+        ):
+            raise TraceAdmissionDenied("CHILD_RUN_BUDGET_RESERVATION_INVALID")
 
     @staticmethod
     def _assert_child_boundary(run: dict[str, Any], parent) -> None:

@@ -60,6 +60,14 @@ class InspectService:
         owners = []
         if direct_task_id is not None:
             owners.append(direct_task_id)
+        direct = conn.execute(
+            "SELECT r.task_id FROM object_envelopes e "
+            "LEFT JOIN runs r ON r.run_id=e.created_by_run WHERE e.object_id=?",
+            (object_id,),
+        ).fetchall()
+        if any(row["task_id"] is None for row in direct):
+            raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
+        owners.extend(row["task_id"] for row in direct)
         provenance = conn.execute(
             "SELECT DISTINCT pp.task_id FROM purge_execution_refs pr "
             "JOIN purge_execution_records pe USING(record_id) "
@@ -67,6 +75,8 @@ class InspectService:
             (object_id,),
         ).fetchall()
         if purged and not provenance:
+            raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
+        if not purged and not direct:
             raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
         if any(row["task_id"] is None for row in provenance):
             raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
@@ -239,11 +249,32 @@ class InspectService:
                     ref_owner = self._object_task_owner(conn, ref, state["task_id"], purged=state["payload_state"] == "PURGED")
                     if ref_owner != owner_task_id:
                         raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
-        elif owner_task_id is None:
+        else:
             with self.store._connection() as conn:
-                object_state = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (row["target_ref"],)).fetchone()
+                object_state = conn.execute(
+                    "SELECT s.payload_state,e.classification_assertion_ref,c.sensitivity_level,c.handling_tags_json "
+                    "FROM object_states s LEFT JOIN object_envelopes e USING(object_id) "
+                    "LEFT JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
+                    "WHERE s.object_id=?",
+                    (row["target_ref"],),
+                ).fetchone()
                 if object_state:
-                    owner_task_id = self._object_task_owner(conn, row["target_ref"], None, purged=object_state["payload_state"] == "PURGED")
+                    object_owner = self._object_task_owner(
+                        conn, row["target_ref"], None, purged=object_state["payload_state"] == "PURGED"
+                    )
+                    if owner_task_id is not None and owner_task_id != object_owner:
+                        raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
+                    owner_task_id = object_owner
+                    if object_state["payload_state"] != "PURGED":
+                        if not object_state["sensitivity_level"] or not object_state["handling_tags_json"]:
+                            raise RuntimeDenied("INSPECT_CLASSIFICATION_UNAVAILABLE")
+                        object_class = {
+                            "sensitivity_level": object_state["sensitivity_level"],
+                            "handling_tags_json": object_state["handling_tags_json"],
+                            "data_boundary_json": self._task_context(task_id)["data_boundary_json"],
+                        }
+                        if not self._classification_visible(object_class):
+                            raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
             if owner_task_id is None:
                 raise RuntimeDenied("INSPECT_APPROVAL_TASK_UNRESOLVED")
         if owner_task_id != task_id:

@@ -101,7 +101,13 @@ class PurgeService:
         digest = self.store._request_hash(operation, request)
         with self.store._connection() as conn:
             prior = self.store._replay_command(conn, command_id, operation, digest)
-            prior_execution = conn.execute("SELECT status,unresolved_json,record_json FROM purge_execution_records WHERE record_id=?", (record_id,)).fetchone()
+            prior_execution = conn.execute(
+                "SELECT record_id,plan_id,barrier_id,status,unresolved_json,record_json "
+                "FROM purge_execution_records WHERE record_id=?",
+                (record_id,),
+            ).fetchone()
+            if prior_execution:
+                self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
         if prior is not None:
             return prior
         if prior_execution and prior_execution["status"] == "COMPLETED":
@@ -152,6 +158,42 @@ class PurgeService:
         except Exception:
             return self._mark_partial(command_id + "-journal", record_id, barrier_id, plan, protected, ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"], self.store._request_hash("execute_purge_partial", request))
         return self._release(command_id, record_id, barrier_id, plan, protected, digest)
+
+    @staticmethod
+    def _assert_execution_binding(conn, execution, record_id, barrier_id, plan, plan_hash, protected_refs):
+        """Fail closed before replay/resume when an execution ID is not this operation."""
+        try:
+            record = json.loads(execution["record_json"])
+            execution_refs = sorted(row[0] for row in conn.execute(
+                "SELECT object_id FROM purge_execution_refs WHERE record_id=?", (record_id,)
+            ))
+            barrier = conn.execute(
+                "SELECT plan_id,lineage_revision,status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)
+            ).fetchone()
+            barrier_refs = sorted(row[0] for row in conn.execute(
+                "SELECT object_id FROM purge_barrier_refs WHERE barrier_id=?", (barrier_id,)
+            ))
+            matches = (
+                execution["record_id"] == record_id
+                and execution["plan_id"] == plan["plan_id"]
+                and execution["barrier_id"] == barrier_id
+                and record.get("schema_id") == "nexus.purge_record"
+                and record.get("schema_version") == 1
+                and record.get("record_id") == record_id
+                and record.get("plan_id") == plan["plan_id"]
+                and record.get("barrier_id") == barrier_id
+                and record.get("plan_hash") == plan_hash
+                and record.get("status") == execution["status"]
+                and execution_refs == sorted(set(protected_refs))
+                and barrier is not None
+                and barrier["plan_id"] == plan["plan_id"]
+                and barrier["lineage_revision"] == plan["lineage_revision"]
+                and barrier_refs == sorted(set(protected_refs))
+            )
+        except (TypeError, ValueError, KeyError):
+            matches = False
+        if not matches:
+            raise RuntimeDenied("PURGE_EXECUTION_BINDING_MISMATCH")
 
     def replay_independent_journal(self) -> dict:
         if self.store._current_runtime_mode() not in {"NORMAL", "RECOVERY"}:

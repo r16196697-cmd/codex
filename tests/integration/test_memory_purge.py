@@ -80,9 +80,9 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.store._connection() as conn:
             conn.execute("UPDATE runs SET manifest_ref='manifest-pending' WHERE run_id='run-pending'")
 
-    def _classify(self, assertion_id, subject_type, subject_ref):
+    def _classify(self, assertion_id, subject_type, subject_ref, level="PUBLIC", tags=()):
         with self.store._connection() as conn:
-            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES(?,?,?,'PUBLIC','[]','1','synthetic Step 7 fixture','agent')", (assertion_id, subject_type, subject_ref))
+            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES(?,?,?,?,?,'1','synthetic Step 7 fixture','agent')", (assertion_id, subject_type, subject_ref, level, json.dumps(list(tags))))
 
     def _put(self, object_id, payload):
         class_ref = "class-" + object_id
@@ -438,6 +438,59 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeDenied, "INSPECT_OBJECT_TASK_UNRESOLVED"):
                 InspectService._object_task_owner(conn, self.claim, "task-7", purged=False)
 
+    def test_classification_lower_approval_inspection_resolves_live_and_purged_object_owner(self):
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({
+            "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"inspect-classification-7",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],
+            "resource_scope":["approval:approval-classification-lower","approval:approval-classification-secret","object:"+self.claim],"action_scope":["INSPECT"],
+            "audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1",
+        }, "inspect-classification-7")
+        self.authority.create_grant({
+            "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"inspect-classification-8",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-8"],
+            "resource_scope":["approval:approval-classification-lower","object:"+self.claim],"action_scope":["INSPECT"],
+            "audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1",
+        }, "inspect-classification-8")
+        self._classify("class-run-8-approval", "RUN", "run-8-approval")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+            conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('task-8','human-root','CREATED',?,'task-8',NULL)", (now.isoformat(),))
+            conn.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('run-8-approval','task-8',NULL,NULL,'ORCHESTRATOR','CREATED','inspect-classification-8',NULL,NULL,?,?,?)", (json.dumps({"allowed_classifications":["PUBLIC"],"handling_tags":[]}),"class-run-8-approval",now.isoformat()))
+            conn.execute("UPDATE tasks SET root_run_id='run-8-approval',status='ACTIVE' WHERE task_id='task-8'")
+        self.authority.create_approval({
+            "schema_id":"nexus.approval_decision","schema_version":1,"approval_id":"approval-classification-lower",
+            "approver_principal_id":"human-root","target_type":"CLASSIFICATION_LOWER","target_ref":self.claim,
+            "decision":"APPROVE","approved_scope":["CLASSIFICATION_LOWER",self.claim],"policy_version":"1","issued_at":now.isoformat(),
+        }, "approval-classification-lower-create")
+        inspector = InspectService(self.store, self.authority)
+        live = inspector.approval(grant_id="inspect-classification-7", task_id="task-7", approval_id="approval-classification-lower")
+        self.assertEqual(live["target_type"], "CLASSIFICATION_LOWER")
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_TASK_SCOPE_MISMATCH"):
+            inspector.approval(grant_id="inspect-classification-8", task_id="task-8", approval_id="approval-classification-lower")
+        self._classify("class-secret-approval-target", "OBJECT", "secret-approval-target", level="SECRET")
+        self.store.put_object(command_id="put-secret-approval-target", object_id="secret-approval-target", payload=b"synthetic secret classification fixture", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-secret-approval-target")
+        self.authority.create_approval({
+            "schema_id":"nexus.approval_decision","schema_version":1,"approval_id":"approval-classification-secret",
+            "approver_principal_id":"human-root","target_type":"CLASSIFICATION_LOWER","target_ref":"secret-approval-target",
+            "decision":"APPROVE","approved_scope":["CLASSIFICATION_LOWER","secret-approval-target"],"policy_version":"1","issued_at":now.isoformat(),
+        }, "approval-classification-secret-create")
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY"):
+            inspector.approval(grant_id="inspect-classification-7", task_id="task-7", approval_id="approval-classification-secret")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+            conn.execute("UPDATE runs SET status='CANCELLED' WHERE run_id='run-pending'")
+        plan = self.purge.plan(command_id="classification-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        self.purge.execute(command_id="classification-purge-execute", record_id="record-7", barrier_id="barrier-7",
+            plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        purged = inspector.approval(grant_id="inspect-classification-7", task_id="task-7", approval_id="approval-classification-lower")
+        self.assertEqual(purged["target_ref"], "REDACTED_PURGED")
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_TASK_SCOPE_MISMATCH"):
+            inspector.approval(grant_id="inspect-classification-8", task_id="task-8", approval_id="approval-classification-lower")
+
     def test_purge_execution_cannot_cross_task_boundary(self):
         now = datetime.now(timezone.utc)
         with self.store._connection() as conn:
@@ -529,6 +582,73 @@ class MemoryPurgeTests(unittest.TestCase):
                 conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0],
                 0,
             )
+
+    def test_completed_purge_record_cannot_be_reused_for_another_plan(self):
+        plan_a = self.purge.plan(command_id="purge-plan-a", plan_id="plan-a", task_id="task-7", target_refs=[self.claim])
+        plan_b = self.purge.plan(command_id="purge-plan-b", plan_id="plan-b", task_id="task-7", target_refs=[self.evidence])
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({
+            "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-plan-b",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],
+            "resource_scope":["plan-a","plan-b","record-x"],"action_scope":["PURGE_EXECUTE"],
+            "audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1",
+        }, "grant-plan-b")
+        for plan, approval_id in ((plan_a, "approval-plan-a"), (plan_b, "approval-plan-b")):
+            self.authority.create_approval({
+                "schema_id":"nexus.approval_decision","schema_version":1,"approval_id":approval_id,
+                "approver_principal_id":"human-root","target_type":"PURGE_EXECUTE","target_ref":plan["plan_id"],
+                "effect_id":"record-x","payload_integrity_hash":plan["plan_hash"],"decision":"APPROVE",
+                "approved_scope":["PURGE_EXECUTE",plan["plan_id"]],"policy_version":"1","issued_at":now.isoformat(),
+            }, approval_id)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        first = self.purge.execute(command_id="execute-plan-a", record_id="record-x", barrier_id="barrier-a",
+            plan=plan_a, grant_id="grant-plan-b", task_id="task-7", approval_id="approval-plan-a")
+        self.assertEqual(first["status"], "COMPLETED")
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_EXECUTION_BINDING_MISMATCH"):
+            self.purge.execute(command_id="execute-plan-a-wrong-barrier", record_id="record-x", barrier_id="barrier-other",
+                plan=plan_a, grant_id="grant-plan-b", task_id="task-7", approval_id="approval-plan-a")
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_EXECUTION_BINDING_MISMATCH"):
+            self.purge.execute(command_id="execute-plan-b", record_id="record-x", barrier_id="barrier-b",
+                plan=plan_b, grant_id="grant-plan-b", task_id="task-7", approval_id="approval-plan-b")
+        self.assertEqual(self.store.get_payload(self.evidence), b"Independent synthetic evidence for governed memory.")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers WHERE barrier_id='barrier-b'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT plan_id FROM purge_execution_records WHERE record_id='record-x'").fetchone()[0], "plan-a")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records WHERE plan_id='plan-b'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='execute-plan-b'").fetchone()[0], 0)
+
+    def test_partial_purge_record_cannot_be_reused_for_another_plan(self):
+        plan_a = self.purge.plan(command_id="partial-plan-a", plan_id="partial-plan-a", task_id="task-7", target_refs=[self.claim])
+        plan_b = self.purge.plan(command_id="partial-plan-b", plan_id="partial-plan-b", task_id="task-7", target_refs=[self.evidence])
+        self._seed_unknown_effect()
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({
+            "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"partial-plan-grant",
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],
+            "resource_scope":["partial-plan-a","partial-plan-b","partial-record"],"action_scope":["PURGE_EXECUTE"],
+            "audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),
+            "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1",
+        }, "partial-plan-grant")
+        for plan, approval_id in ((plan_a, "partial-approval-a"), (plan_b, "partial-approval-b")):
+            self.authority.create_approval({
+                "schema_id":"nexus.approval_decision","schema_version":1,"approval_id":approval_id,
+                "approver_principal_id":"human-root","target_type":"PURGE_EXECUTE","target_ref":plan["plan_id"],
+                "effect_id":"partial-record","payload_integrity_hash":plan["plan_hash"],"decision":"APPROVE",
+                "approved_scope":["PURGE_EXECUTE",plan["plan_id"]],"policy_version":"1","issued_at":now.isoformat(),
+            }, approval_id)
+        partial = self.purge.execute(command_id="partial-execute-a", record_id="partial-record", barrier_id="partial-barrier-a",
+            plan=plan_a, grant_id="partial-plan-grant", task_id="task-7", approval_id="partial-approval-a", quiesce_run=lambda _: True)
+        self.assertEqual(partial["status"], "PARTIAL")
+        with self.assertRaisesRegex(RuntimeDenied, "PURGE_EXECUTION_BINDING_MISMATCH"):
+            self.purge.execute(command_id="partial-execute-b", record_id="partial-record", barrier_id="partial-barrier-b",
+                plan=plan_b, grant_id="partial-plan-grant", task_id="task-7", approval_id="partial-approval-b")
+        self.assertEqual(self.store.get_payload(self.evidence), b"Independent synthetic evidence for governed memory.")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='partial-record'").fetchone()[0], "PARTIAL")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers WHERE barrier_id='partial-barrier-b'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records WHERE plan_id='partial-plan-b'").fetchone()[0], 0)
 
     def test_purge_backup_restore_replays_external_ledger_without_resurrection(self):
         self.memory.retain_raw(command_id="retain-for-purge", object_id=self.claim, run_id="run-7")

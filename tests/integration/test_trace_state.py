@@ -192,6 +192,64 @@ class TraceStateTests(unittest.TestCase):
         self.deterministic = DeterministicRuntime(self.store, self.authority, self.budget, self.runtime)
         self.assertEqual(self.runtime.replay_run("run-1")["status"], "READY")
 
+    def test_child_run_validates_task_bound_budget_before_persisting_run(self):
+        self._create_run()
+        self.runtime.create_task({"schema_id":"nexus.task","schema_version":1,"task_id":"task-b","requester_id":"human-root","status":"CREATED","created_at":self._now(),"command_id":"task-b-create"})
+        self.budget.create_account(command_id="budget-b-create", account_id="budget-b", task_id="task-b", amount_limit=100, unit="credits", model_call_limit=10, tool_call_limit=10, child_run_limit=10)
+        now = datetime.now(timezone.utc)
+        grant = {"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-b","issued_by":"human-root","granted_to":"agent","task_scope":["task-b"],"resource_scope":["parent-b","child-cross-task","child-run-mismatch","child-released","child-consumed","child-invalid-dimension","child-valid","child-tool-valid"],"action_scope":["RUN_CREATE","TRACE_APPEND"],"audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now.replace(year=now.year+1)).isoformat(),"status":"ACTIVE","policy_version":"1"}
+        self.authority.create_grant(grant, "grant-task-b-create")
+        self._classify("class-parent-b", "RUN", "parent-b")
+        self._classify("class-parent-b-event", "TRACE_EVENT", "evt-parent-b-create")
+        parent = {"schema_id":"nexus.run","schema_version":1,"run_id":"parent-b","task_id":"task-b","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"grant-task-b","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-parent-b","created_at":self._now()}
+        self.runtime.create_run(parent, command_id="parent-b-create", event_classification_assertion_ref="class-parent-b-event")
+
+        wrong_task = self.budget.reserve(command_id="reserve-child-cross-task", account_id="budget-task-1", task_id="task-1", run_id="child-cross-task", amount=1, model_calls=1, child_runs=1)
+        wrong_run = self.budget.reserve(command_id="reserve-child-wrong-run", account_id="budget-b", task_id="task-b", run_id="different-run", amount=1, model_calls=1, child_runs=1)
+        released = self.budget.reserve(command_id="reserve-child-released", account_id="budget-b", task_id="task-b", run_id="child-released", amount=1, model_calls=1, child_runs=1)
+        self.budget.release(command_id="release-child-reservation", reservation_id=released)
+        consumed = self.budget.reserve(command_id="reserve-child-consumed", account_id="budget-b", task_id="task-b", run_id="child-consumed", amount=1, model_calls=1, child_runs=1)
+        self.budget.settle(command_id="consume-child-reservation", reservation_id=consumed, actual_amount=1)
+        wrong_dimension = self.budget.reserve(command_id="reserve-child-invalid-dimension", account_id="budget-b", task_id="task-b", run_id="child-invalid-dimension", amount=1, tool_calls=1, child_runs=1)
+
+        child_docs = {}
+        def create_child(run_id, reservation_id, command_id, executor_kind="MODEL"):
+            with self.store._connection() as conn:
+                run_class_exists = conn.execute("SELECT 1 FROM classification_assertions WHERE assertion_id=?", ("class-" + run_id,)).fetchone()
+                event_class_exists = conn.execute("SELECT 1 FROM classification_assertions WHERE assertion_id=?", ("class-event-" + run_id,)).fetchone()
+            if not run_class_exists:
+                self._classify("class-" + run_id, "RUN", run_id)
+            if not event_class_exists:
+                self._classify("class-event-" + run_id, "TRACE_EVENT", "evt-" + command_id)
+            child = child_docs.get(run_id)
+            if child is None:
+                child = {"schema_id":"nexus.run","schema_version":1,"run_id":run_id,"task_id":"task-b","subtask_id":"sub-"+run_id,"parent_run_id":"parent-b","executor_kind":executor_kind,"status":"CREATED","grant_id":"grant-task-b","budget_reservation_ref":reservation_id,"data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-"+run_id,"created_at":self._now()}
+                child_docs[run_id] = child
+            return self.runtime.create_run(child, command_id=command_id, event_classification_assertion_ref="class-event-"+run_id)
+
+        for run_id, reservation_id, command_id in (
+            ("child-cross-task", wrong_task, "create-child-cross-task"),
+            ("child-run-mismatch", wrong_run, "create-child-run-mismatch"),
+            ("child-released", released, "create-child-released"),
+            ("child-consumed", consumed, "create-child-consumed"),
+            ("child-invalid-dimension", wrong_dimension, "create-child-invalid-dimension"),
+        ):
+            with self.assertRaisesRegex(TraceAdmissionDenied, "CHILD_RUN_BUDGET_RESERVATION_INVALID"):
+                create_child(run_id, reservation_id, command_id)
+            with self.store._connection() as conn:
+                self.assertIsNone(conn.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone())
+                self.assertIsNone(conn.execute("SELECT 1 FROM trace_events WHERE run_id=?", (run_id,)).fetchone())
+                self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+        correct = self.budget.reserve(command_id="reserve-child-valid", account_id="budget-b", task_id="task-b", run_id="child-valid", amount=1, model_calls=1, child_runs=1)
+        result = create_child("child-valid", correct, "create-child-valid")
+        self.assertEqual(result["status"], "CREATED")
+        self.assertEqual(create_child("child-valid", correct, "create-child-valid"), result)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='child-valid'").fetchone()[0], 1)
+        tool_reservation = self.budget.reserve(command_id="reserve-child-tool-valid", account_id="budget-b", task_id="task-b", run_id="child-tool-valid", amount=1, tool_calls=1, child_runs=1)
+        tool_run = create_child("child-tool-valid", tool_reservation, "create-child-tool-valid", executor_kind="TOOL")
+        self.assertEqual(tool_run["status"], "CREATED")
+
     def _event_count(self):
         with self.store._connection() as conn:
             return conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='run-1'").fetchone()[0]
