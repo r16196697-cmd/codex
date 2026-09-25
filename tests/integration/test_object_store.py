@@ -233,18 +233,25 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64), (13, "0013_kernel_recovery_principal.sql", 64)])
             self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
+            kernel = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id='nexus-core-recovery'").fetchone()
+            self.assertEqual(tuple(kernel), ("SERVICE", "ACTIVE"))
+            self.assertIsNone(conn.execute("SELECT 1 FROM trust_anchors WHERE principal_id='nexus-core-recovery'").fetchone())
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE principals SET status='REVOKED' WHERE principal_id='nexus-core-recovery'")
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("DELETE FROM principals WHERE principal_id='nexus-core-recovery'")
 
     def test_runtime_mode_lookup_failure_does_not_assume_normal(self) -> None:
         with mock.patch.object(self.store, "_connection", side_effect=sqlite3.OperationalError("mode table unavailable")):
             with self.assertRaisesRegex(MigrationError, "could not be read safely"):
                 self.store._require_mode("core_write")
 
-    def test_v6_snapshot_replays_v7_through_v12_migrations_deterministically(self) -> None:
+    def test_v6_snapshot_replays_v7_through_v13_migrations_deterministically(self) -> None:
         database_path = self.root / "data" / "nexus.sqlite"
         self.store.close()
         legacy_conn = sqlite3.connect(database_path)
@@ -296,6 +303,9 @@ raise SystemExit(0)
                 CREATE TRIGGER trace_events_no_update BEFORE UPDATE ON trace_events BEGIN SELECT RAISE(ABORT,'TRACE_EVENT_IMMUTABLE'); END;
                 CREATE TRIGGER purge_refs_no_update BEFORE UPDATE ON purge_execution_refs BEGIN SELECT RAISE(ABORT,'PURGE_EXECUTION_REF_IMMUTABLE'); END;
             """)
+            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_update")
+            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_delete")
+            conn.execute("DELETE FROM principals WHERE principal_id='nexus-core-recovery'")
             conn.execute("DELETE FROM schema_migrations WHERE version>=7")
             conn.execute("PRAGMA user_version=6")
             conn.commit()
@@ -304,9 +314,9 @@ raise SystemExit(0)
 
         self.store = ObjectStore(self.root / "data")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (12, "0012_purge_plan_task_binding.sql"))
+            self.assertEqual(tuple(row), (13, "0013_kernel_recovery_principal.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
@@ -333,7 +343,10 @@ raise SystemExit(0)
             legacy.execute("PRAGMA foreign_keys=OFF")
             legacy.execute("DROP INDEX purge_plan_records_task_idx")
             legacy.execute("ALTER TABLE purge_plan_records DROP COLUMN task_id")
-            legacy.execute("DELETE FROM schema_migrations WHERE version=12")
+            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_update")
+            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_delete")
+            legacy.execute("DELETE FROM principals WHERE principal_id='nexus-core-recovery'")
+            legacy.execute("DELETE FROM schema_migrations WHERE version>=12")
             legacy.execute("PRAGMA user_version=11")
             legacy.commit()
         finally:
@@ -341,7 +354,7 @@ raise SystemExit(0)
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 12)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 13)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             self.assertIsNone(migrated["task_id"])

@@ -313,6 +313,32 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self._model_profile("model-e0", "E0", 1)
         return ("node-e0", run_id, "model-agent", "grant-e0", "route-" + run_id)
 
+    def _leave_interrupted_compensation_intent(self, command_id="cmd-recovery-negative"):
+        args = self._prepare_single_schedule(command_id=command_id)
+        original_insert_event = self.trace._insert_event
+        original_recovery = self.trace._cancel_created_run_for_recovery
+        captured = {}
+
+        def reject_manifest(**kwargs):
+            raise RuntimeDenied("INJECTED_SETUP_REJECTION")
+
+        def interrupt_recovery_trace(conn, event):
+            if event["actor_id"] == "nexus-core-recovery":
+                raise RuntimeError("injected recovery trace interruption")
+            return original_insert_event(conn, event)
+
+        def capture_recovery_request(**kwargs):
+            captured.update(kwargs)
+            return original_recovery(**kwargs)
+
+        with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), \
+             patch.object(self.trace, "_insert_event", side_effect=interrupt_recovery_trace), \
+             patch.object(self.trace, "_cancel_created_run_for_recovery", side_effect=capture_recovery_request):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self._schedule(*args, command_id=command_id)
+        self.assertTrue(captured)
+        return args, captured
+
     def test_permanent_failure_after_reserve_before_run_create_releases_budget_with_disposition(self):
         args = self._prepare_single_schedule()
         with patch.object(self.trace, "create_run", side_effect=TraceAdmissionDenied("INJECTED_CREATE_REJECTION")):
@@ -353,17 +379,17 @@ class DeterministicRuntimeTests(unittest.TestCase):
             ("class-manifest-run-e0", "OBJECT", "manifest-run-e0", "model-agent"),
         ):
             self._classify(assertion, subject_type, subject_ref, actor)
-        original_transition = self.trace.transition_run
+        original_insert_event = self.trace._insert_event
 
         def reject_manifest(**kwargs):
             raise RuntimeDenied("INJECTED_SETUP_REJECTION")
 
-        def interrupt_cleanup(**kwargs):
-            if kwargs["command_id"] == args["command_id"] + "-setup-cancel":
-                raise RuntimeError("injected cleanup interruption")
-            return original_transition(**kwargs)
+        def interrupt_recovery_trace(conn, event):
+            if event["actor_id"] == "nexus-core-recovery":
+                raise RuntimeError("injected recovery trace interruption")
+            return original_insert_event(conn, event)
 
-        with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "transition_run", side_effect=interrupt_cleanup):
+        with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "_insert_event", side_effect=interrupt_recovery_trace):
             with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
                 self.runtime.schedule_node(**args)
         with self.store._connection() as conn:
@@ -371,6 +397,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone())
             self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CREATED")
             self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RESERVED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery'").fetchone()[0], 0)
 
         # A legal root transition changes forward eligibility after the intent exists.
         self._advance("run-root", "cmd-compensation-root-failed", "RUNNING", "FAILED", "agent")
@@ -390,12 +417,12 @@ class DeterministicRuntimeTests(unittest.TestCase):
             disposition = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0])
             self.assertEqual(disposition["status"], "SETUP_FAILED")
 
-    def test_setup_compensation_does_not_bypass_revoked_or_expired_child_grant(self):
+    def test_kernel_recovery_cleanup_converges_after_child_grant_revocation_or_expiry(self):
         self.runtime.create_dag(command_id="cmd-authority-compensation-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
         self._activate_root()
         self._model_profile("model-e0", "E0", 1)
         self._model_profile("model-e1", "E1", 2)
-        original_transition = self.trace.transition_run
+        original_insert_event = self.trace._insert_event
 
         for node_id, run_id, grant_id, expires_after in (
             ("node-e0", "run-e0", "grant-revoke-compensation", 30),
@@ -425,27 +452,212 @@ class DeterministicRuntimeTests(unittest.TestCase):
             def reject_manifest(**kwargs):
                 raise RuntimeDenied("INJECTED_SETUP_REJECTION")
 
-            def interrupt_cleanup(**kwargs):
-                if kwargs["command_id"] == command_id + "-setup-cancel":
-                    raise RuntimeError("injected cleanup interruption")
-                return original_transition(**kwargs)
+            def interrupt_recovery_trace(conn, event):
+                if event["actor_id"] == "nexus-core-recovery":
+                    raise RuntimeError("injected recovery trace interruption")
+                return original_insert_event(conn, event)
 
-            with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "transition_run", side_effect=interrupt_cleanup):
+            with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "_insert_event", side_effect=interrupt_recovery_trace):
                 with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
                     self.runtime.schedule_node(**args)
+            with self.store._connection() as conn:
+                intent = conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (command_id + "-setup-intent",)).fetchone()
+                self.assertIsNotNone(intent)
+                reservation_id = json.loads(intent["result_json"])["reservation_id"]
+                self.assertIsNone(conn.execute("SELECT 1 FROM trace_events WHERE event_id=?", ("evt-" + command_id + "-setup-core-cancel",)).fetchone())
+                self.assertIsNone(conn.execute("SELECT 1 FROM classification_assertions WHERE assertion_id=?", ("class-evt-" + command_id + "-setup-core-cancel",)).fetchone())
             if expires_after == 30:
                 self.authority.revoke_grant(grant_id, command_id + "-revoke")
-                with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
-                    self.runtime.schedule_node(**args)
             else:
                 future = datetime.now(timezone.utc) + timedelta(minutes=1)
                 with patch("kernel.authority.service._now", return_value=future):
-                    with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                    with self.assertRaises(InvalidDelegation):
+                        self.authority.validate_delegation_chain(grant_id)
+            data_root = Path(self.temp.name) / "data"
+            self.store.close()
+            self.store = ObjectStore(data_root)
+            self.addCleanup(self.store.close)
+            self.authority = AuthorityService(self.store, self.policy)
+            self.budget = BudgetService(self.store)
+            self.trace = TraceRuntime(self.store, self.authority)
+            self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+            if expires_after == 30:
+                pass
+            else:
+                future = datetime.now(timezone.utc) + timedelta(minutes=1)
+                with patch("kernel.authority.service._now", return_value=future):
+                    with self.assertRaises(InvalidDelegation):
+                        self.authority.validate_delegation_chain(grant_id)
+                    with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
                         self.runtime.schedule_node(**args)
+            if expires_after == 30:
+                with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                    self.runtime.schedule_node(**args)
             with self.store._connection() as conn:
-                self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()[0], "CREATED")
-                self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (run_id,)).fetchone()[0], "RESERVED")
-                self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+                self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()[0], "CANCELLED")
+                self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (reservation_id,)).fetchone()[0], "RELEASED")
+                result = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()[0])
+                self.assertEqual(result["status"], "SETUP_FAILED")
+                events = conn.execute("SELECT event_json FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (run_id,)).fetchall()
+                self.assertEqual(len(events), 1)
+                recovery_event = json.loads(events[0]["event_json"])
+                self.assertEqual(recovery_event["actor_id"], "nexus-core-recovery")
+                self.assertEqual(recovery_event["typed_metadata"]["recovery_intent_command_id"], command_id + "-setup-intent")
+                classification = conn.execute("SELECT actor_id,reason,subject_type,subject_ref FROM classification_assertions WHERE assertion_id=?", (recovery_event["classification_assertion_ref"],)).fetchone()
+                self.assertEqual(tuple(classification), ("nexus-core-recovery", "kernel recovery cleanup", "TRACE_EVENT", recovery_event["event_id"]))
+            self.assertEqual(self.trace.replay_run(run_id)["status"], "CANCELLED")
+            with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+                self.runtime.schedule_node(**args)
+            with self.store._connection() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (run_id,)).fetchone()[0], 1)
+
+    def _exercise_kernel_recovery_release_crash_window(self, release_mode):
+        command_id = "cmd-recovery-release-" + release_mode
+        args = self._prepare_single_schedule(command_id=command_id)
+        original_release = self.budget.release
+
+        def reject_manifest(**kwargs):
+            raise RuntimeDenied("INJECTED_SETUP_REJECTION")
+
+        def interrupt_release(**kwargs):
+            if release_mode == "before":
+                raise RuntimeError("injected before budget release")
+            original_release(**kwargs)
+            raise RuntimeError("injected after budget release")
+
+        with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), \
+             patch.object(self.budget, "release", side_effect=interrupt_release):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self._schedule(*args, command_id=command_id)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            reservation = conn.execute("SELECT reservation_id,state FROM budget_reservations WHERE run_id='run-e0'").fetchone()
+            expected_state = "RESERVED" if release_mode == "before" else "RELEASED"
+            self.assertEqual(reservation["state"], expected_state)
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='run-e0' AND actor_id='nexus-core-recovery'").fetchone()[0], 1)
+
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self._schedule(*args, command_id=command_id)
+        self.assertEqual(self.trace.replay_run("run-e0")["status"], "CANCELLED")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (reservation["reservation_id"],)).fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_ledger WHERE reservation_id=? AND action='RELEASED'", (reservation["reservation_id"],)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='run-e0' AND actor_id='nexus-core-recovery'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery' AND subject_type='TRACE_EVENT' AND subject_ref='evt-" + command_id + "-setup-core-cancel'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE run_id='run-e0'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM route_decisions WHERE subtask_id='node-e0'").fetchone()[0], 1)
+            disposition = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()[0])
+            self.assertEqual(disposition["status"], "SETUP_FAILED")
+
+    def test_kernel_recovery_release_crash_before_budget_release_converges_after_reopen(self):
+        self._exercise_kernel_recovery_release_crash_window("before")
+
+    def test_kernel_recovery_release_crash_after_budget_release_converges_after_reopen(self):
+        self._exercise_kernel_recovery_release_crash_window("after")
+
+    def test_kernel_recovery_authority_rejects_unbound_and_mismatched_intents(self):
+        _, recovery = self._leave_interrupted_compensation_intent()
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_INTENT_NOT_VALID"):
+            self.trace._cancel_created_run_for_recovery(**{**recovery, "schedule_command_id": "missing-intent"})
+        for changed, expected in (
+            ({"schedule_request_hash": "0" * 64}, "RECOVERY_INTENT_NOT_VALID"),
+            ({"task_id": "task-other"}, "RECOVERY_INTENT_BINDING_MISMATCH"),
+            ({"root_run_id": "run-other"}, "RECOVERY_RUN_NOT_CANCELLABLE"),
+            ({"subtask_id": "node-other"}, "RECOVERY_INTENT_BINDING_MISMATCH"),
+            ({"run_id": "run-other"}, "RECOVERY_INTENT_BINDING_MISMATCH"),
+            ({"reservation_id": "reservation-other"}, "RECOVERY_INTENT_BINDING_MISMATCH"),
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(TraceAdmissionDenied, expected):
+                self.trace._cancel_created_run_for_recovery(**{**recovery, **changed})
+        with self.assertRaises(TypeError):
+            self.trace._cancel_created_run_for_recovery(**recovery, actor_id="model-agent")
+
+        intent_id = recovery["schedule_command_id"] + "-setup-intent"
+        other_reservation = self.budget.reserve(command_id="cmd-other-reservation", account_id="budget-1", task_id="task-1",
+            run_id="run-other", amount=1, model_calls=1, tool_calls=0, child_runs=1)
+        with self.store._connection() as conn:
+            prior = conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (intent_id,)).fetchone()[0]
+            changed_result = json.loads(prior)
+            changed_result["run_id"] = "tampered-run"
+            conn.execute("DROP TRIGGER command_ledger_no_update")
+            conn.execute("UPDATE command_ledger SET result_json=? WHERE command_id=?", (json.dumps(changed_result, sort_keys=True, separators=(",", ":")), intent_id))
+            with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_INTENT_BINDING_MISMATCH"):
+                self.trace._cancel_created_run_for_recovery(**recovery)
+            conn.execute("UPDATE command_ledger SET result_json=? WHERE command_id=?", (prior, intent_id))
+            changed_result = json.loads(prior)
+            changed_result["reservation_id"] = other_reservation
+            conn.execute("UPDATE command_ledger SET result_json=? WHERE command_id=?", (json.dumps(changed_result, sort_keys=True, separators=(",", ":")), intent_id))
+            with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_INTENT_BINDING_MISMATCH"):
+                self.trace._cancel_created_run_for_recovery(**{**recovery, "reservation_id": other_reservation})
+            conn.execute("UPDATE command_ledger SET result_json=? WHERE command_id=?", (prior, intent_id))
+            conn.execute("CREATE TRIGGER command_ledger_no_update BEFORE UPDATE ON command_ledger BEGIN SELECT RAISE(ABORT,'COMMAND_LEDGER_IMMUTABLE'); END")
+
+    def test_setup_compensation_recovery_continues_after_root_cancel_and_reopen(self):
+        command_id = "cmd-compensation-root-cancel"
+        args, _ = self._leave_interrupted_compensation_intent(command_id)
+        self._advance("run-root", "cmd-compensation-root-cancelled", "RUNNING", "CANCELLED", "agent")
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self._schedule(*args, command_id=command_id)
+        self.assertEqual(self.trace.replay_run("run-e0")["status"], "CANCELLED")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-root'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id='run-e0' AND actor_id='nexus-core-recovery'").fetchone()[0], 1)
+
+    def test_kernel_recovery_rejects_ready_and_running_children(self):
+        command_id = "cmd-recovery-executing-child"
+        args = self._prepare_single_schedule(command_id=command_id)
+        original_insert_event = self.trace._insert_event
+        original_transition = self.trace.transition_run
+        original_recovery = self.trace._cancel_created_run_for_recovery
+        captured = {}
+
+        def reject_ready_transition(**kwargs):
+            if kwargs["command_id"] == command_id + "-ready":
+                raise TraceAdmissionDenied("INJECTED_READY_TRANSITION_REJECTION")
+            return original_transition(**kwargs)
+
+        def interrupt_recovery_trace(conn, event):
+            if event["actor_id"] == "nexus-core-recovery":
+                raise RuntimeError("injected recovery trace interruption")
+            return original_insert_event(conn, event)
+
+        def capture_recovery_request(**kwargs):
+            captured.update(kwargs)
+            return original_recovery(**kwargs)
+
+        with patch.object(self.trace, "transition_run", side_effect=reject_ready_transition), \
+             patch.object(self.trace, "_insert_event", side_effect=interrupt_recovery_trace), \
+             patch.object(self.trace, "_cancel_created_run_for_recovery", side_effect=capture_recovery_request):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self._schedule(*args, command_id=command_id)
+
+        self._advance("run-e0", command_id + "-ready", "CREATED", "READY", "model-agent")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_RUN_NOT_CANCELLABLE"):
+            self.trace._cancel_created_run_for_recovery(**captured)
+        self._event_class(command_id + "-running", "model-agent")
+        self._advance("run-e0", command_id + "-running", "READY", "RUNNING", "model-agent")
+        with self.assertRaisesRegex(TraceAdmissionDenied, "RECOVERY_RUN_NOT_CANCELLABLE"):
+            self.trace._cancel_created_run_for_recovery(**captured)
+        self.assertEqual(self.trace.replay_run("run-e0")["status"], "RUNNING")
 
     def test_permanent_manifest_and_attempt_setup_failures_cancel_without_fabricating_attempts(self):
         args = self._prepare_single_schedule()
@@ -533,14 +745,14 @@ class DeterministicRuntimeTests(unittest.TestCase):
 
     def test_setup_cleanup_failure_resumes_same_command_after_store_reopen(self):
         args = self._prepare_single_schedule()
-        original_transition = self.trace.transition_run
+        original_insert_event = self.trace._insert_event
 
-        def fail_cleanup_once(**kwargs):
-            if kwargs["command_id"] == "cmd-setup-failure-setup-cancel":
+        def fail_recovery_trace(conn, event):
+            if event["actor_id"] == "nexus-core-recovery":
                 raise RuntimeError("injected cancellation cleanup interruption")
-            return original_transition(**kwargs)
+            return original_insert_event(conn, event)
 
-        with patch.object(self.runtime, "bind_manifest", side_effect=TraceAdmissionDenied("INJECTED_MANIFEST_REJECTION")), patch.object(self.trace, "transition_run", side_effect=fail_cleanup_once):
+        with patch.object(self.runtime, "bind_manifest", side_effect=TraceAdmissionDenied("INJECTED_MANIFEST_REJECTION")), patch.object(self.trace, "_insert_event", side_effect=fail_recovery_trace):
             with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
                 self._schedule(*args, command_id="cmd-setup-failure")
         with self.store._connection() as conn:
