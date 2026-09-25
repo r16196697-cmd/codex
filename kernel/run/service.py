@@ -418,7 +418,7 @@ class TraceRuntime:
             raise TraceAdmissionDenied("RUN_READY_MANIFEST_OBJECT_INVALID")
         try:
             manifest = json.loads(self.store.get_payload(run["manifest_ref"]).decode("utf-8"))
-            self.store._validate("nexus.run_manifest@1.schema.json", manifest)
+            self.store._validate(f"nexus.run_manifest@{manifest.get('schema_version')}.schema.json", manifest)
         except Exception as exc:
             raise TraceAdmissionDenied("RUN_READY_MANIFEST_INTEGRITY_OR_SCHEMA_INVALID") from exc
         boundary = json.loads(run["data_boundary_json"])
@@ -498,7 +498,7 @@ class TraceRuntime:
             expected_edges = {(dependency, node["subtask_id"]) for node in dag_nodes for dependency in node["dependency_ids"]}
             if not dag or dag["root_run_id"] != run["run_id"] or dag["dag_version"] != manifest["dag_version"] or manifest["scheduler_version"] != "1" or dag["node_count"] != len(dag_nodes) or dag["graph_hash"] != graph_hash or dag_edges != expected_edges:
                 raise TraceAdmissionDenied("ROOT_RUN_DAG_OR_SCHEDULER_VERSION_MISMATCH")
-        elif run["executor_kind"] == "MODEL":
+        elif run["executor_kind"] == "MODEL" and manifest["schema_version"] == 1:
             route = conn.execute("SELECT decision_json,subtask_id FROM route_decisions WHERE decision_object_id=?", (manifest["route_decision_ref"],)).fetchone()
             if route:
                 decision = json.loads(route["decision_json"])
@@ -532,6 +532,12 @@ class TraceRuntime:
             reservation = conn.execute("SELECT amount FROM budget_reservations WHERE reservation_id=?", (run["budget_reservation_ref"],)).fetchone()
             if not reservation or reservation["amount"] != profile_doc["cost_profile"]["estimated_cost"]:
                 raise TraceAdmissionDenied("MODEL_RUN_BUDGET_ESTIMATE_MISMATCH")
+        elif run["executor_kind"] == "MODEL":
+            if manifest.get("execution_source") != "CODEX_HOST_DECLARED" or manifest.get("host_kind") != "CODEX" or manifest.get("model_identity_status") != "UNAVAILABLE":
+                raise TraceAdmissionDenied("HOSTED_MODEL_OBSERVATION_MUST_BE_EXPLICIT_AND_UNAVAILABLE")
+            reservation = conn.execute("SELECT amount,model_calls,tool_calls,child_runs FROM budget_reservations WHERE reservation_id=?", (run["budget_reservation_ref"],)).fetchone()
+            if not reservation or reservation["model_calls"] != 1 or reservation["tool_calls"] != 0 or reservation["child_runs"] != 1:
+                raise TraceAdmissionDenied("HOSTED_MODEL_BUDGET_RESERVATION_INVALID")
         elif run["executor_kind"] == "TOOL":
             descriptor = conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (manifest["tool_id"], manifest["tool_descriptor_version"])).fetchone()
             if not descriptor or json.loads(descriptor["descriptor_json"])["review_status"] != "APPROVED":

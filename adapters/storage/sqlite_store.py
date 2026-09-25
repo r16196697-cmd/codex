@@ -439,7 +439,7 @@ class ObjectStore:
                 manifest_doc = json.loads(payload.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise IntegrityMismatch("RUN_MANIFEST_PAYLOAD_INVALID") from exc
-            self._validate("nexus.run_manifest@1.schema.json", manifest_doc)
+            self._validate(f"nexus.run_manifest@{manifest_doc.get('schema_version')}.schema.json", manifest_doc)
             manifest_inputs = sorted(set(manifest_doc["input_object_refs"]))
         source_ids = sorted(set(derived_from) | set(manifest_inputs))
         request = {

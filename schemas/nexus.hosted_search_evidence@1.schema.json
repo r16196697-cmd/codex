@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.hosted_search_evidence@1",
+  "title": "Codex-hosted search evidence receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "execution_source", "source_url", "retrieved_at", "excerpt"],
+  "properties": {
+    "schema_id": {"const": "nexus.hosted_search_evidence"},
+    "schema_version": {"const": 1},
+    "execution_source": {"const": "CODEX_HOST_DECLARED"},
+    "source_url": {"type": "string", "format": "uri", "maxLength": 2048},
+    "retrieved_at": {"type": "string", "format": "date-time"},
+    "excerpt": {"type": "string", "minLength": 1, "maxLength": 4096}
+  }
+}

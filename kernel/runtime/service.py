@@ -273,7 +273,7 @@ class DeterministicRuntime:
 
     def bind_manifest(self, *, command_id: str, run_id: str, manifest_object_id: str, manifest_classification_assertion_ref: str, manifest: dict[str, Any]) -> None:
         self.modes.require("core_write")
-        self.store._validate("nexus.run_manifest@1.schema.json", manifest)
+        self.store._validate(f"nexus.run_manifest@{manifest.get('schema_version')}.schema.json", manifest)
         operation = "bind_run_manifest"
         request = {"run_id": run_id, "manifest_object_id": manifest_object_id, "manifest": manifest}
         request_hash = self.store._request_hash(operation, request)
@@ -348,6 +348,12 @@ class DeterministicRuntime:
             if not dag or dag["root_run_id"] != run["run_id"] or dag["dag_version"] != manifest["dag_version"] or manifest["scheduler_version"] != "1" or dag["node_count"] != len(dag_nodes) or dag["graph_hash"] != graph_hash or dag_edges != expected_edges:
                 raise RuntimeDenied("ROOT_MANIFEST_DAG_OR_SCHEDULER_VERSION_MISMATCH")
         elif run["executor_kind"] == "MODEL":
+            if manifest["schema_version"] == 2:
+                if (manifest.get("execution_source") != "CODEX_HOST_DECLARED"
+                        or manifest.get("host_kind") != "CODEX"
+                        or manifest.get("model_identity_status") != "UNAVAILABLE"):
+                    raise RuntimeDenied("HOSTED_MODEL_OBSERVATION_MUST_BE_EXPLICIT_AND_UNAVAILABLE")
+                return
             with self.store._connection() as conn:
                 route = conn.execute("SELECT decision_json,subtask_id FROM route_decisions WHERE decision_object_id=?", (manifest["route_decision_ref"],)).fetchone()
                 if not route:
@@ -405,6 +411,58 @@ class DeterministicRuntime:
         if row["status"] != expected:
             raise RuntimeDenied("SUBTASK_TRACE_REPLAY_PROJECTION_MISMATCH")
         return {"subtask_id": subtask_id, "task_id": row["task_id"], "status": expected, "run_id": run_id, "last_seq": projection["last_seq"]}
+
+    def bind_hosted_run_to_subtask(self, *, command_id: str, task_id: str, root_run_id: str, subtask_id: str, child_run_id: str) -> dict[str, Any]:
+        """Bind an attached-host child into the persisted DAG without model routing."""
+        self.modes.require("run_execute")
+        operation = "bind_hosted_run_to_subtask"
+        request = {"task_id": task_id, "root_run_id": root_run_id, "subtask_id": subtask_id, "child_run_id": child_run_id}
+        request_hash = self.store._request_hash(operation, request)
+        with self.store._connection() as conn:
+            prior = self.store._replay_command(conn, command_id, operation, request_hash)
+            if prior is not None:
+                return prior
+            root = conn.execute("SELECT status,grant_id,task_id,executor_kind FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
+            child = conn.execute("SELECT status,task_id,parent_run_id,subtask_id,executor_kind,manifest_ref FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
+            node_row = conn.execute("SELECT node_json,status,scheduled_run_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+        if not root or root["task_id"] != task_id or root["executor_kind"] != "ORCHESTRATOR" or root["status"] != "RUNNING":
+            raise RuntimeDenied("HOSTED_SUBTASK_ROOT_NOT_RUNNING")
+        if not child or child["task_id"] != task_id or child["parent_run_id"] != root_run_id or child["subtask_id"] != subtask_id or child["status"] != "CREATED":
+            raise RuntimeDenied("HOSTED_SUBTASK_CHILD_BINDING_INVALID")
+        if not node_row or node_row["scheduled_run_id"] not in (None, child_run_id) or node_row["status"] != "PENDING":
+            raise RuntimeDenied("HOSTED_SUBTASK_NOT_BINDABLE")
+        node = json.loads(node_row["node_json"])
+        if node["requested_executor"] != child["executor_kind"]:
+            raise RuntimeDenied("HOSTED_SUBTASK_EXECUTOR_MISMATCH")
+        manifest = json.loads(self.store.get_payload(child["manifest_ref"]).decode("utf-8"))
+        self.store._validate(f"nexus.run_manifest@{manifest.get('schema_version')}.schema.json", manifest)
+        if not set(node["input_object_refs"]).issubset(set(manifest["input_object_refs"])):
+            raise RuntimeDenied("HOSTED_SUBTASK_INPUTS_NOT_BOUND")
+        if child["executor_kind"] == "MODEL":
+            if manifest.get("execution_source") != "CODEX_HOST_DECLARED" or manifest.get("model_identity_status") != "UNAVAILABLE":
+                raise RuntimeDenied("HOSTED_MODEL_MANIFEST_SOURCE_INVALID")
+        elif child["executor_kind"] == "TOOL" and node.get("tool_id") != manifest.get("tool_id"):
+            raise RuntimeDenied("HOSTED_TOOL_NODE_DESCRIPTOR_MISMATCH")
+        self._authorize(root["grant_id"], task_id, root_run_id, "RUN_CREATE", command_id + "-authorize")
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                replay = self.store._replay_command(conn, command_id, operation, request_hash)
+                if replay is not None:
+                    conn.commit()
+                    return replay
+                cursor = conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL AND status='PENDING'", (child_run_id, task_id, subtask_id))
+                if cursor.rowcount != 1:
+                    current = conn.execute("SELECT scheduled_run_id,status FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+                    if not current or current["scheduled_run_id"] != child_run_id or current["status"] != "PENDING":
+                        raise RuntimeDenied("HOSTED_SUBTASK_BINDING_RACE")
+                result = {"task_id": task_id, "subtask_id": subtask_id, "run_id": child_run_id, "status": "PENDING", "manifest_ref": child["manifest_ref"]}
+                self.store._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
 
     def _assert_classification_scope(self, assertion_id: str, subject_type: str, subject_ref: str, principal_ids: set[str], boundary: dict[str, Any], *, at_least_level: str | None = None, required_tags: set[str] | None = None) -> dict[str, Any]:
         with self.store._connection() as conn:
