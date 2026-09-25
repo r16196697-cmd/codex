@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ def _canon(value: Any) -> str:
 
 _LOCKS_GUARD = threading.Lock()
 _PATH_LOCKS: dict[str, threading.RLock] = {}
+_DURABLE_PATHS: set[str] = set()
 
 
 def _thread_lock(path: Path) -> threading.RLock:
@@ -102,6 +104,52 @@ class IndependentPurgeJournal:
             previous = digest
         return records
 
+    def _path_is_directory_synced(self) -> bool:
+        key = os.path.normcase(str(self.path))
+        with _LOCKS_GUARD:
+            return key in _DURABLE_PATHS
+
+    def _mark_path_directory_synced(self) -> None:
+        key = os.path.normcase(str(self.path))
+        with _LOCKS_GUARD:
+            _DURABLE_PATHS.add(key)
+
+    def _create_empty_journal_durably(self) -> None:
+        """Create the pathname with platform-appropriate namespace durability."""
+        if os.name == "nt":
+            # Windows does not expose POSIX directory fsync through Python's
+            # os APIs. Create a sibling and publish its name with the documented
+            # MOVEFILE_WRITE_THROUGH contract instead of claiming directory fsync.
+            import ctypes
+
+            fd, temporary_name = tempfile.mkstemp(prefix=self.path.name + ".", suffix=".tmp", dir=self.path.parent)
+            temporary = Path(temporary_name)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                move_file = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+                move_file.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+                move_file.restype = ctypes.c_int
+                if not move_file(str(temporary), str(self.path), 0x00000008):  # MOVEFILE_WRITE_THROUGH
+                    raise ctypes.WinError(ctypes.get_last_error())
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+            self._mark_path_directory_synced()
+            return
+
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+
+    def _fsync_posix_parent_directory(self) -> None:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(self.path.parent, flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
     def append(self, *, action: str, barrier_id: str, plan_id: str, plan_hash: str, lineage_revision: int, protected_refs: list[str]) -> dict[str, Any]:
         if action not in {"BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"}:
             raise ValueError("unsupported purge journal action")
@@ -109,10 +157,15 @@ class IndependentPurgeJournal:
             raise ValueError("invalid purge journal plan binding")
         with self._exclusive_path_lock():
             prior = self._read_unlocked()
+            if not self.path.exists():
+                self._create_empty_journal_durably()
             body = {"version": 1, "sequence": len(prior) + 1, "action": action, "barrier_id": barrier_id, "plan_id": plan_id, "plan_hash": plan_hash, "lineage_revision": lineage_revision, "protected_refs": sorted(set(protected_refs)), "previous_hash": prior[-1]["record_hash"] if prior else "0" * 64}
             body["record_hash"] = hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(_canon(body) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+            if os.name != "nt" and not self._path_is_directory_synced():
+                self._fsync_posix_parent_directory()
+                self._mark_path_directory_synced()
             return body

@@ -16,6 +16,7 @@ from kernel.effect import AmbiguousDispatch, DeterministicEffectService
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.inspect import InspectService
 from kernel.runtime.errors import RuntimeDenied
+from kernel.object.errors import CommandConflict
 
 
 class DeterministicRuntimeTests(unittest.TestCase):
@@ -76,12 +77,12 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self._classify(assertion_id, "TRACE_EVENT", event_id, actor_id)
         return assertion_id
 
-    def _child_grant(self, run_id, principal_id, grant_id):
+    def _child_grant(self, run_id, principal_id, grant_id, expires_at=None):
         with self.store._connection() as conn:
             if conn.execute("SELECT 1 FROM delegation_grants WHERE grant_id=?", (grant_id,)).fetchone():
                 return
         now = datetime.now(timezone.utc)
-        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id, "parent_grant_id": "grant-root", "issued_by": "agent", "granted_to": principal_id, "task_scope": ["task-1"], "resource_scope": [run_id, "sandbox-target", "tool-read"], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=30)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-" + grant_id)
+        self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id, "parent_grant_id": "grant-root", "issued_by": "agent", "granted_to": principal_id, "task_scope": ["task-1"], "resource_scope": [run_id, "sandbox-target", "tool-read"], "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "EFFECT_RECONCILE", "EFFECT_COMPENSATE", "FAKE_WRITE"], "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (expires_at or (now + timedelta(days=30))).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "cmd-" + grant_id)
 
     def _model_profile(self, model_id, model_class, cost, *, provider="fake", local="LOCAL"):
         profile = {"schema_id": "nexus.model_profile", "schema_version": 1, "model_id": model_id, "provider": provider, "model_class": model_class, "modalities": ["text"], "context_limit": 4096, "structured_output_support": True, "tool_use_support": False, "local_or_cloud": local, "allowed_classifications": ["PUBLIC", "PERSONAL"], "provider_policy_ref": "fake-policy-1", "cost_profile": {"unit": "credits", "estimated_cost": cost}, "latency_profile": {"estimated_ms": 100 * cost}, "local_eval_status": "PASSED", "version": "1", "model_adapter_version": "fake-adapter-1", "available": True}
@@ -210,6 +211,93 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.assertEqual(counts_after, counts_before)
         self.assertEqual(self.runtime.schedule_node(**args), recovered)
 
+    def test_historical_schedule_command_replays_old_request_shape(self):
+        args = {
+            "command_id": "cmd-historical-schedule", "task_id": "task-1", "root_run_id": "run-root",
+            "subtask_id": "node-e0", "child_run_id": "run-e0", "child_grant_id": "grant-historical",
+            "child_classification_assertion_ref": "class-run-e0",
+            "event_classification_assertion_ref": "class-evt-cmd-historical-schedule-create-run",
+            "ready_event_classification_assertion_ref": "class-evt-cmd-historical-schedule-ready",
+            "cancelled_event_classification_assertion_ref": "class-evt-cmd-historical-schedule-setup-cancel",
+            "route_object_id": "route-e0", "route_classification_assertion_ref": "class-route-e0",
+            "manifest_object_id": "manifest-run-e0", "manifest_classification_assertion_ref": "class-manifest-run-e0",
+            "requested_capability": None, "attempt_reason": "INITIAL", "predecessor_attempt_id": None,
+        }
+        self.runtime.create_dag(command_id="cmd-historical-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e0", "E0", 1)
+        self._child_grant("run-e0", "model-agent", "grant-historical")
+        for assertion, subject_type, subject_ref, actor in (
+            ("class-run-e0", "RUN", "run-e0", "model-agent"),
+            ("class-evt-cmd-historical-schedule-create-run", "TRACE_EVENT", "evt-cmd-historical-schedule-create-run", "model-agent"),
+            ("class-evt-cmd-historical-schedule-ready", "TRACE_EVENT", "evt-cmd-historical-schedule-ready", "model-agent"),
+            ("class-evt-cmd-historical-schedule-setup-cancel", "TRACE_EVENT", "evt-cmd-historical-schedule-setup-cancel", "model-agent"),
+            ("class-route-e0", "OBJECT", "route-e0", "agent"),
+            ("class-manifest-run-e0", "OBJECT", "manifest-run-e0", "model-agent"),
+        ):
+            self._classify(assertion, subject_type, subject_ref, actor)
+        original = self.runtime.schedule_node(**args)
+        old_request = {key: args[key] for key in ("task_id", "root_run_id", "subtask_id", "child_run_id", "route_object_id", "requested_capability", "attempt_reason")}
+        old_hash = self.store._request_hash("schedule_subtask", old_request)
+        with self.store._connection() as conn:
+            # Emulate an immutable command row written by the pre-change binary.
+            # Historical data is not rewritten in production; the disposable DB
+            # fixture is rebuilt here to represent that older committed shape.
+            conn.execute("DROP TRIGGER command_ledger_no_update")
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (old_hash, args["command_id"]))
+            self.assertEqual(conn.execute("SELECT request_hash FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0], old_hash)
+            before = tuple(conn.execute(
+                "SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM runs WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE subtask_id=?)",
+                (args["child_run_id"], args["child_run_id"], args["child_run_id"], args["subtask_id"]),
+            ).fetchone())
+
+        # This is the API shape used before the cancellation assertion was added.
+        legacy_args = {key: value for key, value in args.items() if key != "cancelled_event_classification_assertion_ref"}
+        replayed = self.runtime.schedule_node(**legacy_args)
+        self.assertEqual(replayed, original)
+        changed_legacy_args = {**legacy_args, "route_object_id": "different-route"}
+        with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
+            self.runtime.schedule_node(**changed_legacy_args)
+
+        # Also accept the immediately preceding full request shape (without the
+        # later cancellation-classification field), but no changed old fields.
+        full_pre_change_hash = self.store._request_hash("schedule_subtask", {key: value for key, value in args.items() if key not in {"command_id", "cancelled_event_classification_assertion_ref"}})
+        with self.store._connection() as conn:
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (full_pre_change_hash, args["command_id"]))
+        self.assertEqual(self.runtime.schedule_node(**legacy_args), original)
+        changed_full_args = {**legacy_args, "manifest_object_id": "different-manifest"}
+        with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
+            self.runtime.schedule_node(**changed_full_args)
+
+        with self.store._connection() as conn:
+            conn.execute("UPDATE command_ledger SET request_hash=? WHERE command_id=?", (old_hash, args["command_id"]))
+
+        # Reopen the persistent root and ensure the old request remains replayable.
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        reopened_replay = self.runtime.schedule_node(**legacy_args)
+        self.assertEqual(reopened_replay, original)
+
+        new_args = {**args, "command_id": "cmd-new-schedule-without-cancel-class"}
+        new_args.pop("cancelled_event_classification_assertion_ref")
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_CANCEL_CLASSIFICATION_REQUIRED"):
+            self.runtime.schedule_node(**new_args)
+
+        with self.store._connection() as conn:
+            counts = tuple(conn.execute(
+                "SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM runs WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE subtask_id=?)",
+                (args["child_run_id"], args["child_run_id"], args["child_run_id"], args["subtask_id"]),
+            ).fetchone())
+        self.assertEqual(original["status"], "READY")
+        self.assertEqual(counts, before)
+        self.assertEqual(self.runtime.schedule_node(**legacy_args), original)
+
     def _prepare_single_schedule(self, *, command_id="cmd-setup-failure", run_id="run-e0"):
         self.runtime.create_dag(command_id=command_id + "-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
         self._activate_root()
@@ -231,6 +319,124 @@ class DeterministicRuntimeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT action FROM budget_ledger WHERE reservation_id=(SELECT reservation_id FROM budget_reservations WHERE run_id='run-e0') ORDER BY ledger_seq", ()).fetchall()[1][0], "RELEASED")
         with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
             self._schedule(*args, command_id="cmd-setup-failure")
+
+    def test_setup_compensation_intent_resumes_after_root_state_change_and_reopen(self):
+        args = {
+            "command_id": "cmd-compensation-root-change", "task_id": "task-1", "root_run_id": "run-root",
+            "subtask_id": "node-e0", "child_run_id": "run-e0", "child_grant_id": "grant-compensation-root-change",
+            "child_classification_assertion_ref": "class-run-e0",
+            "event_classification_assertion_ref": "class-evt-cmd-compensation-root-change-create-run",
+            "ready_event_classification_assertion_ref": "class-evt-cmd-compensation-root-change-ready",
+            "cancelled_event_classification_assertion_ref": "class-evt-cmd-compensation-root-change-setup-cancel",
+            "route_object_id": "route-e0", "route_classification_assertion_ref": "class-route-e0",
+            "manifest_object_id": "manifest-run-e0", "manifest_classification_assertion_ref": "class-manifest-run-e0",
+        }
+        self.runtime.create_dag(command_id="cmd-compensation-root-change-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e0", "E0", 1)
+        self._child_grant("run-e0", "model-agent", "grant-compensation-root-change")
+        for assertion, subject_type, subject_ref, actor in (
+            ("class-run-e0", "RUN", "run-e0", "model-agent"),
+            ("class-evt-cmd-compensation-root-change-create-run", "TRACE_EVENT", "evt-cmd-compensation-root-change-create-run", "model-agent"),
+            ("class-evt-cmd-compensation-root-change-ready", "TRACE_EVENT", "evt-cmd-compensation-root-change-ready", "model-agent"),
+            ("class-evt-cmd-compensation-root-change-setup-cancel", "TRACE_EVENT", "evt-cmd-compensation-root-change-setup-cancel", "model-agent"),
+            ("class-route-e0", "OBJECT", "route-e0", "agent"),
+            ("class-manifest-run-e0", "OBJECT", "manifest-run-e0", "model-agent"),
+        ):
+            self._classify(assertion, subject_type, subject_ref, actor)
+        original_transition = self.trace.transition_run
+
+        def reject_manifest(**kwargs):
+            raise RuntimeDenied("INJECTED_SETUP_REJECTION")
+
+        def interrupt_cleanup(**kwargs):
+            if kwargs["command_id"] == args["command_id"] + "-setup-cancel":
+                raise RuntimeError("injected cleanup interruption")
+            return original_transition(**kwargs)
+
+        with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "transition_run", side_effect=interrupt_cleanup):
+            with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                self.runtime.schedule_node(**args)
+        with self.store._connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (args["command_id"] + "-setup-intent",)).fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone())
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RESERVED")
+
+        # A legal root transition changes forward eligibility after the intent exists.
+        self._advance("run-root", "cmd-compensation-root-failed", "RUNNING", "FAILED", "agent")
+        data_root = Path(self.temp.name) / "data"
+        self.store.close()
+        self.store = ObjectStore(data_root)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_SETUP_COMPENSATED"):
+            self.runtime.schedule_node(**args)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id='run-e0'").fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id='run-e0'").fetchone()[0], "RELEASED")
+            disposition = json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id=?", (args["command_id"],)).fetchone()[0])
+            self.assertEqual(disposition["status"], "SETUP_FAILED")
+
+    def test_setup_compensation_does_not_bypass_revoked_or_expired_child_grant(self):
+        self.runtime.create_dag(command_id="cmd-authority-compensation-dag", task_id="task-1", root_run_id="run-root", nodes=self._nodes())
+        self._activate_root()
+        self._model_profile("model-e0", "E0", 1)
+        self._model_profile("model-e1", "E1", 2)
+        original_transition = self.trace.transition_run
+
+        for node_id, run_id, grant_id, expires_after in (
+            ("node-e0", "run-e0", "grant-revoke-compensation", 30),
+            ("node-e1", "run-e1", "grant-expire-compensation", 2),
+        ):
+            command_id = "schedule-" + grant_id
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_after)
+            self._child_grant(run_id, "model-agent", grant_id, expires_at=expires_at)
+            self._classify("class-" + run_id, "RUN", run_id, "model-agent")
+            route_id = "route-" + run_id
+            manifest_id = "manifest-" + run_id
+            self._classify("class-" + route_id, "OBJECT", route_id, "agent")
+            self._classify("class-" + manifest_id, "OBJECT", manifest_id, "model-agent")
+            for suffix in ("create-run", "ready", "setup-cancel"):
+                self._event_class(command_id + "-" + suffix, "model-agent")
+            args = {
+                "command_id": command_id, "task_id": "task-1", "root_run_id": "run-root", "subtask_id": node_id,
+                "child_run_id": run_id, "child_grant_id": grant_id,
+                "child_classification_assertion_ref": "class-" + run_id,
+                "event_classification_assertion_ref": "class-evt-" + command_id + "-create-run",
+                "ready_event_classification_assertion_ref": "class-evt-" + command_id + "-ready",
+                "cancelled_event_classification_assertion_ref": "class-evt-" + command_id + "-setup-cancel",
+                "route_object_id": route_id, "route_classification_assertion_ref": "class-" + route_id,
+                "manifest_object_id": manifest_id, "manifest_classification_assertion_ref": "class-" + manifest_id,
+            }
+
+            def reject_manifest(**kwargs):
+                raise RuntimeDenied("INJECTED_SETUP_REJECTION")
+
+            def interrupt_cleanup(**kwargs):
+                if kwargs["command_id"] == command_id + "-setup-cancel":
+                    raise RuntimeError("injected cleanup interruption")
+                return original_transition(**kwargs)
+
+            with patch.object(self.runtime, "bind_manifest", side_effect=reject_manifest), patch.object(self.trace, "transition_run", side_effect=interrupt_cleanup):
+                with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                    self.runtime.schedule_node(**args)
+            if expires_after == 30:
+                self.authority.revoke_grant(grant_id, command_id + "-revoke")
+                with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                    self.runtime.schedule_node(**args)
+            else:
+                future = datetime.now(timezone.utc) + timedelta(minutes=1)
+                with patch("kernel.authority.service._now", return_value=future):
+                    with self.assertRaisesRegex(RuntimeError, "SCHEDULE_SETUP_COMPENSATION_FAILED"):
+                        self.runtime.schedule_node(**args)
+            with self.store._connection() as conn:
+                self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()[0], "CREATED")
+                self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (run_id,)).fetchone()[0], "RESERVED")
+                self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
 
     def test_permanent_manifest_and_attempt_setup_failures_cancel_without_fabricating_attempts(self):
         args = self._prepare_single_schedule()
