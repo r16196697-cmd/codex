@@ -78,7 +78,7 @@ Do NOT:
 Nexus version: `v0.1-development`  
 Current implementation step: Step 10 — PARTIAL (Hosted Bridge and Step 9 operational client complete; formal acceptance gaps remain)
 Environment: Windows build `10.0.22631.0`; Python `3.11.0`; SQLite `3.38.4` + FTS5; Git `2.40.0.windows.1`  
-Implementation checkpoint / branch: source checkpoint `1542cb08579ed1281630ade4b7f6c7094c90ad19` / `nexus-v2-runtime`; final Step 10 evidence/test updates are pending checkpoint.
+Implementation checkpoint / branch: source checkpoint `1542cb08579ed1281630ade4b7f6c7094c90ad19` / `nexus-v2-runtime`; final Step 10 evidence/test updates are committed in the closeout checkpoint.
 Schema version: `nexus.* @1`; SQLite migration version `10` (tests and persistent Hosted root)
 Policy version: `1` (fail-closed default policy)  
 Database version: `10` in isolated integration tests and the persistent synthetic pilot
