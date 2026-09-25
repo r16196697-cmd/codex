@@ -813,11 +813,28 @@ class MemoryPurgeTests(unittest.TestCase):
         human = self._human_verification("verify-proof-human")
         candidate = self.memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=human["verification_id"], review_trigger="purge proof")
         self.assertEqual(candidate["status"], "ADMITTED")
+        # Add representative durable references outside the memory tables.  The
+        # derived route object enters the real purge closure; the "supports"
+        # relation is deliberately a non-closure reference to the tombstone.
+        self.store.create_logical_ref(command_id="proof-logical-ref", ref_id="proof:claim", ref_type="artifact", object_id=self.claim, updated_by_run="run-7")
+        related_id = self._put("related-object-7", b"A synthetic object with a non-lineage reference.")
+        self.store.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id,supersedes) VALUES('class-claim-reason','OBJECT',?,'PUBLIC','[]','1',?,'agent','class-claim-7')", (self.claim, f"Synthetic reason names {self.claim} and {self.evidence}."))
+        self._classify("class-route-proof", "OBJECT", "route-object-proof")
+        route_payload = json.dumps({"schema_id":"nexus.route_decision","schema_version":1,"route_decision_id":"route-object-proof","run_or_subtask_id":"subtask-pending","route_policy_version":"1","task_class":"test","risk_class":"LOW","quality_requirement":"ROUTINE","user_policy_ref":"1","eligible_models":[],"excluded_models":[],"exclusion_reasons":[],"selected_model_class":"E0","selected_model_id":"synthetic-model","selected_model_profile_version":"1","reason_codes":["SYNTHETIC_PROOF"],"budget_snapshot":{"account_id":"proof-account","unit":"test","limit":0,"reserved":0,"consumed":0,"remaining":0,"model_calls_remaining":0,"tool_calls_remaining":0,"child_runs_remaining":0},"escalation_allowed":False,"created_at":datetime.now(timezone.utc).isoformat()}).encode()
+        self.store.put_object(command_id="put-route-object-proof", object_id="route-object-proof", payload=route_payload, object_type="artifact", created_by_run="run-pending", classification_assertion_ref="class-route-proof", derived_from=[self.claim])
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO subtasks(subtask_id,task_id,node_index,node_json,status,scheduled_run_id,command_id,created_at) VALUES('subtask-pending','task-7',0,'{}','READY','run-pending','proof-subtask','2026-01-01T00:00:00Z')")
+            self.store._record_command(conn, "proof-dag", "create_task_dag", "b" * 64, {"task_id":"task-7"})
+            conn.execute("INSERT INTO task_dags(task_id,root_run_id,dag_version,graph_hash,node_count,command_id,created_at) VALUES('task-7','run-7','proof',?,1,'proof-dag','2026-01-01T00:00:00Z')", ("c" * 64,))
+            self.store._record_command(conn, "proof-route-row", "schedule_route_decision", "a" * 64, {"decision_object_id":"route-object-proof"})
+            conn.execute("INSERT INTO route_decisions(route_decision_id,subtask_id,decision_object_id,decision_json,command_id,created_at) VALUES('route-object-proof','subtask-pending','route-object-proof',?,'proof-route-row','2026-01-01T00:00:00Z')", (route_payload.decode(),))
+            conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES('proof-attempt','task-7','subtask-pending',1,'run-pending','route-object-proof','TOOL','INITIAL',NULL,'READY','proof-attempt-command','2026-01-01T00:00:00Z')")
+        approval_id, effect_id, effect_inspector = self._seed_purge_identifier_audit()
         inspect_grant_id = "inspect-proof-task"
         now = datetime.now(timezone.utc)
-        self.authority.create_grant({"schema_id":"nexus.delegation_grant", "schema_version":1, "grant_id":inspect_grant_id, "issued_by":"human-root", "granted_to":"agent", "task_scope":["task-7"], "resource_scope":["task:task-7"], "action_scope":["INSPECT"], "audience_scope":["nexus-inspect"], "issued_at":now.isoformat(), "expires_at":(now+timedelta(days=1)).isoformat(), "status":"ACTIVE", "policy_version":"1"}, "create-inspect-proof-grant")
-        with self.store._connection() as conn:
-            conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant", "schema_version":1, "grant_id":inspect_grant_id, "issued_by":"human-root", "granted_to":"agent", "task_scope":["task-7"], "resource_scope":["task:task-7","route:route-object-proof","object:claim-7","object:manifest-7","approval:approval-verify-proof-human"], "action_scope":["INSPECT"], "audience_scope":["nexus-inspect"], "issued_at":now.isoformat(), "expires_at":(now+timedelta(days=1)).isoformat(), "status":"ACTIVE", "policy_version":"1"}, "create-inspect-proof-grant")
 
         # Preserve a real pre-purge database/object snapshot; the independent
         # journal remains external and will later be replayed onto this copy.
@@ -841,34 +858,161 @@ class MemoryPurgeTests(unittest.TestCase):
         def residue(store):
             with store._connection() as conn:
                 verification_rows = [dict(row) for row in conn.execute("SELECT verification_id,target_ref,evidence_used_json,result_json FROM verification_results WHERE verification_id IN ('verify-proof-integrity','verify-proof-human') ORDER BY verification_id")]
-                candidate_row = dict(conn.execute("SELECT candidate_id,claim_ref,metadata_json,status FROM memory_candidates WHERE candidate_id='candidate-7'").fetchone())
+                for row in verification_rows:
+                    result_doc = json.loads(row["result_json"])
+                    row["missing_evidence"] = result_doc.get("missing_evidence")
+                    row["conflicts"] = result_doc.get("conflicts")
+                candidate_row = dict(conn.execute("SELECT candidate_id,claim_ref,metadata_json,classification_assertion_ref,verification_ref,status FROM memory_candidates WHERE candidate_id='candidate-7'").fetchone())
                 evidence_rows = [dict(row) for row in conn.execute("SELECT candidate_id,evidence_object_id FROM memory_candidate_evidence WHERE candidate_id='candidate-7'")]
-                command_rows = [dict(row) for row in conn.execute("SELECT command_id,operation,request_hash,result_json FROM command_ledger WHERE command_id IN ('put-claim-7','put-evidence-7','retain-proof-claim','verify-verify-proof-integrity','verify-verify-proof-human','candidate-proof','proof-purge-execute') ORDER BY command_id")]
-                states = {row["object_id"]:row["payload_state"] for row in conn.execute("SELECT object_id,payload_state FROM object_states WHERE object_id IN (?,?)", (self.claim,self.evidence))}
-            return verification_rows,candidate_row,evidence_rows,command_rows,states
+                effect_row = dict(conn.execute("SELECT payload_object_ref,target_ref,payload_integrity_hash,idempotency_key,effect_json,external_receipt_ref FROM effects WHERE effect_id='effect-purge-sensitive'").fetchone())
+                approval_rows = [dict(row) for row in conn.execute("SELECT approval_id,target_ref,effect_id,payload_integrity_hash,approved_scope_json,reason,request_ref FROM approval_decisions WHERE approval_id IN ('approval-verify-proof-human','approval-purge-sensitive','approval-7') ORDER BY approval_id")]
+                classification_rows = [dict(row) for row in conn.execute("SELECT assertion_id,subject_type,subject_ref,reason,supersedes FROM classification_assertions WHERE subject_ref IN (?,?) OR assertion_id='class-claim-reason' ORDER BY assertion_id", (self.claim,self.evidence))]
+                logical_rows = [dict(row) for row in conn.execute("SELECT ref_id,current_object_id,revision FROM logical_refs WHERE ref_id='proof:claim'")]
+                relation_rows = [dict(row) for row in conn.execute("SELECT from_id,relation_type,to_id FROM object_relations WHERE from_id IN (?,?) OR to_id IN (?,?) ORDER BY from_id,relation_type,to_id", (self.claim,self.evidence,self.claim,self.evidence))]
+                runtime_rows = {
+                    "runs": [dict(row) for row in conn.execute("SELECT run_id,manifest_ref FROM runs WHERE manifest_ref IN ('manifest-7','manifest-pending')")],
+                    "run_manifest_inputs": [dict(row) for row in conn.execute("SELECT run_id,manifest_object_id,input_object_id FROM run_manifest_inputs WHERE input_object_id IN (?,?) OR manifest_object_id IN (?,?,?)", (self.claim,self.evidence,"manifest-7","manifest-pending","route-object-proof"))],
+                    "route_decisions": [dict(row) for row in conn.execute("SELECT decision_object_id,decision_json FROM route_decisions WHERE decision_object_id='route-object-proof'")],
+                    "subtask_attempts": [dict(row) for row in conn.execute("SELECT route_decision_ref FROM subtask_attempts WHERE attempt_id='proof-attempt'")],
+                }
+                command_rows = [dict(row) for row in conn.execute("SELECT command_id,operation,request_hash,result_json FROM command_ledger ORDER BY command_id")]
+                states = {row["object_id"]:row["payload_state"] for row in conn.execute("SELECT object_id,payload_state FROM object_states WHERE object_id IN (?,?,?,?,?)", (self.claim,self.evidence,"manifest-7","manifest-pending","route-object-proof"))}
+                effect_refs = [dict(row) for row in conn.execute("SELECT record_id,object_id,payload_uri,integrity_hash FROM purge_execution_refs WHERE object_id IN (?,?)", (self.claim,self.evidence))]
+                barrier_refs = [dict(row) for row in conn.execute("SELECT barrier_id,object_id FROM purge_barrier_refs WHERE object_id IN (?,?)", (self.claim,self.evidence))]
+                purge_control = {
+                    "plans": [dict(row) for row in conn.execute("SELECT plan_id,task_id,plan_hash,plan_json FROM purge_plan_records WHERE plan_id='plan-7'")],
+                    "executions": [dict(row) for row in conn.execute("SELECT record_id,plan_id,barrier_id,status,record_json FROM purge_execution_records WHERE record_id='record-7'")],
+                    "execution_refs": effect_refs,
+                    "barrier_refs": barrier_refs,
+                    "barrier": [dict(row) for row in conn.execute("SELECT barrier_id,plan_id,status FROM purge_barriers WHERE barrier_id='barrier-7'")],
+                }
+                # Scan every persisted user-table text value for these governed
+                # IDs, including JSON/nested JSON fields not anticipated above.
+                occurrences = {}
+                object_ids = (self.claim,self.evidence,"manifest-7","manifest-pending","route-object-proof")
+                for table_row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts_%'"):
+                    table = table_row[0]
+                    escaped_table = table.replace('"','""')
+                    for col_row in conn.execute(f'PRAGMA table_info("{escaped_table}")'):
+                        column = col_row[1]
+                        escaped_column = column.replace('"','""')
+                        for object_id in object_ids:
+                            try:
+                                if column.endswith("_json"):
+                                    needle = json.dumps(object_id)
+                                    count = conn.execute(f'SELECT COUNT(*) FROM "{escaped_table}" WHERE instr(CAST("{escaped_column}" AS TEXT),?)>0', (needle,)).fetchone()[0]
+                                elif column in {"reason", "request_ref"}:
+                                    count = conn.execute(f'SELECT COUNT(*) FROM "{escaped_table}" WHERE instr(CAST("{escaped_column}" AS TEXT),?)>0', (object_id,)).fetchone()[0]
+                                else:
+                                    count = conn.execute(f'SELECT COUNT(*) FROM "{escaped_table}" WHERE CAST("{escaped_column}" AS TEXT)=?', (object_id,)).fetchone()[0]
+                            except sqlite3.DatabaseError:
+                                continue
+                            if count:
+                                occurrences[f"{table}.{column}:{object_id}"] = count
+            return verification_rows,candidate_row,evidence_rows,command_rows,states,effect_row,approval_rows,classification_rows,logical_rows,relation_rows,runtime_rows,purge_control,occurrences
 
-        verified, memory_row, candidate_evidence, commands, object_states = residue(self.store)
-        self.assertEqual(object_states, {self.claim:"PURGED", self.evidence:"PURGED"})
+        verified, memory_row, candidate_evidence, commands, object_states, effect_row, approval_rows, classification_rows, logical_rows, relation_rows, runtime_rows, purge_control, occurrences = residue(self.store)
+        self.assertEqual(object_states, {self.claim:"PURGED", self.evidence:"PURGED", "manifest-7":"PURGED", "manifest-pending":"PURGED", "route-object-proof":"PURGED"})
         self.assertEqual(len(verified), 2)
         for row in verified:
             self.assertEqual(row["target_ref"], self.claim)
             self.assertIn(self.evidence, row["evidence_used_json"])
             self.assertIn(self.claim, row["result_json"])
             self.assertIn(self.evidence, row["result_json"])
+            self.assertNotIn(self.claim, json.dumps(row["missing_evidence"]))
+            self.assertNotIn(self.evidence, json.dumps(row["missing_evidence"]))
+            self.assertNotIn(self.claim, json.dumps(row["conflicts"]))
+            self.assertNotIn(self.evidence, json.dumps(row["conflicts"]))
         self.assertEqual(memory_row["claim_ref"], self.claim)
         self.assertEqual(memory_row["status"], "PURGED")
         self.assertIn(self.claim, memory_row["metadata_json"])
         self.assertIn(self.evidence, memory_row["metadata_json"])
         self.assertEqual(candidate_evidence, [{"candidate_id":"candidate-7", "evidence_object_id":self.evidence}])
+        self.assertEqual(memory_row["classification_assertion_ref"], "class-claim-7")
+        self.assertEqual(memory_row["verification_ref"], "verify-proof-human")
+        self.assertIn(self.claim, {row["subject_ref"] for row in classification_rows})
+        self.assertTrue(any(self.claim in row["reason"] and self.evidence in row["reason"] for row in classification_rows))
+        self.assertTrue(any(row["supersedes"] == "class-claim-7" for row in classification_rows))
+        self.assertEqual(logical_rows, [{"ref_id":"proof:claim", "current_object_id":self.claim, "revision":1}])
+        self.assertTrue(any(row["relation_type"] == "supports" and row["to_id"] == self.claim for row in relation_rows))
+        self.assertTrue(any(row["relation_type"] == "derived_from" and row["to_id"] == self.claim for row in relation_rows))
+        self.assertIn("manifest-7", {row["manifest_ref"] for row in runtime_rows["runs"]})
+        self.assertIn("manifest-pending", {row["manifest_ref"] for row in runtime_rows["runs"]})
+        self.assertEqual(runtime_rows["run_manifest_inputs"], [])
+        self.assertTrue(any(row["decision_object_id"] == "route-object-proof" and "route-object-proof" in row["decision_json"] for row in runtime_rows["route_decisions"]))
+        self.assertEqual(runtime_rows["subtask_attempts"], [{"route_decision_ref":"route-object-proof"}])
+        self.assertEqual(effect_row["payload_object_ref"], self.claim)
+        self.assertEqual(effect_row["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(effect_row["payload_integrity_hash"], "0" * 64)
+        self.assertTrue(effect_row["idempotency_key"].startswith("REDACTED_PURGED:"))
+        self.assertIn("REDACTED_PURGED", effect_row["effect_json"])
+        self.assertIsNone(effect_row["external_receipt_ref"])
+        self.assertNotIn(self.claim, effect_row["effect_json"])
+        self.assertNotIn(self.evidence, effect_row["effect_json"])
+        approval_by_id = {row["approval_id"]:row for row in approval_rows}
+        self.assertEqual(approval_by_id["approval-verify-proof-human"]["target_ref"], self.claim)
+        self.assertEqual(approval_by_id["approval-verify-proof-human"]["effect_id"], "verify-proof-human")
+        self.assertEqual(approval_by_id["approval-purge-sensitive"]["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(approval_by_id["approval-purge-sensitive"]["payload_integrity_hash"], None)
+        self.assertEqual(approval_by_id["approval-purge-sensitive"]["approved_scope_json"], "[]")
+        self.assertIsNone(approval_by_id["approval-purge-sensitive"]["reason"])
+        self.assertIsNone(approval_by_id["approval-purge-sensitive"]["request_ref"])
+        self.assertIn("verification_results.target_ref:claim-7", occurrences)
+        self.assertIn("memory_candidates.metadata_json:claim-7", occurrences)
 
         # Normal read APIs/inspect and the paused verifier replay candidate are
         # measured without changing those APIs in this proof-only task.
         self.assertEqual(self.verifier.get("verify-proof-integrity")["target_ref"], self.claim)
         self.assertEqual(self.verifier.get("verify-proof-integrity")["evidence_used"], [self.evidence])
         self.assertEqual(self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7"), integrity)
-        inspection = InspectService(self.store, self.authority).task(grant_id=inspect_grant_id, task_id="task-7")
-        inspected = {item["verification_id"]:item for item in inspection["verifications"]}
-        self.assertEqual(inspected["verify-proof-integrity"]["target_ref"], "REDACTED_PURGED")
+        with self.store._connection() as conn:
+            before_replay_counts = {
+                "commands": conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0],
+                "purge_ledger": conn.execute("SELECT COUNT(*) FROM purge_ledger").fetchone()[0],
+                "executions": conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0],
+            }
+        journal_count = len(self.purge.journal.read())
+        # Object creation's committed ledger replay is reachable after purge
+        # and returns its original object identity. Logical-ref replay returns
+        # only its revision; there is no public logical-ref getter.
+        self.assertEqual(self.store.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), self.claim)
+        self.assertEqual(self.store.put_object(command_id="put-route-object-proof", object_id="route-object-proof", payload=route_payload, object_type="artifact", created_by_run="run-pending", classification_assertion_ref="class-route-proof", derived_from=[self.claim]), "route-object-proof")
+        self.assertEqual(self.store.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)["to_id"], self.claim)
+        self.assertEqual(self.store.create_logical_ref(command_id="proof-logical-ref", ref_id="proof:claim", ref_type="artifact", object_id=self.claim, updated_by_run="run-7"), 1)
+        with self.assertRaisesRegex(RuntimeDenied, "MEMORY_RUN_NOT_ACTIVE"):
+            self.memory.retain_raw(command_id="retain-proof-claim", object_id=self.claim, run_id="run-7")
+        self.assertEqual(self.purge.execute(command_id="proof-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7"), outcome)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0], before_replay_counts["commands"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_ledger").fetchone()[0], before_replay_counts["purge_ledger"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0], before_replay_counts["executions"])
+        self.assertEqual(len(self.purge.journal.read()), journal_count)
+        with self.assertRaises(PurgedObject):
+            self.store.get_payload(self.claim)
+        proof_inspector = InspectService(self.store, self.authority)
+        # The task aggregate fails closed because purging removed the route
+        # envelope needed to establish attempt classification; the dedicated
+        # object metadata path returns PURGED state while suppressing the
+        # object_id field; the caller-supplied lookup key is not echoed.
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY"):
+            proof_inspector.task(grant_id=inspect_grant_id, task_id="task-7")
+        object_view = proof_inspector.object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id=self.claim)
+        self.assertEqual((object_view["object_id"], object_view["payload_state"]), (None, "PURGED"))
+        manifest_view = proof_inspector.object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id="manifest-7")
+        self.assertEqual((manifest_view["object_id"], manifest_view["payload_state"]), (None, "PURGED"))
+        human_approval_view = proof_inspector.approval(grant_id=inspect_grant_id, task_id="task-7", approval_id="approval-verify-proof-human")
+        self.assertEqual(human_approval_view["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(human_approval_view["effect_id"], "REDACTED_PURGED")
+        self.assertEqual(human_approval_view["approved_scope"], ["VERIFY", "REDACTED_PURGED"])
+        effect_view = effect_inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id="effect-purge-sensitive")
+        self.assertEqual(effect_view["target_ref"], "REDACTED_PURGED")
+        approval_view = effect_inspector.approval(grant_id="purge-audit-inspect", task_id="task-7", approval_id=approval_id, include_payload_hash=True)
+        self.assertEqual(approval_view["target_ref"], "REDACTED_PURGED")
+        trace_view = effect_inspector.trace_events(grant_id="purge-audit-inspect", task_id="task-7", run_id="run-7")
+        self.assertTrue(any("REDACTED_PURGED" in event["object_refs"] for event in trace_view))
+        self.assertFalse(any(self.claim in json.dumps(event) or self.evidence in json.dumps(event) for event in trace_view))
+        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_NOT_FOUND"):
+            effect_inspector.route(grant_id=inspect_grant_id, task_id="task-7", route_id="route-object-proof")
         self.assertEqual(self.memory.search_raw(query="synthetic Nexus fact", run_id="run-7"), [])
         self.assertEqual(self.memory.search_admitted(query="synthetic Nexus fact", run_id="run-7"), [])
         with self.assertRaises(PurgedObject):
@@ -889,6 +1033,11 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertTrue(all(row["request_hash"] for row in commands))
         # request_hash is an opaque commitment; no attempt is made to recover
         # its input from the digest.
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(set(self.purge.journal.read()[-1]["protected_refs"]), set(object_states))
+        self.assertEqual(self.store.get_object_metadata(self.claim)["payload_state"], "PURGED")
+        self.assertFalse(hasattr(self.store, "get_logical_ref"))
 
         restored = ObjectStore(backup_root)
         try:
@@ -897,15 +1046,56 @@ class MemoryPurgeTests(unittest.TestCase):
             replay = restored_purge.replay_independent_journal()
             self.assertTrue(replay["normal_allowed"])
             restored_residue = residue(restored)
-            r_verified, r_candidate, r_evidence, r_commands, r_states = restored_residue
-            self.assertEqual(r_states, {self.claim:"PURGED", self.evidence:"PURGED"})
+            r_verified, r_candidate, r_evidence, r_commands, r_states, r_effect, r_approvals, r_classifications, r_logicals, r_relations, r_runtime, r_purge, r_occurrences = restored_residue
+            self.assertEqual(r_states, {self.claim:"PURGED", self.evidence:"PURGED", "manifest-7":"PURGED", "manifest-pending":"PURGED", "route-object-proof":"PURGED"})
             self.assertEqual([(row["verification_id"],row["target_ref"],row["evidence_used_json"],row["result_json"]) for row in r_verified], [(row["verification_id"],row["target_ref"],row["evidence_used_json"],row["result_json"]) for row in verified])
             self.assertEqual((r_candidate["claim_ref"],r_candidate["metadata_json"],r_candidate["status"]), (memory_row["claim_ref"],memory_row["metadata_json"],"PURGED"))
             self.assertEqual(r_evidence, candidate_evidence)
             self.assertTrue(all(row["request_hash"] for row in r_commands))
+            restored_command_ids = {row["command_id"] for row in r_commands}
+            self.assertNotIn("proof-purge-plan", restored_command_ids)
+            self.assertNotIn("proof-purge-execute", restored_command_ids)
+            self.assertEqual(r_effect, effect_row)
+            pre_snapshot_approvals = [row for row in approval_rows if row["approval_id"] != "approval-7"]
+            self.assertEqual(r_approvals, pre_snapshot_approvals)
+            self.assertEqual(r_classifications, classification_rows)
+            self.assertEqual(r_logicals, logical_rows)
+            self.assertEqual(r_relations, relation_rows)
+            self.assertEqual(r_runtime, runtime_rows)
+            # The external journal replay reconstructs the barrier projection,
+            # not the post-snapshot plan/execution CommandLedger documents.
+            self.assertEqual(r_purge["plans"], [])
+            self.assertEqual(r_purge["executions"], [])
+            self.assertEqual(r_purge["execution_refs"], [])
+            self.assertEqual(r_purge["barrier_refs"], purge_control["barrier_refs"])
+            self.assertEqual(r_purge["barrier"], purge_control["barrier"])
+            self.assertEqual(set(restored_purge.journal.read()[-1]["protected_refs"]), set(r_states))
+            with restored._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            post_snapshot_tables = {"command_ledger", "purge_plan_records", "purge_execution_records", "purge_execution_refs"}
+            stable_live = {key:value for key,value in occurrences.items() if key.split(".",1)[0] not in post_snapshot_tables}
+            stable_restored = {key:value for key,value in r_occurrences.items() if key.split(".",1)[0] not in post_snapshot_tables}
+            self.assertEqual(stable_restored, stable_live)
+            self.assertFalse(any(key.startswith(("purge_plan_records.","purge_execution_records.","purge_execution_refs.")) for key in r_occurrences))
             with self.assertRaises(PurgedObject):
                 restored.get_payload(self.claim)
-            self.assertEqual(VerificationService(restored, self.authority).get("verify-proof-integrity")["evidence_used"], [self.evidence])
+            restored_verifier = VerificationService(restored, self.authority)
+            self.assertEqual(restored_verifier.get("verify-proof-integrity")["evidence_used"], [self.evidence])
+            restored_command_count = len(r_commands)
+            self.assertEqual(restored_verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7"), integrity)
+            self.assertEqual(restored.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), self.claim)
+            self.assertEqual(restored.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)["to_id"], self.claim)
+            self.assertEqual(restored.create_logical_ref(command_id="proof-logical-ref", ref_id="proof:claim", ref_type="artifact", object_id=self.claim, updated_by_run="run-7"), 1)
+            with self.assertRaises(PurgedObject):
+                restored_memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+            with restored._connection() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0], restored_command_count)
+            with self.assertRaisesRegex(RuntimeDenied, "INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY"):
+                InspectService(restored, self.authority).task(grant_id=inspect_grant_id, task_id="task-7")
+            with self.assertRaisesRegex(RuntimeDenied, "INSPECT_OBJECT_TASK_UNRESOLVED"):
+                InspectService(restored, self.authority).object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id="manifest-7")
+            restored_inspector = InspectService(restored, self.authority)
+            self.assertEqual(restored_inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id="effect-purge-sensitive")["target_ref"], "REDACTED_PURGED")
         finally:
             restored.close()
 
