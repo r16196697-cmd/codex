@@ -32,6 +32,8 @@
   "host_tool_registry": {
     "mcp_server_count": 3,
     "mcp_tool_count": 172,
+    "observation_source": "CALLER_OBSERVED_ACTIVE_RUNTIME_TOOL_METADATA",
+    "reproducibility": "NOT_ENUMERATED_BY_COMMITTED_DISCOVERY_HARNESS",
     "status": "OBSERVED_RUNTIME_TOOL_METADATA",
     "tool_count": 186,
     "ui_skill_catalog_count": "UNAVAILABLE"

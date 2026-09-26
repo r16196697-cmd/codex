@@ -101,6 +101,21 @@ class HostCapabilityPhase1Tests(unittest.TestCase):
             self.assertEqual(summary["plugin_catalog"]["status"], "UNAVAILABLE_BY_SUPPORTED_ENUMERATION_INTERFACE")
             self.assertEqual(summary["tokenizer_telemetry"], "UNAVAILABLE")
 
+    def test_runtime_tool_counts_are_explicitly_caller_observations_not_harness_enumeration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            home, repo = base / "home", base / "repo"
+            repo.mkdir()
+            _, summary = DISCOVERY.build_inventory(home=home, repo_root=repo, skill_roots=[],
+                runtime_tools=186, mcp_tools=172, mcp_servers=3)
+            registry = summary["host_tool_registry"]
+            self.assertEqual(registry["observation_source"], "CALLER_SUPPLIED_RUNTIME_TOOL_COUNTS")
+            self.assertEqual(registry["reproducibility"], "NOT_ENUMERATED_BY_COMMITTED_DISCOVERY_HARNESS")
+            self.assertEqual((registry["tool_count"], registry["mcp_tool_count"], registry["mcp_server_count"]), (186, 172, 3))
+            result = json.loads((ROOT / "eval" / "academy" / "results" / "host-capability-phase1-fixture.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["host_tool_registry"]["observation_source"], "CALLER_OBSERVED_ACTIVE_RUNTIME_TOOL_METADATA")
+            self.assertEqual(result["host_tool_registry"]["reproducibility"], "NOT_ENUMERATED_BY_COMMITTED_DISCOVERY_HARNESS")
+
 
 if __name__ == "__main__":
     unittest.main()

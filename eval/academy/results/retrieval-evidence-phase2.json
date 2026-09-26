@@ -1,0 +1,1336 @@
+{
+  "aggregate_retrieval_metrics": {
+    "admitted": {
+      "mrr": 0.35714285714285715,
+      "precision@1": 0.35714285714285715,
+      "precision@3": 0.16666666666666669,
+      "precision@5": 0.1,
+      "recall@1": 0.5416666666666667,
+      "recall@3": 0.625,
+      "recall@5": 0.625
+    },
+    "raw": {
+      "mrr": 0.35714285714285715,
+      "precision@1": 0.35714285714285715,
+      "precision@3": 0.16666666666666669,
+      "precision@5": 0.1,
+      "recall@1": 0.5416666666666667,
+      "recall@3": 0.625,
+      "recall@5": 0.625
+    }
+  },
+  "authority_scope_unchanged": true,
+  "core_schema_version": 22,
+  "corpus": {
+    "all_payloads_unique": true,
+    "candidate_status_counts": {
+      "ADMITTED": 13,
+      "QUARANTINED": 4
+    },
+    "item_count": 18,
+    "query_count": 14,
+    "raw_discovered_is_distinct_from_admitted_and_eligible": true,
+    "synthetic_public_only": true,
+    "verification_verdict_counts": {
+      "INCONCLUSIVE": 1,
+      "PASS": 17
+    }
+  },
+  "eligibility_exclusions": {
+    "authority_inaccessible_excluded": true,
+    "classification_incompatible_excluded": true,
+    "expired_excluded_from_raw_and_admitted": true,
+    "quarantined_excluded_from_admitted": true
+  },
+  "evidence_qualification": {
+    "A_SINGLE_AUTHORITATIVE_SYNTHETIC_SOURCE": {
+      "observation": "T1 can record intact bytes, not semantic support; candidate remains quarantined",
+      "result": "INTEGRITY_ONLY"
+    },
+    "B_TWO_INDEPENDENT_CONSISTENT_SOURCES": {
+      "cases": [
+        "retention-current-14d",
+        "route-local-only",
+        "checksum-independent-confirmation"
+      ],
+      "result": "PASS",
+      "verification": "T3_HUMAN_OR_DOMAIN"
+    },
+    "C_FRESH_PRIMARY_VS_STALE_SECONDARY": {
+      "current_candidate": "ADMITTED",
+      "ranking_policy": "NOT_FROZEN; both facts remain retrievable when matched",
+      "stale_candidate": "ADMITTED"
+    },
+    "D_CONFLICTING_SYNTHETIC_SOURCES": {
+      "candidate_status": "QUARANTINED",
+      "source_relations": [
+        "SUPPORTS_12D",
+        "CONTRADICTS_12D"
+      ],
+      "truth_state": "UNKNOWN"
+    },
+    "E_INSUFFICIENT_EVIDENCE": {
+      "candidate_created": false,
+      "expected": "INCONCLUSIVE",
+      "verdict": "INCONCLUSIVE"
+    },
+    "F_MALICIOUS_INSTRUCTION_LIKE_CONTENT": {
+      "authority_scope_unchanged": true,
+      "candidate_status": "QUARANTINED",
+      "content_treated_as": "UNTRUSTED_DATA"
+    },
+    "G_SOURCE_PROVENANCE_MISSING": {
+      "candidate_status": "QUARANTINED",
+      "source_id": "MISSING"
+    },
+    "H_T1_INTEGRITY_WITHOUT_SEMANTIC_SUPPORT": {
+      "candidate_status": "QUARANTINED",
+      "semantic_support": "NOT_ESTABLISHED",
+      "verdict": "PASS"
+    }
+  },
+  "execution_mode": "SYNTHETIC_DETERMINISTIC_ONLY",
+  "fixture_id": "academy-phase2-synthetic-corpus-v1",
+  "fixture_sha256": "c913ff262674e133cde63f0333421cf2828e3d8fe218eec5d91148412fa5d081",
+  "host_configuration_observation": {
+    "chatgpt_primary_memory": "OFF",
+    "cross_session_effect_while_primary_memory_off": "NOT_INDEPENDENTLY_VERIFIED",
+    "custom_instructions": "ON / UNCHANGED",
+    "future_real_model_ab_contamination_variable": "TOOL_CHAT_MEMORY_GENERATION",
+    "global_agents_md": "UNCHANGED",
+    "project_experience_curator": "UNCHANGED / DISCOVERED / UNEVALUATED",
+    "tool_chat_memory_generation": "ON_FORCED / USER_NOT_CONTROLLABLE"
+  },
+  "policy_observation": {
+    "base_policy": "REPOSITORY_DEFAULT_FAIL_CLOSED_POLICY",
+    "other_policy_fields_changed": false,
+    "persistent_default_policy_modified": false,
+    "test_only_difference": "trust_anchors replaced with academy-human-root"
+  },
+  "host_token_telemetry": "UNAVAILABLE",
+  "model_execution_receipts": [],
+  "model_invocation_count": 0,
+  "model_quality": "UNAVAILABLE / NOT TESTED",
+  "no_expected_id_fallback": true,
+  "packs": {
+    "R0_NONE": {
+      "conflict_count": 0,
+      "entries": [],
+      "fresh_stale_item_count": 0,
+      "independent_source_count": 0,
+      "model_exposure": "NOT_EXECUTED",
+      "object_count": 0,
+      "object_refs": [],
+      "pack_id": "R0_NONE",
+      "record_type": "PROPOSED_GROUNDING_PACK_NOT_EXPOSED",
+      "serialized_bytes": 2,
+      "serialized_chars": 2,
+      "source_count": 0,
+      "token_count": "UNAVAILABLE"
+    },
+    "R1_TOP_K_MINIMAL": {
+      "conflict_count": 0,
+      "entries": [
+        {
+          "claim": "The current synthetic archive retention window is fourteen days.",
+          "claim_ref": "p2-claim-retention-current-14d",
+          "evidence_refs": [
+            "p2-evidence-retention-current-14d-0",
+            "p2-evidence-retention-current-14d-1"
+          ],
+          "provenance": [
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-a",
+              "source_type": "PRIMARY_SYNTHETIC"
+            },
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-b",
+              "source_type": "PRIMARY_SYNTHETIC"
+            }
+          ]
+        }
+      ],
+      "fresh_stale_item_count": 0,
+      "ground_truth_relevant_coverage": [
+        "p2-claim-retention-current-14d"
+      ],
+      "independent_source_count": 2,
+      "model_exposure": "NOT_EXECUTED",
+      "object_count": 3,
+      "object_refs": [
+        "p2-claim-retention-current-14d",
+        "p2-evidence-retention-current-14d-0",
+        "p2-evidence-retention-current-14d-1"
+      ],
+      "pack_id": "R1_TOP_K_MINIMAL",
+      "record_type": "PROPOSED_GROUNDING_PACK_NOT_EXPOSED",
+      "serialized_bytes": 490,
+      "serialized_chars": 490,
+      "source_count": 2,
+      "source_query_ids": [
+        "q-retention-broad"
+      ],
+      "token_count": "UNAVAILABLE"
+    },
+    "R2_BROAD_ELIGIBLE": {
+      "conflict_count": 0,
+      "entries": [
+        {
+          "claim": "The current synthetic archive retention window is fourteen days.",
+          "claim_ref": "p2-claim-retention-current-14d",
+          "evidence_refs": [
+            "p2-evidence-retention-current-14d-0",
+            "p2-evidence-retention-current-14d-1"
+          ],
+          "provenance": [
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-a",
+              "source_type": "PRIMARY_SYNTHETIC"
+            },
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-b",
+              "source_type": "PRIMARY_SYNTHETIC"
+            }
+          ]
+        },
+        {
+          "claim": "A fortnight is the current synthetic archive retention period.",
+          "claim_ref": "p2-claim-retention-alias-fortnight",
+          "evidence_refs": [
+            "p2-evidence-retention-alias-fortnight-0",
+            "p2-evidence-retention-alias-fortnight-1"
+          ],
+          "provenance": [
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-c",
+              "source_type": "PRIMARY_SYNTHETIC"
+            },
+            {
+              "authority_class": "CORROBORATING_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "org-d",
+              "source_type": "SECONDARY_SYNTHETIC"
+            }
+          ]
+        },
+        {
+          "claim": "The current synthetic archive uses fourteen days of retention and a local-only sample route.",
+          "claim_ref": "p2-claim-composition-archive-route",
+          "evidence_refs": [
+            "p2-evidence-composition-archive-route-0",
+            "p2-evidence-composition-archive-route-1"
+          ],
+          "provenance": [
+            {
+              "authority_class": "AUTHORITATIVE_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "composition-org",
+              "source_type": "PRIMARY_SYNTHETIC"
+            },
+            {
+              "authority_class": "CORROBORATING_SYNTHETIC",
+              "freshness": "FRESH",
+              "independence_group": "composition-review-org",
+              "source_type": "SECONDARY_SYNTHETIC"
+            }
+          ]
+        },
+        {
+          "claim": "An archived legacy retention setting recorded seven days and was superseded in 2024.",
+          "claim_ref": "p2-claim-retention-stale-7d",
+          "evidence_refs": [
+            "p2-evidence-retention-stale-7d-0",
+            "p2-evidence-retention-stale-7d-1"
+          ],
+          "provenance": [
+            {
+              "authority_class": "SECONDARY",
+              "freshness": "STALE_SUPERSEDED",
+              "independence_group": "org-old",
+              "source_type": "SECONDARY_SYNTHETIC"
+            },
+            {
+              "authority_class": "SECONDARY",
+              "freshness": "STALE_SUPERSEDED",
+              "independence_group": "org-old-copy",
+              "source_type": "SECONDARY_SYNTHETIC"
+            }
+          ]
+        }
+      ],
+      "fresh_stale_item_count": 1,
+      "ground_truth_relevant_coverage": [
+        "p2-claim-composition-archive-route",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-retention-current-14d"
+      ],
+      "independent_source_count": 8,
+      "model_exposure": "NOT_EXECUTED",
+      "object_count": 12,
+      "object_refs": [
+        "p2-claim-composition-archive-route",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-retention-current-14d",
+        "p2-claim-retention-stale-7d",
+        "p2-evidence-composition-archive-route-0",
+        "p2-evidence-composition-archive-route-1",
+        "p2-evidence-retention-alias-fortnight-0",
+        "p2-evidence-retention-alias-fortnight-1",
+        "p2-evidence-retention-current-14d-0",
+        "p2-evidence-retention-current-14d-1",
+        "p2-evidence-retention-stale-7d-0",
+        "p2-evidence-retention-stale-7d-1"
+      ],
+      "pack_id": "R2_BROAD_ELIGIBLE",
+      "record_type": "PROPOSED_GROUNDING_PACK_NOT_EXPOSED",
+      "serialized_bytes": 2056,
+      "serialized_chars": 2056,
+      "source_count": 8,
+      "source_query_ids": [
+        "q-retention-broad",
+        "q-stale-window"
+      ],
+      "token_count": "UNAVAILABLE"
+    }
+  },
+  "provider_cost_telemetry": "UNAVAILABLE",
+  "query_results": {
+    "q-alias-fortnight": {
+      "admitted_ids": [
+        "p2-claim-retention-alias-fortnight"
+      ],
+      "admitted_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "eligible_ids": [
+        "p2-claim-retention-alias-fortnight"
+      ],
+      "ground_truth_relevant_ids": [
+        "p2-claim-retention-alias-fortnight"
+      ],
+      "query": "fortnight archive period",
+      "raw_annotations": [
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-retention-alias-fortnight",
+          "relevant": true
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-retention-alias-fortnight"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      }
+    },
+    "q-codeword": {
+      "admitted_ids": [
+        "p2-claim-academy-codeword-cedar"
+      ],
+      "admitted_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "eligible_ids": [
+        "p2-claim-academy-codeword-cedar"
+      ],
+      "ground_truth_relevant_ids": [
+        "p2-claim-academy-codeword-cedar"
+      ],
+      "query": "academy code word cedar",
+      "raw_annotations": [
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-academy-codeword-cedar",
+          "relevant": true
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-academy-codeword-cedar"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      }
+    },
+    "q-composition": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [
+        "p2-claim-composition-archive-route",
+        "p2-claim-retention-current-14d",
+        "p2-claim-route-local-only"
+      ],
+      "query": "current archive retention and route mode",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      }
+    },
+    "q-current-retention": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-retention-current-14d"
+      ],
+      "query": "current archive retention period fourteen days",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      }
+    },
+    "q-independent-sources": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [
+        "p2-claim-checksum-independent-confirmation"
+      ],
+      "query": "independent confirmation checksum chain",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": 0.0,
+        "recall@3": 0.0,
+        "recall@5": 0.0
+      }
+    },
+    "q-insufficient-window": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "exactly eleven day archive window",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    },
+    "q-missing-provenance": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "fact incomplete provenance source URL",
+      "raw_annotations": [
+        {
+          "candidate_status": "QUARANTINED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-missing-source-provenance",
+          "relevant": false
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-missing-source-provenance"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    },
+    "q-personal-label": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "personal internal label",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    },
+    "q-quarantined-amber": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "unverified old code word amber",
+      "raw_annotations": [
+        {
+          "candidate_status": "QUARANTINED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-old-quarantined-amber",
+          "relevant": false
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-old-quarantined-amber"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    },
+    "q-restricted-label": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "restricted label zircon",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    },
+    "q-retention-broad": {
+      "admitted_ids": [
+        "p2-claim-retention-current-14d",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-composition-archive-route"
+      ],
+      "admitted_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 1.0,
+        "precision@5": 0.6,
+        "recall@1": 0.3333333333333333,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "eligible_ids": [
+        "p2-claim-retention-current-14d",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-composition-archive-route"
+      ],
+      "ground_truth_relevant_ids": [
+        "p2-claim-composition-archive-route",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-retention-current-14d"
+      ],
+      "query": "archive retention",
+      "raw_annotations": [
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-retention-current-14d",
+          "relevant": true
+        },
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-retention-alias-fortnight",
+          "relevant": true
+        },
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-composition-archive-route",
+          "relevant": true
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-retention-current-14d",
+        "p2-claim-retention-alias-fortnight",
+        "p2-claim-composition-archive-route"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 1.0,
+        "precision@5": 0.6,
+        "recall@1": 0.3333333333333333,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 1.0,
+        "precision@5": 0.6,
+        "recall@1": 0.3333333333333333,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      }
+    },
+    "q-route": {
+      "admitted_ids": [
+        "p2-claim-route-local-only"
+      ],
+      "admitted_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "eligible_ids": [
+        "p2-claim-route-local-only"
+      ],
+      "ground_truth_relevant_ids": [
+        "p2-claim-route-local-only"
+      ],
+      "query": "current sample route local only network egress",
+      "raw_annotations": [
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-route-local-only",
+          "relevant": true
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-route-local-only"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      }
+    },
+    "q-stale-window": {
+      "admitted_ids": [
+        "p2-claim-retention-stale-7d"
+      ],
+      "admitted_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "eligible_ids": [
+        "p2-claim-retention-stale-7d"
+      ],
+      "ground_truth_relevant_ids": [
+        "p2-claim-retention-stale-7d"
+      ],
+      "query": "archived legacy retention seven days",
+      "raw_annotations": [
+        {
+          "candidate_status": "ADMITTED",
+          "classification": "PUBLIC",
+          "expiry_status": "NOT_EXPIRED",
+          "object_id": "p2-claim-retention-stale-7d",
+          "relevant": true
+        }
+      ],
+      "raw_discovered_ids": [
+        "p2-claim-retention-stale-7d"
+      ],
+      "raw_retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      },
+      "retrieval_metrics": {
+        "mrr": 1.0,
+        "precision@1": 1.0,
+        "precision@3": 0.3333333333333333,
+        "precision@5": 0.2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+        "recall@5": 1.0
+      }
+    },
+    "q-untrusted-source": {
+      "admitted_ids": [],
+      "admitted_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "eligible_ids": [],
+      "ground_truth_relevant_ids": [],
+      "query": "untrusted source additional authority",
+      "raw_annotations": [],
+      "raw_discovered_ids": [],
+      "raw_retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      },
+      "retrieval_metrics": {
+        "mrr": 0.0,
+        "precision@1": 0.0,
+        "precision@3": 0.0,
+        "precision@5": 0.0,
+        "recall@1": null,
+        "recall@3": null,
+        "recall@5": null
+      }
+    }
+  },
+  "query_robustness": {
+    "normalization_candidate": "FORMED / ACADEMY-ONLY",
+    "probes": [
+      {
+        "Q0": {
+          "error": "no such column: only",
+          "error_type": "OperationalError",
+          "query": "local-only",
+          "status": "ERROR"
+        },
+        "Q1": {
+          "query": "local only",
+          "returned_ids": [
+            "p2-claim-route-local-only",
+            "p2-claim-composition-archive-route"
+          ],
+          "status": "SUCCESS"
+        },
+        "probe_id": "hyphen",
+        "q0_raw": "local-only"
+      },
+      {
+        "Q0": {
+          "query": "\"cedar\"",
+          "returned_ids": [
+            "p2-claim-academy-codeword-cedar"
+          ],
+          "status": "SUCCESS"
+        },
+        "Q1": {
+          "query": "cedar",
+          "returned_ids": [
+            "p2-claim-academy-codeword-cedar"
+          ],
+          "status": "SUCCESS"
+        },
+        "probe_id": "quote",
+        "q0_raw": "\"cedar\""
+      },
+      {
+        "Q0": {
+          "error": "fts5: syntax error near \"'\"",
+          "error_type": "OperationalError",
+          "query": "user's archive",
+          "status": "ERROR"
+        },
+        "Q1": {
+          "query": "user s archive",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "probe_id": "apostrophe",
+        "q0_raw": "user's archive"
+      },
+      {
+        "Q0": {
+          "error": "fts5: syntax error near \"/\"",
+          "error_type": "OperationalError",
+          "query": "read/write",
+          "status": "ERROR"
+        },
+        "Q1": {
+          "query": "read write",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "probe_id": "slash",
+        "q0_raw": "read/write"
+      },
+      {
+        "Q0": {
+          "error": "no such column: phase",
+          "error_type": "OperationalError",
+          "query": "phase: two",
+          "status": "ERROR"
+        },
+        "Q1": {
+          "query": "phase two",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "probe_id": "colon",
+        "q0_raw": "phase: two"
+      },
+      {
+        "Q0": {
+          "error": "fts5: syntax error near \"current\"",
+          "error_type": "OperationalError",
+          "query": "current (primary)",
+          "status": "ERROR"
+        },
+        "Q1": {
+          "query": "current primary",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "probe_id": "parentheses",
+        "q0_raw": "current (primary)"
+      },
+      {
+        "Q0": {
+          "query": "\"retention period\"",
+          "returned_ids": [
+            "p2-claim-retention-alias-fortnight"
+          ],
+          "status": "SUCCESS"
+        },
+        "Q1": {
+          "query": "retention period",
+          "returned_ids": [
+            "p2-claim-retention-alias-fortnight"
+          ],
+          "status": "SUCCESS"
+        },
+        "probe_id": "multiword_phrase",
+        "q0_raw": "\"retention period\""
+      },
+      {
+        "Q0": {
+          "query": "保留期限",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "Q1": {
+          "query": "保留期限",
+          "returned_ids": [],
+          "status": "SUCCESS"
+        },
+        "probe_id": "unicode_chinese",
+        "q0_raw": "保留期限"
+      },
+      {
+        "Q0": {
+          "query": "CeDaR",
+          "returned_ids": [
+            "p2-claim-academy-codeword-cedar"
+          ],
+          "status": "SUCCESS"
+        },
+        "Q1": {
+          "query": "CeDaR",
+          "returned_ids": [
+            "p2-claim-academy-codeword-cedar"
+          ],
+          "status": "SUCCESS"
+        },
+        "probe_id": "mixed_case",
+        "q0_raw": "CeDaR"
+      }
+    ],
+    "q1_differs_from_q0": true
+  },
+  "real_public_search": {
+    "execution_source": "CODEX_HOST_DECLARED",
+    "provider_model_request_id": "UNAVAILABLE",
+    "receipt_count": 1,
+    "receipts": [
+      {
+        "evidence_object_id": "p2-live-public-search-evidence",
+        "query": "SQLite FTS5 MATCH query syntax",
+        "raw_url_and_excerpt_in_committed_result": false,
+        "source_host": "www.sqlite.org",
+        "trace_event_id": "evt-p2-live-public-search-trace-evidence",
+        "verification_id": "p2-live-public-search-verification",
+        "verification_semantics": "T1 integrity of stored receipt bytes only; no semantic source qualification",
+        "verification_verdict": "PASS"
+      }
+    ],
+    "status": "RECORDED_THROUGH_HOSTED_EVIDENCE_API"
+  },
+  "replay": {
+    "after": {
+      "admitted_rows": 13,
+      "candidate_rows": 17,
+      "commands": 323,
+      "model_runs": 0,
+      "objects": 58,
+      "raw_rows": 18,
+      "reservations": 0,
+      "runs": 2,
+      "trace_events": 60,
+      "verification_rows": 19
+    },
+    "before": {
+      "admitted_rows": 13,
+      "candidate_rows": 17,
+      "commands": 323,
+      "model_runs": 0,
+      "objects": 58,
+      "raw_rows": 18,
+      "reservations": 0,
+      "runs": 2,
+      "trace_events": 60,
+      "verification_rows": 19
+    },
+    "exact_replay": "RETURNED_ORIGINAL_COMMITTED_RESULT",
+    "no_duplicate_mutation": true,
+    "same_command_changed_object": "COMMAND_CONFLICT"
+  },
+  "runtime_persistence": {
+    "final_persisted_counts": {
+      "admitted_rows": 13,
+      "candidate_rows": 17,
+      "commands": 331,
+      "model_runs": 0,
+      "objects": 58,
+      "raw_rows": 18,
+      "reservations": 0,
+      "runs": 2,
+      "trace_events": 64,
+      "verification_rows": 19
+    },
+    "root_run_status": "SUCCEEDED",
+    "run_ids": [
+      "p2-writer-run",
+      "p2-reader-run"
+    ],
+    "task_ids": [
+      "p2-writer-task",
+      "p2-reader-task"
+    ]
+  },
+  "schema_version": 1,
+  "trace_event_count": 64,
+  "verification_facts": {
+    "academy-codeword-cedar": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-academy-codeword-cedar",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "archive-retention-expired": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-archive-retention-expired",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "authority-inaccessible-item": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-authority-inaccessible-item",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "checksum-independent-confirmation": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-checksum-independent-confirmation",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "classification-incompatible-personal": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-classification-incompatible-personal",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "composition-archive-route": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-composition-archive-route",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "insufficient-evidence-claim": {
+      "conflict_count": 0,
+      "evidence_count": 1,
+      "missing_evidence_count": 1,
+      "semantic_truth_established_by_t1": false,
+      "t1_integrity_only": true,
+      "verdict": "INCONCLUSIVE",
+      "verification_id": "p2-verification-insufficient-evidence-claim",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    "irrelevant-coastal-survey": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-irrelevant-coastal-survey",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "malicious-instruction-source": {
+      "conflict_count": 0,
+      "evidence_count": 1,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": false,
+      "t1_integrity_only": true,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-malicious-instruction-source",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    "missing-source-provenance": {
+      "conflict_count": 0,
+      "evidence_count": 1,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": false,
+      "t1_integrity_only": true,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-missing-source-provenance",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    "old-quarantined-amber": {
+      "conflict_count": 0,
+      "evidence_count": 1,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": false,
+      "t1_integrity_only": true,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-old-quarantined-amber",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    "production-codeword-maple": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-production-codeword-maple",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "retention-alias-fortnight": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-retention-alias-fortnight",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "retention-current-14d": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-retention-current-14d",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "retention-disputed-12d": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": false,
+      "t1_integrity_only": true,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-retention-disputed-12d",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    "retention-production-30d": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-retention-production-30d",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "retention-stale-7d": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-retention-stale-7d",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    "route-local-only": {
+      "conflict_count": 0,
+      "evidence_count": 2,
+      "missing_evidence_count": 0,
+      "semantic_truth_established_by_t1": "NOT_APPLICABLE",
+      "t1_integrity_only": false,
+      "verdict": "PASS",
+      "verification_id": "p2-verification-route-local-only",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    }
+  }
+}
