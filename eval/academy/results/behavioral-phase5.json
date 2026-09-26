@@ -1,8 +1,9 @@
 {
   "artifact_kind": "ACADEMY_BEHAVIORAL_BRIDGE_RESULT",
-  "protocol_version": "PHASE5_PREREGISTRATION_V1",
+  "protocol_version": "PHASE5_PREREGISTRATION_V2",
+  "protocol_history": {"PHASE5_PREREGISTRATION_V1": "REPLACED BEFORE ANY FORMAL BEHAVIORAL TRIAL"},
   "codex_cli_version": "codex-cli 0.158.0-alpha.2.1",
-  "codex_executable_observation": "Installed codex executable resolved locally; private local path intentionally omitted.",
+  "codex_executable_observation": "Resolved from PATH; absolute local path intentionally omitted.",
   "pre_model_failure": {
     "classification": "PRE_MODEL_HOST_INVOCATION_FAILURE",
     "exit_code": 2,
@@ -57,12 +58,13 @@
   "successful_presence_trial_count": 0,
   "formal_trial_count": 0,
   "manual_host_runs_required": false,
-  "fixture_sha256": "608ccfd55f5d1a80f0fce871749b73cb95c9775db37a14020adf40b6ff0e7508",
+  "fixture_sha256": "6185f69f11cbb263b362e8c9db52433e7f2ce67e2601b2d8df33f803c14c5236",
   "evaluator_sha256": "96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c",
-  "execution_order": ["A17", "D31", "V06", "K02", "E04", "S12", "G08", "B29", "R41", "H11", "L73", "T63", "F22", "J15", "W34", "M26", "U07", "N58"],
-  "execution_order_sha256": "b457626e5526780e275b4747f1c54060c0e29fd01b376084d047b61a13178171",
+  "execution_order": ["A17", "E04", "V06", "F22", "B29", "H11", "T63", "D31", "R41", "G08", "K02", "J15", "U07", "L73", "M26", "S12", "N58", "W34"],
+  "execution_order_sha256": "579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6",
   "official_invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
   "official_command": "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -",
+  "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
   "automated_host_behavioral_bridge": "FEASIBLE; invocation method only; no formal behavioral matrix result",
   "host_baseline": {
     "cross_session_effect": "NOT INDEPENDENTLY VERIFIED",
@@ -98,12 +100,16 @@
   "nexus_model_receipt_note": "Trials are external Academy CLI invocations, not CodexHostedBridge MODEL Runs; no synthetic Core receipt was created.",
   "presence_trials": {},
   "schema_version": 1,
-  "status": "IN PROGRESS / PREREGISTERED",
+  "status": "IN PROGRESS / PREREGISTERED V2",
   "tokens_and_cost": {
     "host_model_identity": "UNAVAILABLE",
     "provider": "UNAVAILABLE",
     "provider_cost": "UNAVAILABLE",
-    "token_telemetry": "HOST_REPORTED_TOTAL_TURN_USAGE_ONLY; no estimate used; ambient input composition unavailable"
+    "provider_dollar_cost": "UNAVAILABLE",
+    "host_token_telemetry": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+    "token_telemetry": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY; no estimate used",
+    "per_exposure_token_attribution": "UNAVAILABLE",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE"
   },
   "exposure_observability": {
     "explicit_packet_visibility": "KNOWN",
@@ -114,6 +120,8 @@
   },
   "gates": {
     "G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY": "SUPPORTED_BY_REAL_HOST_PILOT; FORMAL MATRIX NOT EXECUTED",
-    "G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF": "UNAVAILABLE"
+    "G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF": "UNAVAILABLE",
+    "J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY": "SUPPORTED_BY_REAL_HOST",
+    "J2_PROVIDER_DOLLAR_COST": "UNAVAILABLE"
   }
 }

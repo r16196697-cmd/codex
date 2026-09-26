@@ -22,6 +22,8 @@ DEFAULT_PACKETS = ROOT / "eval" / "academy" / "fixtures" / "behavioral-phase5-pa
 DEFAULT_EVALUATOR = ROOT / "eval" / "academy" / "fixtures" / "behavioral-phase5-evaluator.json"
 DEFAULT_RESULTS = ROOT / "eval" / "academy" / "results" / "behavioral-phase5.json"
 OFFICIAL_INVOCATION_SPEC_ID = "PHASE5_OFFICIAL_HOST_INVOCATION_V1"
+CODEX_EXECUTABLE_OBSERVATION = "Resolved from PATH; absolute local path intentionally omitted."
+PRIVATE_CAPTURE_LOCATION = "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED"
 
 
 def _sha256(raw: bytes) -> str:
@@ -31,6 +33,21 @@ def _sha256(raw: bytes) -> str:
 def _load_json(path: Path) -> tuple[dict[str, Any], bytes]:
     raw = path.read_bytes()
     return json.loads(raw.decode("utf-8")), raw
+
+
+def _external_capture_dir(path: Path) -> Path:
+    resolved = path.resolve()
+    if resolved == ROOT.resolve() or ROOT.resolve() in resolved.parents:
+        raise RuntimeError("Refusing to store raw Host output inside the Academy repository.")
+    return resolved
+
+
+def _serialize_persisted_result(result: dict[str, Any]) -> str:
+    persisted = dict(result)
+    persisted.pop("codex_executable", None)
+    persisted["codex_executable_observation"] = CODEX_EXECUTABLE_OBSERVATION
+    persisted["raw_capture_location"] = PRIVATE_CAPTURE_LOCATION
+    return json.dumps(persisted, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
 def _extract_events(stdout: str) -> tuple[str | None, dict[str, int] | None, int, str | None, bool]:
@@ -170,7 +187,7 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
     evaluator, _ = _load_json(evaluator_path)
     prior, _ = _load_json(results_path)
     packet_hash = _sha256(packet_bytes)
-    if prior.get("status") != "IN PROGRESS / PREREGISTERED" or prior.get("fixture_sha256") != packet_hash:
+    if prior.get("status") != "IN PROGRESS / PREREGISTERED V2" or prior.get("fixture_sha256") != packet_hash:
         raise SystemExit("Refusing to run: results are not pending for this exact frozen fixture.")
     if prior.get("execution_count", 0) != 0:
         raise SystemExit("Refusing to repeat Host trials; preserve the first execution record.")
@@ -182,22 +199,20 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
     codex = shutil.which("codex")
     if not codex:
         raise SystemExit("Automated Host invocation unavailable: codex CLI not found on PATH.")
-    capture_dir = Path(tempfile.mkdtemp(prefix="nexus-academy-phase5-captures-")).resolve()
-    if capture_dir == ROOT.resolve() or ROOT.resolve() in capture_dir.parents:
-        raise SystemExit("Refusing to store raw Host output inside the repository.")
+    capture_dir = _external_capture_dir(Path(tempfile.mkdtemp(prefix="nexus-academy-phase5-captures-")))
 
     result = {
         **prior,
         "status": "HOST_TRIALS_IN_PROGRESS",
         "official_invocation_spec_id": OFFICIAL_INVOCATION_SPEC_ID,
         "official_command": "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -",
-        "codex_executable": codex,
+        "codex_executable_observation": CODEX_EXECUTABLE_OBSERVATION,
         "fixture_sha256": packet_hash,
         "evaluator_sha256": _sha256(evaluator_path.read_bytes()),
         "execution_count": 0,
         "formal_trial_count": 0,
         "execution_order": order,
-        "raw_capture_location": str(capture_dir),
+        "raw_capture_location": PRIVATE_CAPTURE_LOCATION,
         "context_trials": {},
         "presence_trials": {},
         "host_baseline": {
@@ -243,11 +258,11 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
             result["formal_trial_count"] += 1
         destination = result["context_trials"] if is_context else result["presence_trials"]
         destination[trial_id] = observed
-        results_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        results_path.write_text(_serialize_persisted_result(result), encoding="utf-8")
         if not observed["formal_behavioral_trial_eligible"]:
             result["status"] = observed["execution_status"]
             result["blocking_trial_id"] = trial_id
-            results_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            results_path.write_text(_serialize_persisted_result(result), encoding="utf-8")
             return result
     return result
 

@@ -1,15 +1,16 @@
 {
   "schema_version": 1,
   "artifact_kind": "ACADEMY_BLIND_BEHAVIORAL_PACKETS",
-  "fixture_id": "behavioral-phase5-frozen-v1",
-  "freeze_rule": "Freeze this file before formal Host trials; never edit expected answers into packets.",
+  "fixture_id": "behavioral-phase5-frozen-v2",
+  "protocol_version": "PHASE5_PREREGISTRATION_V2",
+  "freeze_rule": "Freeze this file before formal Host trials; never edit expected answers into packets. V1 was replaced before any formal behavioral trial.",
   "packet_count": 18,
   "official_invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
   "execution_order": [
-    "A17", "D31", "V06", "K02", "E04", "S12", "G08", "B29", "R41",
-    "H11", "L73", "T63", "F22", "J15", "W34", "M26", "U07", "N58"
+    "A17", "E04", "V06", "F22", "B29", "H11", "T63", "D31", "R41",
+    "G08", "K02", "J15", "U07", "L73", "M26", "S12", "N58", "W34"
   ],
-  "execution_order_sha256": "b457626e5526780e275b4747f1c54060c0e29fd01b376084d047b61a13178171",
+  "execution_order_sha256": "579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6",
   "execution_order_hash_rule": "SHA-256 of UTF-8 trial IDs joined by LF plus a final LF.",
   "context_packets": [
     {

@@ -21,13 +21,14 @@ class BootstrapSynthesisTests(unittest.TestCase):
     def test_phase_statuses_and_shadow_gate_keep_behavioral_gaps_open(self):
         ledger = json.loads((ROOT / "eval/academy/results/bootstrap-academy-candidates.json").read_text(encoding="utf-8"))
         statuses = {row["phase"]: row["status"] for row in ledger["phases"]}
-        self.assertEqual(statuses, {"0":"CLOSED / ACCEPTED", "1":"CLOSED / ACCEPTED", "2":"CLOSED / ACCEPTED", "3":"CLOSED / ACCEPTED", "4":"CLOSED / ACCEPTED", "5":"IN PROGRESS / PREREGISTERED; EXTERNAL REVIEW PENDING"})
+        self.assertEqual(statuses, {"0":"CLOSED / ACCEPTED", "1":"CLOSED / ACCEPTED", "2":"CLOSED / ACCEPTED", "3":"CLOSED / ACCEPTED", "4":"CLOSED / ACCEPTED", "5":"IN PROGRESS / PREREGISTERED V2; EXTERNAL REVIEW PENDING"})
         gates = {row["gate"]: row["status"] for row in ledger["shadow_entry_gate_candidate"]}
         self.assertEqual(gates["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"], "SUPPORTED_BY_REAL_HOST_PILOT")
         self.assertEqual(gates["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"], "UNAVAILABLE")
         self.assertEqual(gates["H_SKILL_CAPABILITY_BEHAVIORAL_AB"], "NOT_TESTED")
         self.assertEqual(gates["I_HOST_MEMORY_CONTAMINATION"], "UNAVAILABLE")
-        self.assertEqual(gates["J_REAL_TOKEN_COST_TELEMETRY"], "UNAVAILABLE")
+        self.assertEqual(gates["J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY"], "SUPPORTED_BY_REAL_HOST")
+        self.assertEqual(gates["J2_PROVIDER_DOLLAR_COST"], "UNAVAILABLE")
         self.assertEqual(ledger["query_normalization_decision"]["retrieval_relevance_improvement"], "INSUFFICIENT_EVIDENCE")
         self.assertFalse(ledger["core_semantics_changed"])
 

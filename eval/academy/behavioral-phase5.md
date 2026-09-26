@@ -1,6 +1,6 @@
 # Phase 5 — Controlled Host Behavioral Bridge + Certification Preflight
 
-- Status: `IN PROGRESS — Phase 5`
+- Status: `IN PROGRESS / PREREGISTERED V2`
 - Core Independent Audit: `CLOSED / PASS`
 - Capability Certification: `NOT STARTED`
 - Shadow: `NOT STARTED`
@@ -28,7 +28,9 @@ This is `HOST_BASELINE_V1`. Host-native Memory does not determine behavioral suc
 
 ## Frozen packet and blind evaluator
 
-The 18 blind packets and their SHA-256 are in `fixtures/behavioral-phase5-packets.json`; expected outputs, condition mapping, and deterministic scoring are isolated in `fixtures/behavioral-phase5-evaluator.json`, which is never supplied to the Host. Four context families each have no synthetic records, minimum relevant records, and broader safe records. They cover a nonce fact, multi-fact composition, a similar identifier, and a two-source conflict. C0 answers for hidden facts are expected to be `UNKNOWN`, not a guess.
+The 18 blind packets and their SHA-256 are in `fixtures/behavioral-phase5-packets.json`; expected outputs, condition mapping, and deterministic scoring are isolated in `fixtures/behavioral-phase5-evaluator.json`, which is never supplied to the Host. Four context families each have no synthetic records, minimum relevant records, and broader safe records. They cover a nonce fact, multi-fact composition, a similar identifier, and a two-source conflict. C0 answers for hidden facts are expected to be `UNKNOWN`, not a guess. V2 freezes an interleaved order that keeps each semantic family's exposure monotonic: C0 before C1 before C2, and each presence task's P0 before P1 before P2. V1 was replaced before any formal behavioral trial.
+
+The V2 fixed execution order is `A17, E04, V06, F22, B29, H11, T63, D31, R41, G08, K02, J15, U07, L73, M26, S12, N58, W34`.
 
 The separate presence pilot uses the Academy-only `Glyph Shift` capability at absent, metadata-only, and full-instruction presence, plus the same unrelated legacy task under those three conditions. P3 invocation-only is `NOT TESTED / HOST OBSERVABILITY GAP`; no invocation transition is simulated. Packets contain no condition labels, relevance tags, expected answers, or scoring criteria.
 
@@ -43,7 +45,9 @@ Repeat for each ID in the packet fixture, opening a new chat each time. Save eac
 
 ## Measurements and outcomes
 
-The machine-readable results artifact records one row per trial: explicit task and packet hashes, packet bytes/chars, real Host completion flag, output hash/text, observed tool calls, CLI-reported token usage if present, and local wall-clock duration. Provider cost, provider identity, underlying served model identity, request ID, automatic retry count, and complete implicit context are `UNAVAILABLE` unless the Host exposes them directly. No character-to-token estimate is used.
+The machine-readable results artifact records one row per trial: explicit task and packet hashes, packet bytes/chars, real Host completion flag, output hash/text, observed tool calls, Host-reported total-turn input/cached-input/output/reasoning-output token telemetry, and local wall-clock duration. Host total-turn token telemetry is observable; per-exposure token attribution, provider dollar cost, Host model identity, provider request ID, automatic retry count, and complete implicit context remain unavailable. No packet, Skill, AGENTS, or ambient token count and no billable dollar cost are inferred. Ambient input composition is `UNAVAILABLE / NOT DECOMPOSABLE`.
+
+The runner writes raw captures only to a temporary directory outside the repository. Persisted Academy results omit the absolute Codex executable and capture-directory paths; capture filenames remain basenames only.
 
 The result records the historical pre-model CLI failure and pilot diagnostics separately; neither is a formal trial. The formal trial count remains zero. A prepared fixture alone is not behavioral evidence. No aggregate score is calculated. No skill utility, model quality gain, cost saving, or Shadow readiness is inferred from a small pilot.
 
@@ -59,7 +63,9 @@ No real Skill was selected: the sanitized Phase 1 inventory establishes 136 disc
 - P3 invocation-only presence: not tested because initial absence and subsequent actual visibility cannot be attested.
 - Custom Instructions off/on control: not tested; global setting remains on and unchanged.
 - Host Memory contamination: `NOT INDEPENDENTLY VERIFIED`; no test secret was stored.
-- Tokens: only CLI-reported usage may be recorded; provider cost and served model/provider identity remain unavailable.
+- Gate J1 Host total-turn token telemetry: `SUPPORTED_BY_REAL_HOST`.
+- Gate J2 provider dollar cost: `UNAVAILABLE`; Host model identity: `UNAVAILABLE`.
+- Per-exposure token attribution and ambient input composition: `UNAVAILABLE / NOT DECOMPOSABLE`.
 - Nexus Core Hosted MODEL receipt: none created by the external CLI harness.
 
 G1 explicit experiment packet delivery is `SUPPORTED_BY_REAL_HOST_PILOT`. G2 full model-visible context proof is `UNAVAILABLE`; ambient context is held constant but partially observable. Gate H has no completed pilot and no real Skill A/B. No capability may enter `EVALUATED`, `SHADOW`, or `ACTIVE`. `HOST_BASELINE_V1` remains unchanged.
