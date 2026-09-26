@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "ACADEMY_ONLY_CANDIDATE_LEDGER",
+  "promotion_allowed_default": false,
+  "core_semantics_changed": false,
+  "candidates": [
+    {"candidate_id":"CONTEXT_STRATEGY","origin_phase":"0","problem":"Historical context may be unnecessary or harmful when attached","evidence_available":"Structural C0/C1/C2 exposure sets and serialized sizes; no synthetic MODEL receipt","evidence_missing":"Controlled real MODEL exposure and behavior comparison","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"CAPABILITY_REGISTRY","origin_phase":"1","problem":"Discoverable capability metadata should not be loaded wholesale","evidence_available":"Bounded local Skill roots and sanitized metadata inventory","evidence_missing":"Complete official Host catalog enumeration and utility evaluation","status":"OBSERVED","promotion_allowed":false},
+    {"candidate_id":"STARTUP_CAPABILITY_DISCOVERY","origin_phase":"1","problem":"Discover capability metadata without loading full instructions","evidence_available":"Metadata-only local discovery protocol","evidence_missing":"Actual host loaded-state and behavioral benefit","status":"OBSERVED","promotion_allowed":false},
+    {"candidate_id":"CONTEXT_EXPOSURE_POLICY","origin_phase":"0","problem":"Choose context exposure deliberately rather than expose all history","evidence_available":"Structural exposure conditions","evidence_missing":"Exact model-visible context and controlled behavioral A/B","status":"BEHAVIORALLY_UNTESTED","promotion_allowed":false},
+    {"candidate_id":"CAPABILITY_EXPOSURE_BUDGET","origin_phase":"0-1","problem":"Bound capability/context exposure without confusing bytes with tokens","evidence_available":"Byte/character footprint measurements","evidence_missing":"Reliable token telemetry and verified behavior/cost outcomes","status":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
+    {"candidate_id":"LEGACY_EXPERIENCE_INTEGRATION","origin_phase":"1","problem":"Assess compatibility with project-experience-curator","evidence_available":"Known discovery and metadata registration","evidence_missing":"Compatibility/utility evaluation; no migration or behavioral test","status":"DEFERRED","promotion_allowed":false},
+    {"candidate_id":"MEMORY_RETRIEVAL_STRATEGY","origin_phase":"2","problem":"Retrieve relevant admitted Memory while excluding ineligible facts","evidence_available":"Fixed synthetic queries, deterministic raw/admitted metrics and eligibility evidence","evidence_missing":"Broader independent corpus and real task behavior","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"QUERY_NORMALIZATION","origin_phase":"2","problem":"Avoid parser edge cases while preserving relevance","evidence_available":"Parser-error reduction observed on fixed probes","evidence_missing":"Retrieval relevance improvement","status":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
+    {"candidate_id":"EVIDENCE_PACK","origin_phase":"2","problem":"Assemble minimal grounded references without claiming exposure","evidence_available":"Academy proposed pack representation and deterministic evidence cases","evidence_missing":"Exact Host exposure and behavioral utility","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"SOURCE_FRESHNESS_POLICY","origin_phase":"2","problem":"Represent source authority, age, independence, support, and contradiction","evidence_available":"Synthetic metadata/evaluation cases","evidence_missing":"Broader independent and temporal adjudication evidence","status":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
+    {"candidate_id":"CONFLICT_HANDLING","origin_phase":"2","problem":"Preserve UNKNOWN/INCONCLUSIVE under conflict or insufficiency","evidence_available":"Synthetic Verification/independence-axis cases","evidence_missing":"Broader source behavior; no automatic truth promotion","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"FAILURE_FIXTURE","origin_phase":"3","problem":"Represent sanitized deterministic failure cases for later regression","evidence_available":"Frozen synthetic failure matrix and regression mappings","evidence_missing":"Operational governance/ingestion process not implemented","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"RECOVERY_QUALIFICATION","origin_phase":"3","problem":"Qualify fail-closed and replay recovery paths","evidence_available":"Regression-backed operational qualification on current Windows environment","evidence_missing":"Real OS crashes, production operations, all-platform physical durability","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"ROUTING_POLICY","origin_phase":"4","problem":"Make deterministic route choices auditable under constraints","evidence_available":"Synthetic E0/E1/E2 subset: quality/locality, budget denial, replay and escalation mappings","evidence_missing":"Live providers/models, several constraints, behavior/cost comparisons","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"ESCALATION_FALLBACK","origin_phase":"4","problem":"Represent a permitted second attempt and truthful terminal outcome","evidence_available":"Separate Run/reservation attempts, exact replay, terminal result, third-attempt denial","evidence_missing":"Fallback as distinct policy, inconclusive-attempt retry, child-limit exhaustion","status":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
+    {"candidate_id":"SHADOW_ENTRY_GATE","origin_phase":"0-4","problem":"Define evidence gates before any future Shadow decision","evidence_available":"Per-gate status ledger; no automatic advancement","evidence_missing":"Exact real MODEL exposure and capability behavioral A/B remain unresolved","status":"OBSERVED","promotion_allowed":false}
+  ],
+  "phases": [
+    {"phase":"0","title":"Context Exposure","status":"CLOSED / ACCEPTED","evidence_type":"STRUCTURAL SYNTHETIC BASELINE","not_qualified":"MODEL behavior/answer quality"},
+    {"phase":"1","title":"Host & Capability Discovery / Registry","status":"CLOSED / ACCEPTED","evidence_type":"READ-ONLY STRUCTURAL INVENTORY","not_qualified":"Complete UI catalog or capability utility"},
+    {"phase":"2","title":"Search / Evidence + Memory Retrieval","status":"CLOSED / ACCEPTED","evidence_type":"DETERMINISTIC SYNTHETIC QUALIFICATION","not_qualified":"MODEL answer quality or query relevance gain from normalization"},
+    {"phase":"3","title":"Failure Recovery / Operational Resilience","status":"CLOSED / ACCEPTED","evidence_type":"REGRESSION_BACKED_OPERATIONAL_QUALIFICATION","not_qualified":"Black-box, OS-crash, production, physical durability"},
+    {"phase":"4","title":"Routing Semantics","status":"IN PROGRESS / EXTERNAL REVIEW PENDING","evidence_type":"SYNTHETIC DETERMINISTIC ROUTING REGRESSION QUALIFICATION","not_qualified":"Real provider/model selection or comparative quality/cost"}
+  ],
+  "shadow_entry_gate_candidate": [
+    {"gate":"A_CORE_AUDITED_FROZEN","status":"SUPPORTED"},
+    {"gate":"B_STRUCTURAL_CONTEXT_ISOLATION","status":"SUPPORTED"},
+    {"gate":"C_CAPABILITY_INVENTORY","status":"SUPPORTED_SCOPED"},
+    {"gate":"D_DETERMINISTIC_RETRIEVAL_EVIDENCE","status":"SUPPORTED_SYNTHETIC_SCOPE"},
+    {"gate":"E_FAILURE_RECOVERY","status":"SUPPORTED_REGRESSION_BACKED_SCOPE"},
+    {"gate":"F_ROUTING_SEMANTICS","status":"SUPPORTED_SYNTHETIC_SUBSET"},
+    {"gate":"G_EXACT_REAL_MODEL_CONTEXT_EXPOSURE","status":"UNAVAILABLE"},
+    {"gate":"H_SKILL_CAPABILITY_BEHAVIORAL_AB","status":"NOT_TESTED"},
+    {"gate":"I_HOST_MEMORY_CONTAMINATION","status":"UNAVAILABLE"},
+    {"gate":"J_REAL_TOKEN_COST_TELEMETRY","status":"UNAVAILABLE"},
+    {"gate":"K_PRODUCTION_PRIVATE_DATA_EXCLUSION","status":"SUPPORTED_FOR_ACADEMY_RUNS"},
+    {"gate":"L_NO_AUTO_PROMOTION","status":"SUPPORTED"}
+  ],
+  "capability_certification": {"status":"NOT STARTED","discovered_skill_count":136,"all_discovered_skills_lifecycle":"DISCOVERED / UNEVALUATED","project_experience_curator":"DISCOVERED / UNEVALUATED","promotion_allowed":false},
+  "host_configuration": {"primary_memory":"OFF","tool_chat_memory":"ON_FORCED / USER_NOT_CONTROLLABLE","cross_session_effect":"NOT INDEPENDENTLY VERIFIED","custom_instructions":"ON / UNCHANGED","global_agents":"UNCHANGED","project_experience_curator":"UNCHANGED / DISCOVERED / UNEVALUATED"},
+  "query_normalization_decision": {"parser_error_reduction":"AVAILABLE","retrieval_relevance_improvement":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
+  "production_qualification":"NOT STARTED",
+  "shadow":"NOT STARTED"
+}

@@ -83,6 +83,13 @@ class FailureRecoveryPhase3Tests(unittest.TestCase):
         self.assertEqual(len({case["case_id"] for case in fixture["cases"]}), 27)
         self.assertEqual(result["fixture_sha256"], hashlib.sha256(raw).hexdigest())
         self.assertEqual(result["case_count"], 27)
+        self.assertEqual(result["unique_evidence_test_count"], 23)
+        self.assertEqual(result["mapped_cases_passed"], 27)
+        self.assertEqual(result["cases_with_denial_expectation"], 27)
+        self.assertEqual(result["mapped_denial_cases_passed"], 27)
+        self.assertEqual(result["evidence_class"], "REGRESSION_BACKED_OPERATIONAL_QUALIFICATION")
+        self.assertNotIn("observed_fail_closed_count", result)
+        self.assertNotIn("recovery_success_count", result)
         self.assertEqual(result["blocker_case_count"], 0)
         self.assertEqual(result["inconclusive_case_count"], 0)
 

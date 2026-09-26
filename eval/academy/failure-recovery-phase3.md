@@ -18,6 +18,8 @@ The Academy-only effect probe uses `DeterministicRuntimeTests`' synthetic fixtur
 
 ## Evidence interpretation
 
+Evidence class: `REGRESSION_BACKED_OPERATIONAL_QUALIFICATION`. This is not an independent black-box resilience campaign, real OS crash qualification, production recovery qualification, or physical durability qualification. The matrix has 27 cases mapped onto 23 unique evidence tests; case mappings are not 27 independent observations.
+
 - Command retry evidence separately checks exact replay, changed-request conflict, reopen persistence, and before/after object/command/Trace counts.
 - Revocation evidence distinguishes immutable historical replay from fresh work denied by revoked authority.
 - Effect compensation evidence checks that the original committed Effect remains committed and a separate related Effect records compensation.
@@ -29,7 +31,7 @@ Metrics are counts of explicit test assertions, not a statistical score. A zero 
 
 ## Observed synthetic matrix result
 
-The final frozen fixture hash is `707952f433fe6081bf3ca823bfd7f46c95785888985e00d8bca349f1823e0541`. All 27 cases passed through 23 unique evidence tests; 0 cases were blockers or inconclusive. The cases requiring a denied action numbered 27 and all 27 evidence mappings passed. Observed counts were: duplicate fake external dispatches 0, duplicate mutations 0, purged-identifier re-exposures 0, unauthorized new mutations after revocation 0, and unexpected NORMAL entries under required recovery mismatch 0. The 3 fail-closed control-plane cases (corrupt chain, missing/truncated journal, and unsupported schema) failed closed as expected. The payload-hash mismatch was detected. No deliberate low-level SQLite page corruption was injected: it would test SQLite file-open failure rather than a supported Nexus repair/check API, and this phase does not add a repair engine.
+The final frozen fixture hash is `707952f433fe6081bf3ca823bfd7f46c95785888985e00d8bca349f1823e0541`. The committed result reports `case_count=27`, `unique_evidence_test_count=23`, `mapped_cases_passed=27`, `cases_with_denial_expectation=27`, and `mapped_denial_cases_passed=27`. These are mapping-level counts, not 27 independent fail-closed experiments. No case was a blocker or inconclusive. Observed counts were: duplicate fake external dispatches 0, duplicate mutations 0, purged-identifier re-exposures 0, unauthorized new mutations after revocation 0, and unexpected NORMAL entries under required recovery mismatch 0. The 3 fail-closed control-plane cases (corrupt chain, missing/truncated journal, and unsupported schema) failed closed as expected. The payload-hash mismatch was detected. No deliberate low-level SQLite page corruption was injected: it would test SQLite file-open failure rather than a supported Nexus repair/check API, and this phase does not add a repair engine.
 
 The effect outcome matrix used only an in-process fake dispatcher; no external effect was sent. Old-snapshot recovery and journal reconciliation used simulated close/reopen boundaries, not OS power loss. `PHYSICAL_DURABILITY` remains `NOT FULLY QUALIFIED`.
 

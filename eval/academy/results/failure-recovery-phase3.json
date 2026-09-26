@@ -316,10 +316,11 @@
       "status": "PASS"
     }
   ],
+  "cases_with_denial_expectation": 27,
   "detected_corruption_case_count": 3,
   "duplicate_mutation_count": 0,
   "duplicate_synthetic_external_effect_count": 0,
-  "evidence_test_count": 23,
+  "evidence_class": "REGRESSION_BACKED_OPERATIONAL_QUALIFICATION",
   "evidence_test_status_counts": {
     "ERROR": 0,
     "FAIL": 0,
@@ -327,7 +328,6 @@
     "SKIP": 0
   },
   "execution_mode": "SYNTHETIC_EXISTING_CORE_INTEGRATION_TESTS",
-  "expected_fail_closed_count": 27,
   "failure_injection_semantics": "SIMULATED_CRASH_BOUNDARY; temporary test roots and explicit close/reopen/fault hooks, not OS power-loss",
   "fixture_id": "academy-failure-recovery-phase3-v2",
   "fixture_sha256": "707952f433fe6081bf3ca823bfd7f46c95785888985e00d8bca349f1823e0541",
@@ -342,15 +342,21 @@
     "tool_chat_memory_generation": "ON_FORCED / USER_NOT_CONTROLLABLE"
   },
   "inconclusive_case_count": 0,
-  "observed_fail_closed_count": 27,
+  "mapped_cases_passed": 27,
+  "mapped_denial_cases_passed": 27,
   "passed_case_count": 27,
   "physical_durability": "NOT FULLY QUALIFIED; Windows run does not execute POSIX directory-fsync path or power-cut tests",
   "purged_identifier_reexposure_count": 0,
-  "recovery_inconclusive_count": 0,
-  "recovery_success_count": 1,
+  "qualification_limits": [
+    "NOT_INDEPENDENT_BLACK_BOX_RESILIENCE_CAMPAIGN",
+    "NOT_REAL_OS_CRASH_QUALIFICATION",
+    "NOT_PRODUCTION_RECOVERY_QUALIFICATION",
+    "NOT_PHYSICAL_DURABILITY_QUALIFICATION"
+  ],
   "schema_version": 1,
   "temporary_data_policy": "isolated per-test TemporaryDirectory under a fresh Academy scratch root; no DB/journal committed",
   "unauthorized_new_mutation_after_revocation_count": 0,
   "undetected_corruption_case_count": 0,
-  "unexpected_normal_entry_count": 0
+  "unexpected_normal_entry_count": 0,
+  "unique_evidence_test_count": 23
 }

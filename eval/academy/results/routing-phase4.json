@@ -1,0 +1,213 @@
+{
+  "blocker_case_count": 0,
+  "case_count": 18,
+  "cases": [
+    {
+      "case_id": "R01_ROUTINE_LOW_RISK",
+      "category": "ROUTE_SELECTION",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_cycle_is_rejected_and_dag_route_budget_and_child_manifests_pass"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R02_QUALITY_SENSITIVE",
+      "category": "HARD_CONSTRAINT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_dag_rejects_unknown_output_schema_and_route_never_downgrades_quality"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R03_FAILURE_THEN_ESCALATION_SUCCESS",
+      "category": "ESCALATION",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_escalation_attempts_replay_and_coordinator_continue_downstream"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R04_INCONCLUSIVE_ATTEMPT_THEN_ESCALATION",
+      "category": "REPRESENTABILITY",
+      "evidence_tests": [],
+      "observed_status": "NOT_REPRESENTABLE",
+      "qualification_status": "NOT_REPRESENTABLE"
+    },
+    {
+      "case_id": "R05_BOTH_ATTEMPTS_FAIL",
+      "category": "TERMINAL_TRUTH",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_escalation_failure_finalizes_once_as_inconclusive"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R06_CAPABILITY_MISMATCH_FALLBACK",
+      "category": "FALLBACK",
+      "evidence_tests": [],
+      "observed_status": "NOT_REPRESENTABLE",
+      "qualification_status": "NOT_REPRESENTABLE"
+    },
+    {
+      "case_id": "R07_LOCALITY_RESTRICTED",
+      "category": "HARD_CONSTRAINT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_cycle_is_rejected_and_dag_route_budget_and_child_manifests_pass"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R08_NETWORK_FORBIDDEN",
+      "category": "HARD_CONSTRAINT",
+      "evidence_tests": [],
+      "observed_status": "NOT_TESTED",
+      "qualification_status": "NOT_TESTED"
+    },
+    {
+      "case_id": "R09_MODALITY_MISMATCH",
+      "category": "HARD_CONSTRAINT",
+      "evidence_tests": [],
+      "observed_status": "NOT_TESTED",
+      "qualification_status": "NOT_TESTED"
+    },
+    {
+      "case_id": "R10_PROVIDER_CONSTRAINT_MISMATCH",
+      "category": "HARD_CONSTRAINT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_cycle_is_rejected_and_dag_route_budget_and_child_manifests_pass"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R11_HARD_BUDGET_INSUFFICIENT",
+      "category": "BUDGET",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_routing_phase4.RoutingPhase4Tests.test_hard_budget_insufficient_rejects_route_before_reservation"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R12_CHILD_RUN_LIMIT",
+      "category": "BUDGET",
+      "evidence_tests": [],
+      "observed_status": "NOT_TESTED",
+      "qualification_status": "NOT_TESTED"
+    },
+    {
+      "case_id": "R13_REVOKED_AUTHORITY_BEFORE_RETRY",
+      "category": "AUTHORITY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_routing_phase4.RoutingPhase4Tests.test_revoked_parent_authority_denies_fresh_escalation"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R14_EXACT_ROUTE_REPLAY",
+      "category": "REPLAY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_routing_phase4.RoutingPhase4Tests.test_exact_route_replay_conflict_and_no_host_receipt"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R15_CHANGED_ROUTE_REQUEST",
+      "category": "REPLAY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_routing_phase4.RoutingPhase4Tests.test_exact_route_replay_conflict_and_no_host_receipt"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R16_TERMINAL_THIRD_ATTEMPT",
+      "category": "TERMINAL_TRUTH",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_escalation_failure_finalizes_once_as_inconclusive"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    },
+    {
+      "case_id": "R17_MODALITY_SCHEMA_SURFACE",
+      "category": "REPRESENTABILITY",
+      "evidence_tests": [],
+      "observed_status": "NOT_TESTED",
+      "qualification_status": "NOT_TESTED"
+    },
+    {
+      "case_id": "R18_LOCALITY_NO_FALLBACK",
+      "category": "FALLBACK",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_dag_rejects_unknown_output_schema_and_route_never_downgrades_quality"
+        }
+      ],
+      "observed_status": "SUPPORTED_BY_MAPPED_REGRESSION",
+      "qualification_status": "QUALIFIED_BY_MAPPED_REGRESSION"
+    }
+  ],
+  "evidence_class": "SYNTHETIC_DETERMINISTIC_ROUTING_REGRESSION_QUALIFICATION",
+  "evidence_status_counts": {
+    "ERROR": 0,
+    "FAIL": 0,
+    "PASS": 7,
+    "SKIP": 0
+  },
+  "fake_codex_host_declared_receipt_count": 0,
+  "fixture_id": "academy-routing-phase4-v1",
+  "fixture_sha256": "63d6be04ad6ce978d4c96dfb4b97cf83e49136beaec0cf00f4625e9da780a3b0",
+  "host_configuration_changed": false,
+  "hosted_model_identity": "UNAVAILABLE",
+  "not_a_real_provider_or_model_evaluation": true,
+  "not_representable_case_count": 2,
+  "not_tested_case_count": 4,
+  "provider_cost": "UNAVAILABLE_FOR_REAL_MODEL_ROUTING",
+  "real_provider_selection": "NOT_TESTED / NOT IMPLEMENTED",
+  "schema_version": 1,
+  "supported_mapped_case_count": 12,
+  "temporary_data_policy": "Synthetic tests use disposable temporary roots; no DB, journal, snapshot, or host inventory is committed.",
+  "unique_evidence_test_count": 7
+}
