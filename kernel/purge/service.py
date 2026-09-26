@@ -23,6 +23,8 @@ class PurgeService:
     def __init__(self, store, authority, memory, *, independent_journal_path: str | Path):
         self.store, self.authority, self.memory = store, authority, memory
         self.journal = IndependentPurgeJournal(independent_journal_path, store.data_root)
+        if self.journal.path != store.independent_purge_journal_path:
+            raise ValueError("PurgeService journal must match the ObjectStore startup journal configuration")
 
     def plan(self, *, command_id: str, plan_id: str, task_id: str, target_refs: list[str]) -> dict:
         self.store._require_mode("core_write")
@@ -99,17 +101,23 @@ class PurgeService:
                 "FROM purge_execution_records WHERE record_id=?",
                 (record_id,),
             ).fetchone()
+            if prior_execution:
+                self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
+            release_projection_replay = bool(
+                prior_execution
+                and prior_execution["status"] == "PARTIAL"
+                and json.loads(prior_execution["unresolved_json"]) == ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"]
+            )
             if prior is not None:
                 if not prior_execution:
                     raise RuntimeDenied("PURGE_EXECUTION_BINDING_MISMATCH")
                 self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
-                barrier = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
-                expected_result = {"record_id": record_id, "status": "COMPLETED", "purged_refs": protected}
-                if prior_execution["status"] != "COMPLETED" or not barrier or barrier["status"] != "RELEASED" or prior != expected_result:
+                if not isinstance(prior, dict) or prior.get("record_id") != record_id or prior.get("status") not in {"PARTIAL", "COMPLETED"}:
                     raise RuntimeDenied("PURGE_EXECUTION_BINDING_MISMATCH")
+                if not release_projection_replay:
                 # Exact replay returns the persisted result without another
                 # authorization, journal append, or payload/index mutation.
-                return prior
+                    return prior
 
         auth_request = {"task": task_id, "resource": plan["plan_id"], "action": "PURGE_EXECUTE", "audience": "nexus-runtime", "effect_id": record_id}
         self.authority.evaluate_authorization(grant_id, auth_request, command_id + "-authorize", approval_id=approval_id, payload_integrity_hash=claimed_hash)
@@ -122,7 +130,18 @@ class PurgeService:
         if persisted_plan["plan_hash"] != claimed_hash or json.loads(persisted_plan["plan_json"]) != plan:
             raise RuntimeDenied("PURGE_PLAN_NOT_PERSISTED_OR_MISMATCHED")
         closure = self._closure(plan["target_refs"])
-        if sorted(set(closure) - set(plan["target_refs"])) != plan["descendant_refs"] or self._lineage_revision() != plan["lineage_revision"]:
+        with self.store._connection() as conn:
+            existing_barrier = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
+        post_barrier = bool(existing_barrier and existing_barrier["status"] in {"ACTIVE", "PARTIAL", "RELEASED"})
+        closure_set = set(closure)
+        protected_set = set(protected)
+        if post_barrier:
+            with self.store._connection() as conn:
+                purged = {row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE object_id IN (" + ",".join("?" for _ in protected) + ") AND payload_state='PURGED'", protected)} if protected else set()
+            closure_valid = closure_set.issubset(protected_set) and closure_set | purged == protected_set
+        else:
+            closure_valid = sorted(closure_set - set(plan["target_refs"])) == plan["descendant_refs"] and self._lineage_revision() == plan["lineage_revision"]
+        if not closure_valid:
             raise RuntimeDenied("PURGE_PLAN_STALE")
         protected = sorted(set(plan["target_refs"]) | set(plan["descendant_refs"]))
         with self.store._connection() as conn:
@@ -134,11 +153,10 @@ class PurgeService:
             if prior_execution:
                 self._assert_execution_binding(conn, prior_execution, record_id, barrier_id, plan, claimed_hash, protected)
         if prior_execution and prior_execution["status"] == "COMPLETED":
-            return {"record_id": record_id, "status": "COMPLETED", "purged_refs": protected}
+            return {"record_id": record_id, "status": "COMPLETED", "purged_refs": ["REDACTED_PURGED"] * len(protected)}
         if prior_execution and prior_execution["status"] == "PARTIAL":
             unresolved_prior = json.loads(prior_execution["unresolved_json"])
-            if unresolved_prior != ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"]:
-                return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
+            release_projection_recovery = unresolved_prior == ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"]
             # A durable release event is authoritative even if its SQLite
             # projection did not commit. Validate its full operation binding
             # before accepting it as recovery evidence.
@@ -146,24 +164,50 @@ class PurgeService:
                 barrier = conn.execute("SELECT plan_id,lineage_revision,status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
             if not barrier or barrier["plan_id"] != plan["plan_id"] or barrier["lineage_revision"] != plan["lineage_revision"] or barrier["status"] not in {"ACTIVE", "PARTIAL", "RELEASED"}:
                 raise RuntimeDenied("PURGE_RELEASE_RETRY_BARRIER_MISMATCH")
-            release_event = self._release_journal_event(barrier_id, plan["plan_id"], claimed_hash, plan["lineage_revision"], protected)
-            if barrier["status"] == "RELEASED" and release_event is None:
-                raise RuntimeDenied("PURGE_RELEASE_RETRY_BARRIER_MISMATCH")
-            active_runs = self._active_runs(protected)
-            unknown_effects = self._unknown_effects(protected)
-            if active_runs or unknown_effects or self._lineage_revision() != plan["lineage_revision"] or self._closure(plan["target_refs"]) != protected:
-                return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
-            self._purge_payloads_and_indexes(protected)
-            if release_event is None:
-                try:
-                    self.journal.append(action="BARRIER_RELEASED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected)
-                except Exception:
+            if release_projection_recovery:
+                release_event = self._release_journal_event(barrier_id, plan["plan_id"], claimed_hash, plan["lineage_revision"], protected, task_id=task_id)
+                if barrier["status"] == "RELEASED" and release_event is None:
+                    raise RuntimeDenied("PURGE_RELEASE_RETRY_BARRIER_MISMATCH")
+                current_closure = set(self._closure(plan["target_refs"]))
+                with self.store._connection() as conn:
+                    already_purged = {
+                        row[0] for row in conn.execute(
+                            "SELECT object_id FROM object_states WHERE payload_state='PURGED' AND object_id IN ("
+                            + ",".join("?" for _ in protected) + ")", protected
+                        )
+                    } if protected else set()
+                # Payload/index redaction removes ordinary lineage projections.
+                # During RELEASE projection recovery, compare the surviving
+                # closure plus tombstones to the originally bound closure.
+                closure_matches = current_closure.issubset(set(protected)) and current_closure | already_purged == set(protected)
+                if self._active_runs(protected) or self._unknown_effects(protected) or not closure_matches:
                     return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
-            return self._release(command_id, record_id, barrier_id, plan, protected, digest)
+                self._purge_payloads_and_indexes(protected)
+                if release_event is None:
+                    try:
+                        self.journal.append(action="BARRIER_RELEASED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected, task_id=task_id)
+                    except Exception:
+                        return {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved_prior}
+                return self._release(command_id, record_id, barrier_id, plan, protected, digest)
         if not prior_execution:
-            # Journal first: a crash before the SQLite barrier only creates a conservative restore hold, never an unlogged purge.
-            self.journal.append(action="BARRIER_INSTALLED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected)
+            # The SQLite hold is installed first. No destructive work starts
+            # until the independent journal confirms the operation.
             self._install_barrier(command_id, record_id, barrier_id, plan, protected, digest)
+            try:
+                self.journal.append(action="BARRIER_INSTALLED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected, task_id=task_id)
+                self._acknowledge_journal_projection(barrier_id, "ACTIVE")
+            except Exception:
+                return self._mark_partial_local(command_id, record_id, barrier_id, plan, protected, ["INDEPENDENT_JOURNAL_INSTALL_WRITE_FAILED"], digest)
+        elif prior_execution["status"] == "PARTIAL" and json.loads(prior_execution["unresolved_json"]) == ["INDEPENDENT_JOURNAL_INSTALL_WRITE_FAILED"]:
+            pass
+        if prior_execution and prior_execution["status"] in {"RUNNING", "PARTIAL"}:
+            installed = self._installation_journal_event(barrier_id, plan["plan_id"], claimed_hash, plan["lineage_revision"], protected, task_id)
+            if installed is None:
+                try:
+                    self.journal.append(action="BARRIER_INSTALLED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected, task_id=task_id)
+                    self._acknowledge_journal_projection(barrier_id, "ACTIVE")
+                except Exception:
+                    return self._mark_partial_local(command_id + "-journal-install", record_id, barrier_id, plan, protected, ["INDEPENDENT_JOURNAL_INSTALL_WRITE_FAILED"], self.store._request_hash("execute_purge_partial", request))
         active_runs = self._active_runs(protected)
         unresolved = []
         for run_id in active_runs:
@@ -173,11 +217,11 @@ class PurgeService:
         unresolved.extend("UNKNOWN_EFFECT:" + effect_id for effect_id in self._unknown_effects(protected))
         if unresolved:
             return self._mark_partial(command_id, record_id, barrier_id, plan, protected, unresolved, digest)
-        if self._lineage_revision() != plan["lineage_revision"] or self._closure(plan["target_refs"]) != protected:
+        if self._closure(plan["target_refs"]) != protected:
             return self._mark_partial(command_id, record_id, barrier_id, plan, protected, ["LINEAGE_CHANGED_AFTER_BARRIER"], digest)
         self._purge_payloads_and_indexes(protected)
         try:
-            self.journal.append(action="BARRIER_RELEASED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected)
+            self.journal.append(action="BARRIER_RELEASED", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=claimed_hash, lineage_revision=plan["lineage_revision"], protected_refs=protected, task_id=task_id)
         except Exception:
             return self._mark_partial(command_id + "-journal", record_id, barrier_id, plan, protected, ["INDEPENDENT_JOURNAL_RELEASE_WRITE_FAILED"], self.store._request_hash("execute_purge_partial", request))
         return self._release(command_id, record_id, barrier_id, plan, protected, digest)
@@ -226,6 +270,8 @@ class PurgeService:
             return self._replay_independent_journal()
 
     def _replay_independent_journal(self) -> dict:
+        if not self.journal.path.is_file():
+            raise RuntimeDenied("PURGE_JOURNAL_MISSING")
         journal = self.journal.read()
         latest = {}
         for row in journal:
@@ -247,7 +293,18 @@ class PurgeService:
             self._restore_barrier_projection(barrier_id, row, refs, status)
         for event in journal:
             self._replay_ledger_event(event["barrier_id"], event)
-        return {"barriers": len(latest), "purged_refs_checked": applied, "held_refs": sum(len(row["protected_refs"]) for row in latest.values() if row["action"] != "BARRIER_RELEASED"), "normal_allowed": all(row["action"] == "BARRIER_RELEASED" for row in latest.values())}
+        with self.store._connection() as conn:
+            local_holds = conn.execute("SELECT COUNT(*) FROM purge_barriers WHERE status IN ('ACTIVE','PARTIAL')").fetchone()[0]
+            held_refs = conn.execute("SELECT COUNT(*) FROM purge_barrier_refs r JOIN purge_barriers b USING(barrier_id) WHERE b.status IN ('ACTIVE','PARTIAL')").fetchone()[0]
+        return {
+            "barriers": len(latest),
+            "purged_refs_checked": applied,
+            "held_refs": held_refs,
+            "normal_allowed": local_holds == 0 and all(row["action"] == "BARRIER_RELEASED" for row in latest.values()),
+            "journal_identity": self.journal.identity,
+            "journal_sequence": len(journal),
+            "journal_hash": journal[-1]["record_hash"] if journal else "0" * 64,
+        }
 
     def _install_barrier(self, command_id, record_id, barrier_id, plan, refs, request_hash):
         with self.store._lock, self.store._connection() as conn:
@@ -257,7 +314,7 @@ class PurgeService:
                     raise RuntimeDenied("PURGE_PLAN_STALE_AT_BARRIER_INSTALL")
                 barrier = {"schema_id":"nexus.purge_barrier","schema_version":1,"barrier_id":barrier_id,"plan_id":plan["plan_id"],"protected_refs":refs,"lineage_revision":plan["lineage_revision"],"status":"ACTIVE","active_run_refs":self._active_runs(refs, conn),"created_at":_now()}
                 self.store._validate("nexus.purge_barrier@1.schema.json", barrier)
-                conn.execute("INSERT INTO purge_barriers VALUES(?,?,?,'ACTIVE',?)", (barrier_id, plan["plan_id"], plan["lineage_revision"], barrier["created_at"]))
+                conn.execute("INSERT INTO purge_barriers(barrier_id,plan_id,lineage_revision,status,created_at,task_id) VALUES(?,?,?,'ACTIVE',?,?)", (barrier_id, plan["plan_id"], plan["lineage_revision"], barrier["created_at"], plan.get("task_id")))
                 conn.executemany("INSERT INTO purge_barrier_refs VALUES(?,?)", ((barrier_id, ref) for ref in refs))
                 started_at = _now()
                 record = self._record_document(record_id, plan, barrier_id, "RUNNING", [], started_at)
@@ -286,8 +343,48 @@ class PurgeService:
             except Exception:
                 conn.rollback()
                 raise
-        self.journal.append(action="BARRIER_PARTIAL", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=plan["plan_hash"], lineage_revision=plan["lineage_revision"], protected_refs=refs)
+        self.journal.append(action="BARRIER_PARTIAL", barrier_id=barrier_id, plan_id=plan["plan_id"], plan_hash=plan["plan_hash"], lineage_revision=plan["lineage_revision"], protected_refs=refs, task_id=plan.get("task_id"))
+        self._acknowledge_journal_projection(barrier_id, "PARTIAL")
         return result
+
+    def _acknowledge_journal_projection(self, barrier_id, expected_status):
+        sequence, record_hash = self.journal.verified_head()
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
+                if not row or row["status"] != expected_status:
+                    raise RuntimeDenied("PURGE_JOURNAL_PROJECTION_MISMATCH")
+                self.store._acknowledge_purge_journal_head(
+                    conn,
+                    identity=self.journal.identity,
+                    sequence=sequence,
+                    record_hash=record_hash,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _mark_partial_local(self, command_id, record_id, barrier_id, plan, refs, unresolved, request_hash):
+        """Persist a restrictive local hold when independent journal install failed."""
+        if not unresolved:
+            raise RuntimeDenied("PURGE_PARTIAL_REQUIRES_UNRESOLVED_ITEM")
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("UPDATE purge_barriers SET status='PARTIAL' WHERE barrier_id=? AND status IN ('ACTIVE','PARTIAL')", (barrier_id,))
+                started_at = conn.execute("SELECT started_at FROM purge_execution_records WHERE record_id=?", (record_id,)).fetchone()[0]
+                record = self._record_document(record_id, plan, barrier_id, "PARTIAL", unresolved, started_at)
+                conn.execute("UPDATE purge_execution_records SET status='PARTIAL',unresolved_json=?,record_json=? WHERE record_id=?", (_canon(unresolved), _canon(record), record_id))
+                self._ledger(conn, command_id + "-local-partial", barrier_id, "BARRIER_PARTIAL")
+                result = {"record_id": record_id, "status": "PARTIAL", "unresolved_items": unresolved}
+                self.store._record_command(conn, command_id, "execute_purge", request_hash, result)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
 
     def _purge_payloads_and_indexes(self, refs):
         with self.store._lock, self.store._connection() as conn:
@@ -305,12 +402,14 @@ class PurgeService:
                 # immutable audit record. Remove rows only after the referenced
                 # input or manifest has become a Purged tombstone; Trace keeps
                 # the binding event with its governed references redacted.
-                conn.execute(
-                    "DELETE FROM run_manifest_inputs WHERE input_object_id IN "
-                    "(SELECT object_id FROM object_states WHERE payload_state='PURGED') "
-                    "OR manifest_object_id IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
-                )
-                self._redact_purged_identifiers(conn)
+                purged_ids = [row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE payload_state='PURGED'")]
+                with self.store._allow_purge_redaction(purged_ids):
+                    conn.execute(
+                        "DELETE FROM run_manifest_inputs WHERE input_object_id IN "
+                        "(SELECT object_id FROM object_states WHERE payload_state='PURGED') "
+                        "OR manifest_object_id IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
+                    )
+                    self._redact_purged_identifiers(conn)
                 conn.commit()
                 checkpoint = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
                 if checkpoint and checkpoint[0] != 0:
@@ -325,26 +424,117 @@ class PurgeService:
         purged = {row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE payload_state='PURGED'")}
         if not purged:
             return
+        def redact(value):
+            if isinstance(value, str):
+                return "REDACTED_PURGED" if value in purged else value
+            if isinstance(value, list):
+                return [redact(item) for item in value]
+            if isinstance(value, dict):
+                return {key: redact(item) for key, item in value.items()}
+            return value
+
+        def contains_purged(value):
+            if isinstance(value, str):
+                return value in purged
+            if isinstance(value, list):
+                return any(contains_purged(item) for item in value)
+            if isinstance(value, dict):
+                return any(contains_purged(item) for item in value.values())
+            return False
+
+        # Immutable audit records retain their non-identifying verdict/state,
+        # while every exact object-ID value is replaced before any read/replay.
+        for row in conn.execute("SELECT verification_id,target_ref,evidence_used_json,result_json FROM verification_results").fetchall():
+            target = "REDACTED_PURGED" if row["target_ref"] in purged else row["target_ref"]
+            evidence = redact(json.loads(row["evidence_used_json"]))
+            result = redact(json.loads(row["result_json"]))
+            if target != row["target_ref"] or _canon(evidence) != row["evidence_used_json"] or _canon(result) != row["result_json"]:
+                conn.execute("UPDATE verification_results SET target_ref=?,evidence_used_json=?,result_json=? WHERE verification_id=?", (target, _canon(evidence), _canon(result), row["verification_id"]))
+
+        # Detach memory projections before deleting their object-link rows.
+        for row in conn.execute("SELECT * FROM memory_candidates").fetchall():
+            metadata = json.loads(row["metadata_json"])
+            if row["claim_ref"] in purged or contains_purged(metadata):
+                claim_ref = None if row["claim_ref"] in purged else row["claim_ref"]
+                conn.execute("UPDATE memory_candidates SET claim_ref=?,metadata_json=?,status='PURGED' WHERE candidate_id=?", (claim_ref, _canon(redact(metadata)), row["candidate_id"]))
+        for object_id in sorted(purged):
+            conn.execute("DELETE FROM memory_candidate_evidence WHERE evidence_object_id=?", (object_id,))
+
+        # Classification assertions remain as non-identifying policy facts.
+        for row in conn.execute("SELECT assertion_id,subject_type,subject_ref,reason FROM classification_assertions WHERE subject_type='OBJECT'").fetchall():
+            if row["subject_ref"] in purged or any(ref in (row["reason"] or "") for ref in purged):
+                conn.execute("UPDATE classification_assertions SET subject_ref='REDACTED_PURGED',reason='[redacted by purge]' WHERE assertion_id=?", (row["assertion_id"],))
+
+        # Rebuildable projections are detached/removed, never redirected to a
+        # fake live object. Terminal runs may retain their historical state.
+        for object_id in sorted(purged):
+            conn.execute("DELETE FROM logical_refs WHERE current_object_id=?", (object_id,))
+            conn.execute("DELETE FROM object_relations WHERE from_id=? OR to_id=?", (object_id, object_id))
+            for attempt in conn.execute("SELECT attempt_id,task_id FROM subtask_attempts WHERE route_decision_ref=?", (object_id,)).fetchall():
+                conn.execute("INSERT OR IGNORE INTO purge_redacted_attempt_routes(attempt_id,task_id,recorded_at) VALUES(?,?,?)", (attempt["attempt_id"], attempt["task_id"], _now()))
+            conn.execute("UPDATE subtask_attempts SET route_decision_ref=NULL WHERE route_decision_ref=?", (object_id,))
+            conn.execute("DELETE FROM route_decisions WHERE decision_object_id=?", (object_id,))
+            conn.execute("UPDATE runs SET manifest_ref='REDACTED_PURGED' WHERE manifest_ref=? AND status IN ('CREATED','SUCCEEDED','FAILED','CANCELLED')", (object_id,))
+
+        # Effect object targets are matched only to actual Object tombstones;
+        # arbitrary external target strings are not treated as Nexus objects.
         effects = conn.execute(
-            "SELECT e.* FROM effects e JOIN object_states s ON s.object_id=e.payload_object_ref WHERE s.payload_state='PURGED' AND e.target_ref<>'REDACTED_PURGED'"
+            "SELECT e.* FROM effects e WHERE e.payload_object_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED') "
+            "OR e.target_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
         ).fetchall()
         effect_ids = {row["effect_id"] for row in effects}
         for row in effects:
             effect_json = json.loads(row["effect_json"])
-            effect_json.update({
-                "target_ref": "REDACTED_PURGED",
-                "payload_integrity_hash": "0" * 64,
-                "idempotency_key": "REDACTED_PURGED:" + row["effect_id"],
-            })
+            effect_json = redact(effect_json)
+            effect_json.update({"target_ref": "REDACTED_PURGED", "payload_integrity_hash": "0" * 64, "idempotency_key": "REDACTED_PURGED:" + row["effect_id"]})
             conn.execute(
-                "UPDATE effects SET target_ref='REDACTED_PURGED',payload_integrity_hash=?,idempotency_key=?,external_receipt_ref=NULL,effect_json=? WHERE effect_id=?",
+                "UPDATE effects SET target_ref='REDACTED_PURGED',payload_integrity_hash=?,payload_object_ref=NULL,idempotency_key=?,external_receipt_ref=NULL,effect_json=? WHERE effect_id=?",
                 ("0" * 64, "REDACTED_PURGED:" + row["effect_id"], _canon(effect_json), row["effect_id"]),
             )
-        for row in conn.execute("SELECT * FROM approval_decisions WHERE effect_id IN (SELECT effect_id FROM effects WHERE target_ref='REDACTED_PURGED') AND target_ref<>'REDACTED_PURGED'").fetchall():
+        for row in conn.execute("SELECT * FROM approval_decisions").fetchall():
+            scopes = json.loads(row["approved_scope_json"])
+            effect_redacted = row["effect_id"] in effect_ids
+            target_redacted = row["target_ref"] in purged or effect_redacted
+            scope_redacted = contains_purged(scopes)
+            direct_redacted = row["target_ref"] in purged or scope_redacted or contains_purged(row["reason"])
+            if not (effect_redacted or direct_redacted):
+                continue
+            owner = conn.execute("SELECT r.task_id FROM effects e JOIN runs r ON r.run_id=e.run_id WHERE e.effect_id=?", (row["effect_id"],)).fetchone() if row["effect_id"] else None
+            if owner is None:
+                linked_refs = {row["target_ref"]} if row["target_ref"] in purged else set()
+                linked_refs.update(value.removeprefix("object:") for value in scopes if isinstance(value, str) and value.removeprefix("object:") in purged)
+                owner_rows = []
+                if linked_refs:
+                    ref_marks = ",".join("?" for _ in linked_refs)
+                    owner_rows = conn.execute(
+                        f"SELECT DISTINCT b.task_id FROM purge_barrier_refs br JOIN purge_barriers b USING(barrier_id) WHERE br.object_id IN ({ref_marks}) AND b.task_id IS NOT NULL",
+                        sorted(linked_refs),
+                    ).fetchall()
+                owner_task = owner_rows[0]["task_id"] if len(owner_rows) == 1 else None
+            else:
+                owner_task = owner["task_id"]
+            if owner_task:
+                conn.execute("INSERT OR IGNORE INTO purge_redacted_approval_owners(approval_id,task_id,recorded_at) VALUES(?,?,?)", (row["approval_id"], owner_task, _now()))
+            narrowed_scopes = [] if effect_redacted else [value for value in scopes if not any(value in {ref, "object:" + ref} for ref in purged)]
             conn.execute(
-                "UPDATE approval_decisions SET target_ref='REDACTED_PURGED',payload_integrity_hash=NULL,approved_scope_json='[]',reason=NULL,request_ref=NULL WHERE approval_id=?",
-                (row["approval_id"],),
+                "UPDATE approval_decisions SET target_ref=?,effect_id=?,payload_integrity_hash=NULL,approved_scope_json=?,reason=NULL,request_ref=NULL WHERE approval_id=?",
+                ("REDACTED_PURGED" if target_redacted else row["target_ref"], None if (effect_redacted or direct_redacted) else row["effect_id"], _canon(narrowed_scopes), row["approval_id"]),
             )
+        # Narrow only exact object scopes; all other grant scope remains intact.
+        for row in conn.execute("SELECT grant_id,resource_scope_json FROM delegation_grants").fetchall():
+            old_scope = json.loads(row["resource_scope_json"])
+            new_scope = [value for value in old_scope if not any(value in {ref, "object:" + ref} for ref in purged)]
+            if len(new_scope) != len(old_scope):
+                conn.execute("UPDATE delegation_grants SET resource_scope_json=? WHERE grant_id=?", (_canon(new_scope), row["grant_id"]))
+
+        # Command results are committed facts, but their ordinary replay
+        # projection must not expose exact purged identifiers.
+        for row in conn.execute("SELECT command_id,result_json,result_state FROM command_ledger").fetchall():
+            result = json.loads(row["result_json"])
+            redacted = redact(result)
+            if _canon(redacted) != row["result_json"]:
+                conn.execute("UPDATE command_ledger SET result_json=?,result_state='PURGED_REDACTED' WHERE command_id=?", (_canon(redacted), row["command_id"]))
+
         refs = sorted(purged)
         marks = ",".join("?" for _ in refs)
         conn.execute(f"UPDATE purge_execution_refs SET payload_uri=NULL,integrity_hash=NULL WHERE object_id IN ({marks}) AND payload_uri IS NOT NULL", refs)
@@ -378,6 +568,7 @@ class PurgeService:
             conn.execute("UPDATE trace_events SET event_json=? WHERE event_id=?", (_canon(event), row["event_id"]))
 
     def _release(self, command_id, record_id, barrier_id, plan, refs, request_hash):
+        journal_sequence, journal_hash = self.journal.verified_head()
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -387,8 +578,14 @@ class PurgeService:
                 record = self._record_document(record_id, plan, barrier_id, "COMPLETED", [], started_at, completed_at)
                 conn.execute("UPDATE purge_execution_records SET status='COMPLETED',unresolved_json='[]',record_json=?,completed_at=? WHERE record_id=?", (_canon(record), completed_at, record_id))
                 self._ledger(conn, command_id + "-released", barrier_id, "BARRIER_RELEASED")
-                result = {"record_id":record_id,"status":"COMPLETED","purged_refs":refs}
+                result = {"record_id":record_id,"status":"COMPLETED","purged_refs":["REDACTED_PURGED"] * len(refs)}
                 self.store._record_command(conn, command_id, "execute_purge", request_hash, result)
+                self.store._acknowledge_purge_journal_head(
+                    conn,
+                    identity=self.journal.identity,
+                    sequence=journal_sequence,
+                    record_hash=journal_hash,
+                )
                 conn.commit()
                 return result
             except Exception:
@@ -401,7 +598,12 @@ class PurgeService:
             try:
                 row = conn.execute("SELECT status FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()
                 if not row:
-                    conn.execute("INSERT INTO purge_barriers VALUES(?,?,?,'ACTIVE',?)", (barrier_id, event["plan_id"], event.get("lineage_revision", 0), _now()))
+                    conn.execute("INSERT INTO purge_barriers(barrier_id,plan_id,lineage_revision,status,created_at,task_id) VALUES(?,?,?,'ACTIVE',?,?)", (barrier_id, event["plan_id"], event.get("lineage_revision", 0), _now(), event.get("task_id")))
+                elif event.get("version") == 2:
+                    persisted_task = conn.execute("SELECT task_id FROM purge_barriers WHERE barrier_id=?", (barrier_id,)).fetchone()[0]
+                    if persisted_task not in {None, event.get("task_id")}:
+                        raise RuntimeDenied("PURGE_JOURNAL_TASK_BINDING_MISMATCH")
+                    conn.execute("UPDATE purge_barriers SET task_id=? WHERE barrier_id=? AND task_id IS NULL", (event.get("task_id"), barrier_id))
                 existing = [ref for ref in refs if conn.execute("SELECT 1 FROM objects WHERE object_id=?", (ref,)).fetchone()]
                 conn.executemany("INSERT OR IGNORE INTO purge_barrier_refs VALUES(?,?)", ((barrier_id, ref) for ref in existing))
                 conn.execute("UPDATE purge_barriers SET status=? WHERE barrier_id=?", (status, barrier_id))
@@ -410,7 +612,7 @@ class PurgeService:
                 conn.rollback()
                 raise
 
-    def _release_journal_event(self, barrier_id, plan_id, plan_hash, lineage_revision, protected_refs):
+    def _release_journal_event(self, barrier_id, plan_id, plan_hash, lineage_revision, protected_refs, *, task_id=None):
         events = [row for row in self.journal.read() if row.get("barrier_id") == barrier_id and row.get("action") == "BARRIER_RELEASED"]
         if not events:
             return None
@@ -426,6 +628,28 @@ class PurgeService:
         }
         if any(event.get(key) != value for key, value in expected.items()):
             raise RuntimeDenied("PURGE_RELEASE_JOURNAL_MISMATCH")
+        if event.get("version") == 2 and event.get("task_id") != task_id:
+            raise RuntimeDenied("PURGE_RELEASE_JOURNAL_MISMATCH")
+        return event
+
+    def _installation_journal_event(self, barrier_id, plan_id, plan_hash, lineage_revision, protected_refs, task_id):
+        events = [row for row in self.journal.read() if row.get("barrier_id") == barrier_id and row.get("action") == "BARRIER_INSTALLED"]
+        if not events:
+            return None
+        if len(events) != 1:
+            raise RuntimeDenied("PURGE_INSTALL_JOURNAL_DUPLICATE")
+        event = events[0]
+        expected = {
+            "barrier_id": barrier_id,
+            "plan_id": plan_id,
+            "plan_hash": plan_hash,
+            "lineage_revision": lineage_revision,
+            "protected_refs": sorted(set(protected_refs)),
+        }
+        if any(event.get(key) != value for key, value in expected.items()):
+            raise RuntimeDenied("PURGE_INSTALL_JOURNAL_MISMATCH")
+        if event.get("version") == 2 and event.get("task_id") != task_id:
+            raise RuntimeDenied("PURGE_INSTALL_JOURNAL_MISMATCH")
         return event
 
     def _ledger(self, conn, command_id, barrier_id, action):
@@ -516,7 +740,14 @@ class PurgeService:
         try:
             marks = ",".join("?" for _ in refs)
             if not marks: return []
-            rows = conn.execute(f"SELECT DISTINCT r.run_id FROM runs r JOIN run_manifest_inputs i USING(run_id) WHERE r.status IN ('READY','RUNNING','WAITING','VERIFYING') AND i.input_object_id IN ({marks})", tuple(refs)).fetchall()
+            active = "('READY','RUNNING','WAITING','VERIFYING')"
+            rows = conn.execute(
+                "SELECT DISTINCT r.run_id FROM runs r WHERE r.status IN " + active + " AND ("
+                f"r.manifest_ref IN ({marks}) "
+                f"OR EXISTS (SELECT 1 FROM run_manifest_inputs i WHERE i.run_id=r.run_id AND (i.input_object_id IN ({marks}) OR i.manifest_object_id IN ({marks}))) "
+                f"OR EXISTS (SELECT 1 FROM subtask_attempts a WHERE a.run_id=r.run_id AND a.route_decision_ref IN ({marks})))",
+                (*refs, *refs, *refs, *refs),
+            ).fetchall()
             return sorted(row["run_id"] for row in rows)
         finally:
             if own: conn.close()
@@ -525,5 +756,9 @@ class PurgeService:
         marks = ",".join("?" for _ in refs)
         if not marks: return []
         with self.store._connection() as conn:
-            rows = conn.execute(f"SELECT effect_id FROM effects WHERE payload_object_ref IN ({marks}) AND (effect_outcome='UNKNOWN' OR execution_state='COMMITTING')", tuple(refs)).fetchall()
+            rows = conn.execute(
+                f"SELECT effect_id FROM effects WHERE (payload_object_ref IN ({marks}) OR target_ref IN ({marks})) "
+                "AND (effect_outcome='UNKNOWN' OR execution_state IN ('COMMITTING','DECLARED','PREPARED','AUTHORIZED'))",
+                (*refs, *refs),
+            ).fetchall()
         return sorted(row[0] for row in rows)

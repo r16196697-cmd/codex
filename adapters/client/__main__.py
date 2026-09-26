@@ -21,6 +21,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nexus", description="Codex-hosted Nexus local operator surface")
     parser.add_argument("--data-root", required=True, type=Path, help="Existing Nexus data root; the CLI never initializes a database")
     parser.add_argument("--policy", type=Path, help="Optional existing nexus.policy@1 JSON file; read-only and schema-validated")
+    parser.add_argument("--independent-purge-journal", type=Path, help="Configured independent Purge Journal; defaults to NEXUS_INDEPENDENT_PURGE_JOURNAL or a sibling of --data-root")
     commands = parser.add_subparsers(dest="command", required=True)
 
     mode = commands.add_parser("mode")
@@ -48,18 +49,20 @@ def _parser() -> argparse.ArgumentParser:
 
     recovery = commands.add_parser("recovery")
     recovery_commands = recovery.add_subparsers(dest="recovery_action", required=True)
+    open_recovery = recovery_commands.add_parser("open")
+    open_recovery.add_argument("--purge-ledger", required=True, type=Path, help="independent Purge Ledger path outside --data-root")
     complete = recovery_commands.add_parser("complete")
     complete.add_argument("--command-id", required=True)
     complete.add_argument("--purge-ledger", required=True, type=Path, help="independent Purge Ledger path outside --data-root")
     return parser
 
 
-def _runtime(data_root: Path, policy_path: Path | None = None):
+def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
         raise ValueError("No existing Nexus database at --data-root; use the separately reviewed initialization procedure.")
     policy = json.loads(policy_path.expanduser().resolve(strict=True).read_text(encoding="utf-8")) if policy_path else None
-    store = ObjectStore(root, policy=policy)
+    store = ObjectStore(root, policy=policy, force_recovery=force_recovery, independent_purge_journal_path=independent_purge_journal_path)
     authority = AuthorityService(store, store.policy)
     budget = BudgetService(store)
     trace = TraceRuntime(store, authority)
@@ -70,7 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
-        store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy)
+        force_recovery = args.command == "recovery" and args.recovery_action == "open"
+        journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
+        store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
         client = OperatorClient(runtime)
         if args.command == "mode" and args.mode_action == "show":
             result = client.mode()
@@ -90,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = client.inspect_route(**common, task_id=args.task_id, route_id=args.route_id)
             else:
                 result = client.inspect_purge(**common, task_id=args.task_id, plan_id=args.plan_id)
+        elif args.command == "recovery" and args.recovery_action == "open":
+            memory = MemoryService(store, authority, verifier=None)
+            purge = PurgeService(store, authority, memory, independent_journal_path=args.purge_ledger)
+            result = {"status": "RECOVERY_OPEN", "journal_replay": purge.replay_independent_journal()}
         else:
             memory = MemoryService(store, authority, verifier=None)
             purge = PurgeService(store, authority, memory, independent_journal_path=args.purge_ledger)

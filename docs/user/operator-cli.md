@@ -19,6 +19,16 @@ The grant must include the exact task, resource, action `INSPECT`, and audience 
 
 `UNKNOWN` is rendered as an unresolved fact requiring authoritative reconciliation, never as a failed/retryable commit. `PARTIAL` purge is shown as incomplete and its barrier remains visible. A mode change is authorized for both `RUNTIME_CONFIGURE` and `TRACE_APPEND`, and requires an existing Task Root `ORCHESTRATOR` Run using the same Grant. The supplied immutable `TRACE_EVENT` classification assertion must identify `evt-<command-id>` and fit the Root Run data boundary. The mode audit row, CommandLedger result, and `nexus.runtime.mode_changed` TraceEvent commit atomically; mode changes without valid trace context are denied.
 
+Ordinary production startup performs a freshness handshake between the configured independent Purge Journal and the database's acknowledged journal watermark before migrations, orphan cleanup, or Core APIs. A stale snapshot, missing/mismatched journal, rollback, or corrupt chain is automatically held in RECOVERY. Configure the same journal for every ordinary startup with `--independent-purge-journal <path>` (or `NEXUS_INDEPENDENT_PURGE_JOURNAL`); absent either, the default is a sibling of the data root. Do not copy or substitute a different journal for a deployment.
+
+`recovery open` remains an explicit operator entry point for known restores and damaged roots. It forces RECOVERY before migrations, journal replay, or Core APIs are made available:
+
+```powershell
+.\.venv\Scripts\python.exe -m adapters.client --data-root <restored-data-root> --policy <nexus-policy.json> recovery open --purge-ledger <independent-ledger-path>
+```
+
+The ledger path must be outside the data root. If recovery-open or journal replay fails, leave the root isolated and investigate; do not invoke ordinary Runtime APIs. `recovery open` is an explicit operator action, but ordinary startup also automatically detects stale restored snapshots when configured with the independent journal.
+
 During recovery, ordinary Runtime reads/writes and inspect are isolated. The only mode exit is:
 
 ```powershell

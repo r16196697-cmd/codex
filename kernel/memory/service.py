@@ -11,7 +11,7 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _expiry(value):
+def _expiry(value, *, require_future=True):
     if value is None:
         return None
     try:
@@ -21,7 +21,7 @@ def _expiry(value):
         normalized = parsed.astimezone(timezone.utc)
     except (AttributeError, TypeError, ValueError) as exc:
         raise RuntimeDenied("MEMORY_EXPIRY_INVALID") from exc
-    if normalized <= datetime.now(timezone.utc):
+    if require_future and normalized <= datetime.now(timezone.utc):
         raise RuntimeDenied("MEMORY_EXPIRY_INVALID")
     return normalized.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -33,14 +33,19 @@ class MemoryService:
 
     def retain_raw(self, *, command_id: str, object_id: str, run_id: str, expires_at: str | None = None) -> None:
         self.modes.require("memory_write")
+        expires_at = _expiry(expires_at, require_future=False)
+        request = {"object_id": object_id, "run_id": run_id, "expires_at": expires_at}
+        digest = self.store._request_hash("retain_raw_history", request)
+        with self.store._connection() as conn:
+            prior = self.store._replay_command(conn, command_id, "retain_raw_history", digest)
+        if prior is not None:
+            return
         expires_at = _expiry(expires_at)
         run = self._run(run_id)
         metadata = self.store.get_object_metadata(object_id)
         if metadata.get("payload_state") != "AVAILABLE": raise RuntimeDenied("RAW_HISTORY_OBJECT_UNAVAILABLE")
         self.authority.evaluate_authorization(run["grant_id"], {"task": run["task_id"], "resource": object_id, "action": "MEMORY_RETAIN", "audience": "nexus-runtime"}, command_id + "-authorize")
         text = self.store.get_payload(object_id).decode("utf-8", errors="strict")
-        request = {"object_id": object_id, "run_id": run_id, "expires_at": expires_at}
-        digest = self.store._request_hash("retain_raw_history", request)
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -61,14 +66,34 @@ class MemoryService:
 
     def create_candidate(self, *, command_id: str, candidate_id: str, claim_ref: str, evidence_refs: list[str], owner: str, classification_assertion_ref: str, verification_ref: str, review_trigger: str, expires_at: str | None = None, conflicts: list[str] | None = None) -> dict:
         self.modes.require("memory_write")
+        expires_at = _expiry(expires_at, require_future=False)
+        refs = sorted(set(evidence_refs))
+        conflict_refs = sorted(set(conflicts or []))
+        with self.store._connection() as conn:
+            existing = conn.execute("SELECT metadata_json,status FROM memory_candidates WHERE candidate_id=?", (candidate_id,)).fetchone()
+            command = conn.execute("SELECT operation,request_hash FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
+        if existing or command:
+            if not existing or not command or command["operation"] != "create_memory_candidate":
+                raise CommandConflict("COMMAND_CONFLICT")
+            committed = json.loads(existing["metadata_json"])
+            caller_shape = dict(committed)
+            caller_shape.update({"candidate_id": candidate_id, "claim_ref": claim_ref, "evidence_refs": refs,
+                "conflicts": conflict_refs, "owner": owner, "classification_assertion_ref": classification_assertion_ref,
+                "verification_ref": verification_ref, "review_trigger": review_trigger})
+            if expires_at is None:
+                caller_shape.pop("expires_at", None)
+            else:
+                caller_shape["expires_at"] = expires_at
+            digest = self.store._request_hash("create_memory_candidate", caller_shape)
+            if digest != command["request_hash"]:
+                raise CommandConflict("COMMAND_CONFLICT")
+            return committed
         expires_at = _expiry(expires_at)
         verification = self.verifier.get(verification_ref)
-        refs = sorted(set(evidence_refs))
         if verification["target_ref"] != claim_ref or sorted(set(verification["evidence_used"])) != refs:
             raise RuntimeDenied("MEMORY_VERIFICATION_BINDING_MISMATCH")
         for object_id in [claim_ref, *refs]:
             self.store.verify_object(object_id)
-        conflict_refs = sorted(set(conflicts or []))
         claim_meta = self.store.get_object_metadata(claim_ref)
         if classification_assertion_ref != claim_meta.get("classification_assertion_ref"):
             raise RuntimeDenied("MEMORY_CANDIDATE_CLASSIFICATION_MISMATCH")

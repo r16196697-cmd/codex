@@ -29,7 +29,8 @@ class MemoryPurgeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.data_root = self.root / "data"
-        self.store = ObjectStore(self.data_root)
+        self.journal_path = self.root / "independent" / "purge.jsonl"
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
         policy["trust_anchors"] = ["human-root"]
@@ -48,7 +49,6 @@ class MemoryPurgeTests(unittest.TestCase):
         self._seed_pending_run()
         self.verifier = VerificationService(self.store, self.authority)
         self.memory = MemoryService(self.store, self.authority, self.verifier)
-        self.journal_path = self.root / "independent" / "purge.jsonl"
         self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
 
     def _seed_task_run(self):
@@ -173,44 +173,157 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(self.memory.search_admitted(query="governed memory", run_id="run-7"), [])
         with self.assertRaises(PurgeBarrierActive):
             self.memory.retain_raw(command_id="retain-during-barrier", object_id=self.claim, run_id="run-7")
-        self.assertEqual(self.store.get_payload(self.claim), b"The synthetic Nexus fact is governed memory.")
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.get_payload(self.claim)
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_ledger").fetchone()[0], 2)
         replay = self.purge.replay_independent_journal()
         self.assertFalse(replay["normal_allowed"])
         self.assertEqual(replay["held_refs"], 3)
-        self.assertEqual(self.store.get_payload(self.claim), b"The synthetic Nexus fact is governed memory.")
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.get_payload(self.claim)
 
     def test_crash_after_independent_barrier_record_restores_conservative_purge_hold(self):
         self.memory.retain_raw(command_id="retain-before-journal-crash", object_id=self.claim, run_id="run-7")
         plan = self.purge.plan(command_id="journal-crash-plan-command", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
-        with mock.patch.object(self.purge, "_install_barrier", side_effect=RuntimeError("SIMULATED_CRASH_AFTER_JOURNAL")):
-            with self.assertRaisesRegex(RuntimeError, "SIMULATED_CRASH_AFTER_JOURNAL"):
-                self.purge.execute(command_id="journal-crash-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
-        with self.store._connection() as conn:
-            self.assertIsNone(conn.execute("SELECT 1 FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone())
-
-        replay = self.purge.replay_independent_journal()
-        self.assertFalse(replay["normal_allowed"])
+        original_append = self.purge.journal.append
+        def fail_install(**kwargs):
+            if kwargs.get("action") == "BARRIER_INSTALLED":
+                raise OSError("SIMULATED_JOURNAL_INSTALL_FAILURE")
+            return original_append(**kwargs)
+        with mock.patch.object(self.purge.journal, "append", side_effect=fail_install):
+            first = self.purge.execute(command_id="journal-crash-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(first["status"], "PARTIAL")
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
-            self.assertEqual(replay["held_refs"], conn.execute("SELECT COUNT(*) FROM purge_barrier_refs WHERE barrier_id='barrier-7'").fetchone()[0])
-        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
+        replay = self.purge.replay_independent_journal()
+        self.assertFalse(replay["normal_allowed"])
+        self.assertEqual(replay["held_refs"], 3)
         with self.assertRaises(PurgeBarrierActive):
-            self.memory.retain_raw(command_id="retain-during-recovered-barrier", object_id=self.claim, run_id="run-7")
-
+            self.store.get_payload(self.claim)
         self.store.close()
-        self.store = ObjectStore(self.data_root)
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
         self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
         recovered = self.purge.replay_independent_journal()
         self.assertFalse(recovered["normal_allowed"])
-        self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
+
+    def test_process_loss_after_local_barrier_before_journal_keeps_reads_and_writes_held_then_resumes(self):
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="barrier-before-journal-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with mock.patch.object(self.purge.journal, "append", side_effect=SimulatedProcessLoss("after local barrier commit")):
+            with self.assertRaises(SimulatedProcessLoss):
+                self.purge.execute(command_id="barrier-before-journal-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "ACTIVE")
+            self.assertEqual(conn.execute("SELECT status FROM purge_execution_records WHERE record_id='record-7'").fetchone()[0], "RUNNING")
+        self.assertEqual(self.purge.journal.read(), [])
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.get_payload(self.claim)
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.add_relation(command_id="barrier-before-journal-write", from_id=self.claim, relation_type="supports", to_id="evidence-7")
+
+        self.store.close()
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.verifier = VerificationService(self.store, self.authority)
+        self.memory = MemoryService(self.store, self.authority, self.verifier)
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.get_object_metadata(self.claim)
+        completed = self.purge.execute(command_id="barrier-before-journal-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertEqual(sum(row["action"] == "BARRIER_INSTALLED" for row in self.purge.journal.read()), 1)
+
+    def test_process_loss_after_durable_install_journal_before_payload_delete_resumes_fail_closed(self):
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="journal-before-delete-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        with mock.patch.object(self.purge, "_purge_payloads_and_indexes", side_effect=SimulatedProcessLoss("after durable install journal")):
+            with self.assertRaises(SimulatedProcessLoss):
+                self.purge.execute(command_id="journal-before-delete-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(self.purge.journal.read()[0]["action"], "BARRIER_INSTALLED")
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.get_payload(self.claim)
+        with self.assertRaises(PurgeBarrierActive):
+            self.store.add_relation(command_id="journal-before-delete-write", from_id=self.claim, relation_type="supports", to_id="evidence-7")
+
+        self.store.close()
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.authority.policy)
+        self.verifier = VerificationService(self.store, self.authority)
+        self.memory = MemoryService(self.store, self.authority, self.verifier)
+        self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        self.assertFalse(self.purge.replay_independent_journal()["normal_allowed"])
+        completed = self.purge.execute(command_id="journal-before-delete-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(completed["status"], "COMPLETED")
+        with self.assertRaises(PurgedObject):
+            self.store.get_payload(self.claim)
+
+    def test_each_governed_redaction_failure_rolls_back_the_entire_purge_projection(self):
+        self.memory.retain_raw(command_id="atomic-redact-retain", object_id=self.claim, run_id="run-7")
+        verification = self.verifier.verify_object_integrity(verification_id="atomic-redact-verification", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7")
+        self.memory.create_candidate(command_id="atomic-redact-candidate", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=verification["verification_id"], review_trigger="atomic purge redaction")
+        self._human_verification("atomic-redact-human")
+        self._seed_purge_identifier_audit()
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="atomic-redact-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        with mock.patch.object(self.purge, "_purge_payloads_and_indexes", side_effect=SimulatedProcessLoss("barrier installed")):
+            with self.assertRaises(SimulatedProcessLoss):
+                self.purge.execute(command_id="atomic-redact-first", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+
+        failures = [
+            ("verification_results", "target_ref", "OLD.target_ref='claim-7'"),
+            ("memory_candidates", "claim_ref", "OLD.claim_ref='claim-7'"),
+            ("classification_assertions", "subject_ref", "OLD.subject_ref='claim-7'"),
+            ("effects", "payload_object_ref", "OLD.payload_object_ref='claim-7'"),
+            ("approval_decisions", "target_ref", "OLD.target_ref='claim-7'"),
+            ("delegation_grants", "resource_scope_json", "instr(OLD.resource_scope_json, '\"claim-7\"')>0"),
+            ("command_ledger", "result_json", "instr(OLD.result_json, '\"claim-7\"')>0"),
+        ]
+        for index, (table, column, condition) in enumerate(failures):
+            trigger = f"inject_atomic_redaction_failure_{index}"
+            with self.store._connection() as conn:
+                conn.execute(f"CREATE TRIGGER {trigger} BEFORE UPDATE OF {column} ON {table} WHEN {condition} BEGIN SELECT RAISE(ABORT,'SIMULATED_{table}_REDACTION_FAILURE'); END")
+            try:
+                self.purge._purge_payloads_and_indexes([self.claim])
+            except sqlite3.IntegrityError as exc:
+                self.assertIn(f"SIMULATED_{table}_REDACTION_FAILURE", str(exc))
+            else:
+                self.fail(f"fault trigger for {table} was not reached")
+            with self.store._connection() as conn:
+                conn.execute(f"DROP TRIGGER {trigger}")
+                self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "AVAILABLE")
+                self.assertEqual(conn.execute("SELECT target_ref FROM verification_results WHERE verification_id=?", (verification["verification_id"],)).fetchone()[0], self.claim)
+                self.assertEqual(conn.execute("SELECT claim_ref FROM memory_candidates WHERE candidate_id='candidate-7'").fetchone()[0], self.claim)
+                self.assertEqual(conn.execute("SELECT subject_ref FROM classification_assertions WHERE assertion_id='class-claim-7'").fetchone()[0], self.claim)
+            with self.assertRaises(PurgeBarrierActive):
+                self.store.get_payload(self.claim)
+
+        completed = self.purge.execute(command_id="atomic-redact-retry", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(completed["status"], "COMPLETED")
 
     def test_purge_delete_transaction_failure_keeps_barrier_and_same_command_completes_after_reopen(self):
         self.memory.retain_raw(command_id="retain-before-delete-crash", object_id=self.claim, run_id="run-7")
@@ -231,14 +344,17 @@ class MemoryPurgeTests(unittest.TestCase):
             conn.execute("DROP TRIGGER fail_purge_state_update")
         missing_after_rollback = []
         for object_id in protected:
-            metadata = self.store.get_object_metadata(object_id)
-            if not self.store._payload_path(metadata["payload_uri"]).is_file():
+            with self.store._connection() as conn:
+                payload_uri = conn.execute("SELECT payload_uri FROM object_envelopes WHERE object_id=?", (object_id,)).fetchone()[0]
+            with self.assertRaises(PurgeBarrierActive):
+                self.store.get_object_metadata(object_id)
+            if not self.store._payload_path(payload_uri).is_file():
                 missing_after_rollback.append(object_id)
         self.assertTrue(missing_after_rollback, "the injected SQLite rollback occurs after filesystem unlink")
         self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
 
         self.store.close()
-        self.store = ObjectStore(self.data_root)
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -279,7 +395,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
                 self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "PURGED")
             self.store.close()
-            self.store = ObjectStore(self.data_root)
+            self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
             self.addCleanup(self.store.close)
             self.authority = AuthorityService(self.store, self.authority.policy)
             self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -323,11 +439,13 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.OperationalError, "completion projection"):
                 self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.store.close()
-        self.store = ObjectStore(self.data_root)
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
         self.purge = PurgeService(self.store, self.authority, self.memory, independent_journal_path=self.journal_path)
+        if self.store._current_runtime_mode() == "RECOVERY":
+            RuntimeModeService(self.store, self.authority).complete_validated_recovery(command_id="finish-release-projection-recovery", purge_service=self.purge)
         self.purge.replay_independent_journal()
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
@@ -342,7 +460,7 @@ class MemoryPurgeTests(unittest.TestCase):
         resumed = self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(resumed["status"], "COMPLETED")
         self.store.close()
-        self.store = ObjectStore(self.data_root)
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -365,7 +483,7 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
                 self.purge.plan(command_id="stable-plan-command", **changed)
         self.store.close()
-        self.store = ObjectStore(self.data_root)
+        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -383,12 +501,12 @@ class MemoryPurgeTests(unittest.TestCase):
         completed = self.purge.execute(command_id="inspect-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(completed["status"], "COMPLETED")
         self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-7-inspect",
-            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["object:"+self.claim],
+            "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["task:task-7","object:"+self.claim],
             "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
             "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-7-inspect")
         self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-8-inspect",
             "issued_by":"human-root","granted_to":"agent","task_scope":["task-8"],
-            "resource_scope":["object:"+self.claim,"object:"+self.evidence,"approval:approval-7","approval:approval-unresolved"],
+            "resource_scope":["task:task-8","object:"+self.claim,"object:"+self.evidence,"approval:approval-7","approval:approval-unresolved"],
             "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
             "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-8-inspect")
         self._classify("class-run-8", "RUN", "run-8")
@@ -653,6 +771,26 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers WHERE barrier_id='partial-barrier-b'").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records WHERE plan_id='partial-plan-b'").fetchone()[0], 0)
 
+    def test_partial_command_is_immutable_and_new_command_resumes_after_active_run_clears(self):
+        plan = self.purge.plan(command_id="partial-resume-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        first = self.purge.execute(command_id="partial-resume-x", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7", quiesce_run=lambda _: False)
+        self.assertEqual(first["status"], "PARTIAL")
+        exact_replay = self.purge.execute(command_id="partial-resume-x", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7", quiesce_run=lambda _: True)
+        self.assertEqual(exact_replay, first)
+        with self.store._connection() as conn:
+            immutable_x = conn.execute("SELECT request_hash,result_json,result_commitment,result_state FROM command_ledger WHERE command_id='partial-resume-x'").fetchone()
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        second = self.purge.execute(command_id="partial-resume-y", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(second["status"], "COMPLETED")
+        historical_x = self.purge.execute(command_id="partial-resume-x", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(historical_x, first)
+        with self.store._connection() as conn:
+            after_x = conn.execute("SELECT request_hash,result_json,result_commitment,result_state FROM command_ledger WHERE command_id='partial-resume-x'").fetchone()
+            self.assertEqual(tuple(after_x), tuple(immutable_x))
+            self.assertEqual(json.loads(after_x["result_json"])["status"], "PARTIAL")
+            self.assertEqual(json.loads(conn.execute("SELECT result_json FROM command_ledger WHERE command_id='partial-resume-y'").fetchone()[0])["status"], "COMPLETED")
+
     def test_completed_purge_exact_command_replays_after_grant_revocation(self):
         plan = self.purge.plan(command_id="purge-revoke-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
@@ -693,7 +831,7 @@ class MemoryPurgeTests(unittest.TestCase):
             self.purge.execute(**{**request, "plan":changed_plan})
         with self.assertRaises(AuthorizationDenied):
             self.purge.execute(**{**request, "command_id":"purge-revoke-new-command", "record_id":"new-record", "barrier_id":"new-barrier"})
-        self.assertEqual(self.store.get_object_metadata(self.claim), {"object_id": self.claim, "payload_state": "PURGED"})
+        self.assertEqual(self.store.get_object_metadata(self.claim), {"payload_state": "PURGED"})
         with self.store._connection() as conn:
             self.assertIsNone(conn.execute("SELECT 1 FROM purge_barriers WHERE barrier_id='new-barrier'").fetchone())
             self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='purge-revoke-new-command'").fetchone())
@@ -738,9 +876,9 @@ class MemoryPurgeTests(unittest.TestCase):
         # of the purge closure; retaining its index row must not retain bytes.
         with self.assertRaises(PurgedObject):
             self.store.get_payload("manifest-7")
-        self.assertEqual(self.store.get_object_metadata("manifest-7"), {"object_id": "manifest-7", "payload_state": "PURGED"})
+        self.assertEqual(self.store.get_object_metadata("manifest-7"), {"payload_state": "PURGED"})
         tombstone = self.store.get_object_metadata(self.claim)
-        self.assertEqual(tombstone, {"object_id": self.claim, "payload_state": "PURGED"})
+        self.assertEqual(tombstone, {"payload_state": "PURGED"})
         self.assertNotIn("integrity_hash", tombstone)
         effect_projection = inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id=effect_id)
         approval_projection = inspector.approval(grant_id="purge-audit-inspect", task_id="task-7", approval_id=approval_id, include_payload_hash=True)
@@ -759,7 +897,6 @@ class MemoryPurgeTests(unittest.TestCase):
             retained_effect = conn.execute("SELECT effect_outcome,payload_integrity_hash,target_ref FROM effects WHERE effect_id=?", (effect_id,)).fetchone()
             self.assertEqual((retained_effect["effect_outcome"], retained_effect["payload_integrity_hash"], retained_effect["target_ref"]), ("NOT_COMMITTED", "0" * 64, "REDACTED_PURGED"))
             approval_fact = conn.execute("SELECT decision,approver_principal_id,target_ref,payload_integrity_hash,approved_scope_json FROM approval_decisions WHERE approval_id=?", (approval_id,)).fetchone()
-            self.assertEqual((approval_fact["decision"], approval_fact["approver_principal_id"], approval_fact["target_ref"], approval_fact["payload_integrity_hash"], approval_fact["approved_scope_json"]), ("APPROVE", "human-root", "REDACTED_PURGED", None, "[]"))
             trace_fact = conn.execute("SELECT event_json FROM trace_events WHERE event_id='evt-purge-ref-event'").fetchone()[0]
             self.assertNotIn("https://private.example/recipient/42", trace_fact)
             self.assertNotIn(purged_payload_hash, trace_fact)
@@ -769,6 +906,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 "reconciliation_status": "NOT_REQUIRED",
             })
             self.assertNotIn(effect_id, trace_fact)
+            self.assertEqual((approval_fact["decision"], approval_fact["approver_principal_id"], approval_fact["target_ref"], approval_fact["payload_integrity_hash"], approval_fact["approved_scope_json"]), ("APPROVE", "human-root", "REDACTED_PURGED", None, '[]'))
             self.assertTrue(conn.execute("SELECT 1 FROM json_each(?, '$.object_refs') WHERE value='REDACTED_PURGED'", (trace_fact,)).fetchone())
             purge_ref = conn.execute("SELECT payload_uri,integrity_hash FROM purge_execution_refs WHERE record_id='record-7' AND object_id=?", (self.claim,)).fetchone()
             self.assertEqual((purge_ref["payload_uri"], purge_ref["integrity_hash"]), (None, None))
@@ -777,10 +915,12 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertNotIn(purged_payload_hash, json.dumps([tuple(row) for row in conn.execute("SELECT target_ref,payload_integrity_hash FROM effects UNION ALL SELECT target_ref,payload_integrity_hash FROM approval_decisions")]))
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE runs SET status='READY' WHERE run_id='run-pending'")
-        restored = ObjectStore(backup_root)
+        restored = ObjectStore(backup_root, independent_purge_journal_path=self.journal_path)
         try:
-            restored_memory = MemoryService(restored, self.authority, VerificationService(restored, self.authority))
-            restored_purge = PurgeService(restored, self.authority, restored_memory, independent_journal_path=self.journal_path)
+            restored_authority = AuthorityService(restored, self.authority.policy)
+            restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
+            restored_purge = PurgeService(restored, restored_authority, restored_memory, independent_journal_path=self.journal_path)
+            RuntimeModeService(restored, restored_authority).complete_validated_recovery(command_id="finish-backup-purge-recovery", purge_service=restored_purge)
             replay = restored_purge.replay_independent_journal()
             self.assertTrue(replay["normal_allowed"])
             self.assertEqual(replay["purged_refs_checked"], 3)
@@ -806,7 +946,7 @@ class MemoryPurgeTests(unittest.TestCase):
         finally:
             restored.close()
 
-    def test_proof_purge_preserves_verification_and_memory_reference_residue(self):
+    def test_proof_purge_redacts_governed_derivatives_and_replay_results(self):
         self.memory.retain_raw(command_id="retain-proof-claim", object_id=self.claim, run_id="run-7")
         integrity = self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7")
         self.assertEqual(integrity["verdict"], "PASS")
@@ -836,6 +976,9 @@ class MemoryPurgeTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id":"nexus.delegation_grant", "schema_version":1, "grant_id":inspect_grant_id, "issued_by":"human-root", "granted_to":"agent", "task_scope":["task-7"], "resource_scope":["task:task-7","route:route-object-proof","object:claim-7","object:manifest-7","approval:approval-verify-proof-human"], "action_scope":["INSPECT"], "audience_scope":["nexus-inspect"], "issued_at":now.isoformat(), "expires_at":(now+timedelta(days=1)).isoformat(), "status":"ACTIVE", "policy_version":"1"}, "create-inspect-proof-grant")
 
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+
         # Preserve a real pre-purge database/object snapshot; the independent
         # journal remains external and will later be replayed onto this copy.
         backup_root = self.root / "proof-old-backup"
@@ -850,8 +993,6 @@ class MemoryPurgeTests(unittest.TestCase):
 
         plan = self.purge.plan(command_id="proof-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim, self.evidence])
         self._approve_purge(plan["plan_hash"])
-        with self.store._connection() as conn:
-            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
         outcome = self.purge.execute(command_id="proof-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(outcome["status"], "COMPLETED")
 
@@ -870,7 +1011,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 logical_rows = [dict(row) for row in conn.execute("SELECT ref_id,current_object_id,revision FROM logical_refs WHERE ref_id='proof:claim'")]
                 relation_rows = [dict(row) for row in conn.execute("SELECT from_id,relation_type,to_id FROM object_relations WHERE from_id IN (?,?) OR to_id IN (?,?) ORDER BY from_id,relation_type,to_id", (self.claim,self.evidence,self.claim,self.evidence))]
                 runtime_rows = {
-                    "runs": [dict(row) for row in conn.execute("SELECT run_id,manifest_ref FROM runs WHERE manifest_ref IN ('manifest-7','manifest-pending')")],
+                    "runs": [dict(row) for row in conn.execute("SELECT run_id,manifest_ref FROM runs WHERE run_id IN ('run-7','run-pending') ORDER BY run_id")],
                     "run_manifest_inputs": [dict(row) for row in conn.execute("SELECT run_id,manifest_object_id,input_object_id FROM run_manifest_inputs WHERE input_object_id IN (?,?) OR manifest_object_id IN (?,?,?)", (self.claim,self.evidence,"manifest-7","manifest-pending","route-object-proof"))],
                     "route_decisions": [dict(row) for row in conn.execute("SELECT decision_object_id,decision_json FROM route_decisions WHERE decision_object_id='route-object-proof'")],
                     "subtask_attempts": [dict(row) for row in conn.execute("SELECT route_decision_ref FROM subtask_attempts WHERE attempt_id='proof-attempt'")],
@@ -915,33 +1056,33 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(object_states, {self.claim:"PURGED", self.evidence:"PURGED", "manifest-7":"PURGED", "manifest-pending":"PURGED", "route-object-proof":"PURGED"})
         self.assertEqual(len(verified), 2)
         for row in verified:
-            self.assertEqual(row["target_ref"], self.claim)
-            self.assertIn(self.evidence, row["evidence_used_json"])
-            self.assertIn(self.claim, row["result_json"])
-            self.assertIn(self.evidence, row["result_json"])
+            self.assertEqual(row["target_ref"], "REDACTED_PURGED")
+            self.assertNotIn(self.evidence, row["evidence_used_json"])
+            self.assertNotIn(self.claim, row["result_json"])
+            self.assertNotIn(self.evidence, row["result_json"])
             self.assertNotIn(self.claim, json.dumps(row["missing_evidence"]))
             self.assertNotIn(self.evidence, json.dumps(row["missing_evidence"]))
             self.assertNotIn(self.claim, json.dumps(row["conflicts"]))
             self.assertNotIn(self.evidence, json.dumps(row["conflicts"]))
-        self.assertEqual(memory_row["claim_ref"], self.claim)
+        self.assertIsNone(memory_row["claim_ref"])
         self.assertEqual(memory_row["status"], "PURGED")
-        self.assertIn(self.claim, memory_row["metadata_json"])
-        self.assertIn(self.evidence, memory_row["metadata_json"])
-        self.assertEqual(candidate_evidence, [{"candidate_id":"candidate-7", "evidence_object_id":self.evidence}])
+        metadata_projection = json.dumps(json.loads(memory_row["metadata_json"]), separators=(",", ":"))
+        self.assertNotIn('"' + self.claim + '"', metadata_projection)
+        self.assertNotIn('"' + self.evidence + '"', metadata_projection)
+        self.assertEqual(candidate_evidence, [])
         self.assertEqual(memory_row["classification_assertion_ref"], "class-claim-7")
         self.assertEqual(memory_row["verification_ref"], "verify-proof-human")
-        self.assertIn(self.claim, {row["subject_ref"] for row in classification_rows})
-        self.assertTrue(any(self.claim in row["reason"] and self.evidence in row["reason"] for row in classification_rows))
+        self.assertNotIn(self.claim, {row["subject_ref"] for row in classification_rows})
+        self.assertFalse(any(self.claim in row["reason"] or self.evidence in row["reason"] for row in classification_rows))
         self.assertTrue(any(row["supersedes"] == "class-claim-7" for row in classification_rows))
-        self.assertEqual(logical_rows, [{"ref_id":"proof:claim", "current_object_id":self.claim, "revision":1}])
-        self.assertTrue(any(row["relation_type"] == "supports" and row["to_id"] == self.claim for row in relation_rows))
-        self.assertTrue(any(row["relation_type"] == "derived_from" and row["to_id"] == self.claim for row in relation_rows))
-        self.assertIn("manifest-7", {row["manifest_ref"] for row in runtime_rows["runs"]})
-        self.assertIn("manifest-pending", {row["manifest_ref"] for row in runtime_rows["runs"]})
+        self.assertEqual(logical_rows, [])
+        self.assertEqual(relation_rows, [])
+        self.assertNotIn("manifest-7", {row["manifest_ref"] for row in runtime_rows["runs"]})
+        self.assertEqual({row["manifest_ref"] for row in runtime_rows["runs"]}, {"REDACTED_PURGED"})
         self.assertEqual(runtime_rows["run_manifest_inputs"], [])
-        self.assertTrue(any(row["decision_object_id"] == "route-object-proof" and "route-object-proof" in row["decision_json"] for row in runtime_rows["route_decisions"]))
-        self.assertEqual(runtime_rows["subtask_attempts"], [{"route_decision_ref":"route-object-proof"}])
-        self.assertEqual(effect_row["payload_object_ref"], self.claim)
+        self.assertEqual(runtime_rows["route_decisions"], [])
+        self.assertEqual(runtime_rows["subtask_attempts"], [{"route_decision_ref":None}])
+        self.assertIsNone(effect_row["payload_object_ref"])
         self.assertEqual(effect_row["target_ref"], "REDACTED_PURGED")
         self.assertEqual(effect_row["payload_integrity_hash"], "0" * 64)
         self.assertTrue(effect_row["idempotency_key"].startswith("REDACTED_PURGED:"))
@@ -950,21 +1091,25 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertNotIn(self.claim, effect_row["effect_json"])
         self.assertNotIn(self.evidence, effect_row["effect_json"])
         approval_by_id = {row["approval_id"]:row for row in approval_rows}
-        self.assertEqual(approval_by_id["approval-verify-proof-human"]["target_ref"], self.claim)
-        self.assertEqual(approval_by_id["approval-verify-proof-human"]["effect_id"], "verify-proof-human")
+        self.assertEqual(approval_by_id["approval-verify-proof-human"]["target_ref"], "REDACTED_PURGED")
+        self.assertIsNone(approval_by_id["approval-verify-proof-human"]["effect_id"])
         self.assertEqual(approval_by_id["approval-purge-sensitive"]["target_ref"], "REDACTED_PURGED")
         self.assertEqual(approval_by_id["approval-purge-sensitive"]["payload_integrity_hash"], None)
         self.assertEqual(approval_by_id["approval-purge-sensitive"]["approved_scope_json"], "[]")
         self.assertIsNone(approval_by_id["approval-purge-sensitive"]["reason"])
         self.assertIsNone(approval_by_id["approval-purge-sensitive"]["request_ref"])
-        self.assertIn("verification_results.target_ref:claim-7", occurrences)
-        self.assertIn("memory_candidates.metadata_json:claim-7", occurrences)
+        self.assertNotIn("verification_results.target_ref:claim-7", occurrences)
+        self.assertNotIn("memory_candidates.metadata_json:claim-7", occurrences)
 
         # Normal read APIs/inspect and the paused verifier replay candidate are
         # measured without changing those APIs in this proof-only task.
-        self.assertEqual(self.verifier.get("verify-proof-integrity")["target_ref"], self.claim)
-        self.assertEqual(self.verifier.get("verify-proof-integrity")["evidence_used"], [self.evidence])
-        self.assertEqual(self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7"), integrity)
+        self.assertEqual(self.verifier.get("verify-proof-integrity")["target_ref"], "REDACTED_PURGED")
+        self.assertNotIn(self.claim, json.dumps(self.verifier.get("verify-proof-integrity")))
+        verification_replay = self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7")
+        self.assertNotIn(self.claim, json.dumps(verification_replay))
+        self.assertNotIn(self.evidence, json.dumps(verification_replay))
+        with self.assertRaises(CommandConflict):
+            self.verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref="different-purged-target", evidence_refs=[self.evidence], run_id="run-7")
         with self.store._connection() as conn:
             before_replay_counts = {
                 "commands": conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0],
@@ -975,12 +1120,11 @@ class MemoryPurgeTests(unittest.TestCase):
         # Object creation's committed ledger replay is reachable after purge
         # and returns its original object identity. Logical-ref replay returns
         # only its revision; there is no public logical-ref getter.
-        self.assertEqual(self.store.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), self.claim)
-        self.assertEqual(self.store.put_object(command_id="put-route-object-proof", object_id="route-object-proof", payload=route_payload, object_type="artifact", created_by_run="run-pending", classification_assertion_ref="class-route-proof", derived_from=[self.claim]), "route-object-proof")
-        self.assertEqual(self.store.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)["to_id"], self.claim)
+        self.assertEqual(self.store.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), "REDACTED_PURGED")
+        relation_replay = self.store.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)
+        self.assertEqual(relation_replay["to_id"], "REDACTED_PURGED")
         self.assertEqual(self.store.create_logical_ref(command_id="proof-logical-ref", ref_id="proof:claim", ref_type="artifact", object_id=self.claim, updated_by_run="run-7"), 1)
-        with self.assertRaisesRegex(RuntimeDenied, "MEMORY_RUN_NOT_ACTIVE"):
-            self.memory.retain_raw(command_id="retain-proof-claim", object_id=self.claim, run_id="run-7")
+        self.assertIsNone(self.memory.retain_raw(command_id="retain-proof-claim", object_id=self.claim, run_id="run-7"))
         self.assertEqual(self.purge.execute(command_id="proof-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7"), outcome)
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0], before_replay_counts["commands"])
@@ -990,12 +1134,10 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.assertRaises(PurgedObject):
             self.store.get_payload(self.claim)
         proof_inspector = InspectService(self.store, self.authority)
-        # The task aggregate fails closed because purging removed the route
-        # envelope needed to establish attempt classification; the dedicated
-        # object metadata path returns PURGED state while suppressing the
-        # object_id field; the caller-supplied lookup key is not echoed.
-        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY"):
-            proof_inspector.task(grant_id=inspect_grant_id, task_id="task-7")
+        # Purged route references are stable redacted projections and no
+        # longer require deleted envelope/classification rows.
+        task_view = proof_inspector.task(grant_id=inspect_grant_id, task_id="task-7")
+        self.assertTrue(any(attempt["route_decision_ref"] == "REDACTED_PURGED" for attempt in task_view["attempts"]))
         object_view = proof_inspector.object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id=self.claim)
         self.assertEqual((object_view["object_id"], object_view["payload_state"]), (None, "PURGED"))
         manifest_view = proof_inspector.object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id="manifest-7")
@@ -1003,7 +1145,7 @@ class MemoryPurgeTests(unittest.TestCase):
         human_approval_view = proof_inspector.approval(grant_id=inspect_grant_id, task_id="task-7", approval_id="approval-verify-proof-human")
         self.assertEqual(human_approval_view["target_ref"], "REDACTED_PURGED")
         self.assertEqual(human_approval_view["effect_id"], "REDACTED_PURGED")
-        self.assertEqual(human_approval_view["approved_scope"], ["VERIFY", "REDACTED_PURGED"])
+        self.assertEqual(human_approval_view["approved_scope"], ["VERIFY"])
         effect_view = effect_inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id="effect-purge-sensitive")
         self.assertEqual(effect_view["target_ref"], "REDACTED_PURGED")
         approval_view = effect_inspector.approval(grant_id="purge-audit-inspect", task_id="task-7", approval_id=approval_id, include_payload_hash=True)
@@ -1011,25 +1153,27 @@ class MemoryPurgeTests(unittest.TestCase):
         trace_view = effect_inspector.trace_events(grant_id="purge-audit-inspect", task_id="task-7", run_id="run-7")
         self.assertTrue(any("REDACTED_PURGED" in event["object_refs"] for event in trace_view))
         self.assertFalse(any(self.claim in json.dumps(event) or self.evidence in json.dumps(event) for event in trace_view))
-        with self.assertRaisesRegex(RuntimeDenied, "INSPECT_NOT_FOUND"):
-            effect_inspector.route(grant_id=inspect_grant_id, task_id="task-7", route_id="route-object-proof")
+        route_view = effect_inspector.route(grant_id=inspect_grant_id, task_id="task-7", route_id="route-object-proof")
+        self.assertEqual(route_view, {"route_decision_id": "REDACTED_PURGED", "status": "REDACTED_PURGED"})
         self.assertEqual(self.memory.search_raw(query="synthetic Nexus fact", run_id="run-7"), [])
         self.assertEqual(self.memory.search_admitted(query="synthetic Nexus fact", run_id="run-7"), [])
-        with self.assertRaises(PurgedObject):
-            self.memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+        candidate_replay = self.memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+        self.assertNotIn('"' + self.claim + '"', json.dumps(candidate_replay))
+        self.assertNotIn('"' + self.evidence + '"', json.dumps(candidate_replay))
 
         command_ids = {row["command_id"] for row in commands}
         self.assertIn("candidate-proof", command_ids)
         self.assertIn("verify-verify-proof-integrity", command_ids)
         command_by_id = {row["command_id"]:row for row in commands}
-        self.assertIn(self.claim, command_by_id["put-claim-7"]["result_json"])
-        self.assertIn(self.evidence, command_by_id["put-evidence-7"]["result_json"])
-        self.assertIn(self.claim, command_by_id["retain-proof-claim"]["result_json"])
+        self.assertNotIn(self.claim, command_by_id["put-claim-7"]["result_json"])
+        self.assertNotIn(self.evidence, command_by_id["put-evidence-7"]["result_json"])
+        self.assertNotIn(self.claim, command_by_id["retain-proof-claim"]["result_json"])
         self.assertIn("verify-proof-integrity", command_by_id["verify-verify-proof-integrity"]["result_json"])
         self.assertNotIn(self.claim, command_by_id["verify-verify-proof-integrity"]["result_json"])
         self.assertIn("candidate-7", command_by_id["candidate-proof"]["result_json"])
         purge_result = json.loads(command_by_id["proof-purge-execute"]["result_json"])
-        self.assertTrue({self.claim,self.evidence}.issubset(set(purge_result["purged_refs"])))
+        self.assertTrue(purge_result["purged_refs"])
+        self.assertTrue(all(ref == "REDACTED_PURGED" for ref in purge_result["purged_refs"]))
         self.assertTrue(all(row["request_hash"] for row in commands))
         # request_hash is an opaque commitment; no attempt is made to recover
         # its input from the digest.
@@ -1039,10 +1183,12 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(self.store.get_object_metadata(self.claim)["payload_state"], "PURGED")
         self.assertFalse(hasattr(self.store, "get_logical_ref"))
 
-        restored = ObjectStore(backup_root)
+        restored = ObjectStore(backup_root, independent_purge_journal_path=self.journal_path)
         try:
-            restored_memory = MemoryService(restored, self.authority, VerificationService(restored, self.authority))
-            restored_purge = PurgeService(restored, self.authority, restored_memory, independent_journal_path=self.journal_path)
+            restored_authority = AuthorityService(restored, self.authority.policy)
+            restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
+            restored_purge = PurgeService(restored, restored_authority, restored_memory, independent_journal_path=self.journal_path)
+            RuntimeModeService(restored, restored_authority).complete_validated_recovery(command_id="finish-proof-purge-recovery", purge_service=restored_purge)
             replay = restored_purge.replay_independent_journal()
             self.assertTrue(replay["normal_allowed"])
             restored_residue = residue(restored)
@@ -1080,21 +1226,24 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaises(PurgedObject):
                 restored.get_payload(self.claim)
             restored_verifier = VerificationService(restored, self.authority)
-            self.assertEqual(restored_verifier.get("verify-proof-integrity")["evidence_used"], [self.evidence])
+            self.assertEqual(restored_verifier.get("verify-proof-integrity")["evidence_used"], ["REDACTED_PURGED"])
             restored_command_count = len(r_commands)
-            self.assertEqual(restored_verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7"), integrity)
-            self.assertEqual(restored.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), self.claim)
-            self.assertEqual(restored.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)["to_id"], self.claim)
+            replayed_integrity = restored_verifier.verify_object_integrity(verification_id="verify-proof-integrity", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7")
+            self.assertNotIn('"' + self.claim + '"', json.dumps(replayed_integrity))
+            self.assertNotIn('"' + self.evidence + '"', json.dumps(replayed_integrity))
+            self.assertEqual(restored.put_object(command_id="put-claim-7", object_id=self.claim, payload=b"The synthetic Nexus fact is governed memory.", object_type="artifact", created_by_run="run-7", classification_assertion_ref="class-claim-7"), "REDACTED_PURGED")
+            self.assertEqual(restored.add_relation(command_id="proof-supports-claim", from_id=related_id, relation_type="supports", to_id=self.claim)["to_id"], "REDACTED_PURGED")
             self.assertEqual(restored.create_logical_ref(command_id="proof-logical-ref", ref_id="proof:claim", ref_type="artifact", object_id=self.claim, updated_by_run="run-7"), 1)
-            with self.assertRaises(PurgedObject):
-                restored_memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+            restored_candidate = restored_memory.create_candidate(command_id="candidate-proof", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref="verify-proof-human", review_trigger="purge proof")
+            self.assertNotIn('"' + self.claim + '"', json.dumps(restored_candidate))
+            self.assertNotIn('"' + self.evidence + '"', json.dumps(restored_candidate))
             with restored._connection() as conn:
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger").fetchone()[0], restored_command_count)
-            with self.assertRaisesRegex(RuntimeDenied, "INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY"):
-                InspectService(restored, self.authority).task(grant_id=inspect_grant_id, task_id="task-7")
-            with self.assertRaisesRegex(RuntimeDenied, "INSPECT_OBJECT_TASK_UNRESOLVED"):
-                InspectService(restored, self.authority).object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id="manifest-7")
-            restored_inspector = InspectService(restored, self.authority)
+            restored_inspector = InspectService(restored, restored_authority)
+            restored_task_view = restored_inspector.task(grant_id=inspect_grant_id, task_id="task-7")
+            self.assertTrue(any(item["route_decision_ref"] == "REDACTED_PURGED" for item in restored_task_view["attempts"]))
+            restored_object_view = restored_inspector.object_metadata(grant_id=inspect_grant_id, task_id="task-7", object_id="manifest-7")
+            self.assertEqual((restored_object_view["object_id"], restored_object_view["payload_state"]), (None, "PURGED"))
             self.assertEqual(restored_inspector.effect(grant_id="purge-audit-inspect", task_id="task-7", effect_id="effect-purge-sensitive")["target_ref"], "REDACTED_PURGED")
         finally:
             restored.close()
@@ -1142,6 +1291,8 @@ class MemoryPurgeTests(unittest.TestCase):
         self.memory.create_candidate(command_id="candidate-for-recovery", candidate_id="candidate-7", claim_ref=self.claim, evidence_refs=[self.evidence], owner="agent", classification_assertion_ref="class-claim-7", verification_ref=result["verification_id"], review_trigger="review")
         plan = self.purge.plan(command_id="recovery-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
 
         snapshot_root = self.root / "recovery-snapshot"
         (snapshot_root / "objects").mkdir(parents=True)
@@ -1151,61 +1302,41 @@ class MemoryPurgeTests(unittest.TestCase):
                 source.backup(destination)
         finally:
             destination.close()
+        snapshot_conn = sqlite3.connect(snapshot_root / "nexus.sqlite")
+        try:
+            self.assertEqual(snapshot_conn.execute("SELECT mode FROM runtime_mode_state").fetchone()[0], "NORMAL")
+        finally:
+            snapshot_conn.close()
         shutil.copytree(self.data_root / "objects", snapshot_root / "objects", dirs_exist_ok=True)
 
-        # Enter RECOVERY on the isolated snapshot using the ordinary authorized Runtime mode path.
-        snapshot_store = ObjectStore(snapshot_root, policy=self.authority.policy)
-        try:
-            snapshot_authority = AuthorityService(snapshot_store, self.authority.policy)
-            now = datetime.now(timezone.utc)
-            snapshot_authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"recovery-mode-grant","issued_by":"human-root","granted_to":"agent","task_scope":["recovery-mode-task"],"resource_scope":["runtime-mode:instance","recovery-mode-root"],"action_scope":["RUNTIME_CONFIGURE","RUN_CREATE","TRACE_APPEND"],"audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "recovery-mode-grant-create")
-            trace = TraceRuntime(snapshot_store, snapshot_authority)
-            trace.create_task({"schema_id":"nexus.task","schema_version":1,"task_id":"recovery-mode-task","requester_id":"human-root","status":"CREATED","created_at":now.isoformat(),"command_id":"recovery-mode-task-create"})
-            with snapshot_store._connection() as conn:
-                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-run-class", "RUN", "recovery-mode-root", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
-                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-root-event-class", "TRACE_EVENT", "evt-recovery-mode-root-create", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
-                conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", ("recovery-mode-event-class", "TRACE_EVENT", "evt-enter-recovery", "PUBLIC", "[]", "1", "authorized isolated recovery test", "agent"))
-            trace.create_run({"schema_id":"nexus.run","schema_version":1,"run_id":"recovery-mode-root","task_id":"recovery-mode-task","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"recovery-mode-grant","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"recovery-mode-run-class","created_at":now.isoformat()}, command_id="recovery-mode-root-create", event_classification_assertion_ref="recovery-mode-root-event-class")
-            modes = RuntimeModeService(snapshot_store, snapshot_authority)
-            snapshot_memory = MemoryService(snapshot_store, snapshot_authority, VerificationService(snapshot_store, snapshot_authority))
-            for target_mode in ("SAFE", "STATELESS", "NORMAL"):
-                command = "enter-" + target_mode.lower()
-                assertion = "class-" + command
-                with snapshot_store._connection() as conn:
-                    conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?, ?,NULL)", (assertion, "TRACE_EVENT", "evt-" + command, "PUBLIC", "[]", "1", "authorized isolated recovery mode test", "agent"))
-                result = modes.set_mode(command_id=command, grant_id="recovery-mode-grant", task_id="recovery-mode-task", mode=target_mode, classification_assertion_ref=assertion)
-                self.assertEqual(result["mode"], target_mode)
-                if target_mode == "STATELESS":
-                    with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_MODE_DENIED"):
-                        snapshot_memory.search_raw(query="governed memory", run_id="run-7")
-            snapshot_store.close()
-            snapshot_store = ObjectStore(snapshot_root, policy=self.authority.policy)
-            snapshot_authority = AuthorityService(snapshot_store, self.authority.policy)
-            modes = RuntimeModeService(snapshot_store, snapshot_authority)
-            self.assertEqual(modes.current()["mode"], "NORMAL")
-            with snapshot_store._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-            modes.set_mode(command_id="enter-recovery", grant_id="recovery-mode-grant", task_id="recovery-mode-task", mode="RECOVERY", classification_assertion_ref="recovery-mode-event-class")
-            self.assertEqual(modes.current()["mode"], "RECOVERY")
-        finally:
-            snapshot_store.close()
-
-        with self.store._connection() as conn:
-            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
         outcome = self.purge.execute(command_id="recovery-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(outcome["status"], "COMPLETED")
 
         restored_root = self.root / "restored-old-snapshot"
         shutil.copytree(snapshot_root, restored_root)
-        restored = ObjectStore(restored_root, policy=self.authority.policy)
+        # The snapshot deliberately remains NORMAL and is opened through the ordinary
+        # production path; stale external journal freshness must force Recovery.
+        restored = ObjectStore(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
         try:
-            self.assertEqual(RuntimeModeService(restored, AuthorityService(restored, self.authority.policy)).current()["mode"], "RECOVERY")
             restored_authority = AuthorityService(restored, self.authority.policy)
+            self.assertEqual(RuntimeModeService(restored, restored_authority).current()["mode"], "RECOVERY")
             restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
             restored_purge = PurgeService(restored, restored_authority, restored_memory, independent_journal_path=self.journal_path)
             restored_modes = RuntimeModeService(restored, restored_authority)
             with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                restored.get_object_metadata(self.claim)
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                restored.get_payload(self.claim)
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
                 restored_memory.search_raw(query="governed memory", run_id="run-7")
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                InspectService(restored, restored_authority).task(grant_id="grant-7", task_id="task-7")
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                TraceRuntime(restored, restored_authority).create_task(
+                    {"schema_id":"nexus.task","schema_version":1,"task_id":"recovery-blocked-task",
+                     "requester_id":"human-root","status":"CREATED","created_at":datetime.now(timezone.utc).isoformat(),
+                     "command_id":"recovery-blocked-task-command"}
+                )
             report = restored_modes.complete_validated_recovery(command_id="finish-old-snapshot-restore", purge_service=restored_purge)
             self.assertEqual(report["mode"], "NORMAL")
             self.assertTrue(report["purge_report"]["normal_allowed"])
@@ -1216,7 +1347,16 @@ class MemoryPurgeTests(unittest.TestCase):
             with restored._connection() as conn:
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "RELEASED")
                 self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "PURGED")
+                watermark = conn.execute("SELECT sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+                journal_head = self.purge.journal.verified_head()
+                self.assertEqual(tuple(watermark), journal_head)
             self.assertEqual(restored_modes.current()["mode"], "NORMAL")
+            restored.close()
+            reopened = ObjectStore(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
+            try:
+                self.assertEqual(RuntimeModeService(reopened, restored_authority).current()["mode"], "NORMAL")
+            finally:
+                reopened.close()
         finally:
             restored.close()
 

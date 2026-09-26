@@ -563,13 +563,15 @@ class DeterministicRuntime:
                 if attempt_no != decision["attempt_no"]:
                     raise RuntimeDenied("HOSTED_SUBTASK_ATTEMPT_ORDER_RACE")
                 attempt_id = f"{subtask_id}:attempt:{attempt_no}"
-                capability = "UNSPECIFIED" if child["executor_kind"] == "MODEL" else "TOOL"
+                # This records requested capability provenance only; it is not
+                # evidence of the actual Codex backend/model identity.
+                capability = requested_capability if child["executor_kind"] == "MODEL" else "TOOL"
                 route_op = "persist_route_decision"
                 route_request = {"decision": decision, "object_id": route_object_id, "subtask_id": subtask_id}
                 route_hash = self.store._request_hash(route_op, route_request)
                 self.store._record_command(conn, command_id + "-route-record", route_op, route_hash, {"route_decision_id": route_object_id})
                 conn.execute("INSERT INTO route_decisions(route_decision_id,subtask_id,decision_object_id,decision_json,command_id,created_at) VALUES(?,?,?,?,?,?)", (route_object_id, subtask_id, route_object_id, _canonical(decision), command_id + "-route-record", decision["created_at"]))
-                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_object_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now()))
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at,schedule_request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_object_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now(), request_hash))
                 if node_row["scheduled_run_id"] is None:
                     conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL", (child_run_id, task_id, subtask_id))
                 result = {"task_id": task_id, "subtask_id": subtask_id, "run_id": child_run_id, "attempt_id": attempt_id, "attempt_no": attempt_no, "requested_capability": capability, "status": "CREATED", "manifest_ref": child["manifest_ref"]}
@@ -711,8 +713,20 @@ class DeterministicRuntime:
             prior_attempt_no = conn.execute("SELECT COALESCE(MAX(attempt_no),0) FROM subtask_attempts WHERE task_id=? AND subtask_id=?", (task_id,subtask_id)).fetchone()[0]
         attempt_no_hint = prior_attempt_no + 1
         with self.store._connection() as conn:
-            existing_attempt = conn.execute("SELECT attempt_id,route_decision_ref FROM subtask_attempts WHERE subtask_id=? AND run_id=?", (subtask_id, child_run_id)).fetchone()
+            existing_attempt = conn.execute("SELECT a.attempt_id,a.task_id,a.subtask_id,a.run_id,a.route_decision_ref,a.requested_capability,a.attempt_reason,a.predecessor_attempt_id,a.command_id,a.schedule_request_hash,a.outcome,r.grant_id,r.manifest_ref,r.budget_reservation_ref FROM subtask_attempts a JOIN runs r ON r.run_id=a.run_id WHERE a.subtask_id=? AND a.run_id=?", (subtask_id, child_run_id)).fetchone()
         if existing_attempt:
+            requested = requested_capability or ("TOOL" if node["requested_executor"] == "TOOL" else None)
+            if (existing_attempt["task_id"] != task_id or existing_attempt["subtask_id"] != subtask_id
+                    or existing_attempt["run_id"] != child_run_id or existing_attempt["command_id"] != command_id
+                    or (existing_attempt["schedule_request_hash"] is not None and existing_attempt["schedule_request_hash"] != request_hash)
+                    or existing_attempt["route_decision_ref"] != route_object_id
+                    or existing_attempt["requested_capability"] != (requested or existing_attempt["requested_capability"])
+                    or existing_attempt["attempt_reason"] != attempt_reason
+                    or existing_attempt["predecessor_attempt_id"] != predecessor_attempt_id
+                    or existing_attempt["grant_id"] != child_grant_id
+                    or existing_attempt["manifest_ref"] != manifest_object_id
+                    or existing_attempt["outcome"] not in {"CREATED", "READY", "RUNNING", "FAILED", "CANCELLED", "SUCCEEDED", "INCONCLUSIVE", "POLICY_DENIED", "BUDGET_DENIED"}):
+                raise RuntimeDenied("SCHEDULE_ATTEMPT_BINDING_MISMATCH")
             with self.store._connection() as conn:
                 scheduled = conn.execute("SELECT manifest_ref,budget_reservation_ref,status FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
             scheduled_status = scheduled["status"]
@@ -877,7 +891,7 @@ class DeterministicRuntime:
                 return disposition
             raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED:" + _safe_setup_failure_code(exc)) from exc
         try:
-            attempt_id, attempt_no, capability = self._register_scheduled_attempt(command_id=command_id, task_id=task_id, subtask_id=subtask_id, child_run_id=child_run_id, route_id=route_id, requested_capability=requested_capability, selected_profile=selected_profile, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
+            attempt_id, attempt_no, capability = self._register_scheduled_attempt(command_id=command_id, schedule_request_hash=request_hash, task_id=task_id, subtask_id=subtask_id, child_run_id=child_run_id, route_id=route_id, requested_capability=requested_capability, selected_profile=selected_profile, attempt_reason=attempt_reason, predecessor_attempt_id=predecessor_attempt_id)
         except (RuntimeDenied, TraceAdmissionDenied, InvalidRunTransition) as exc:
             disposition = self._compensate_schedule_setup(command_id=command_id, operation=operation, request_hash=request_hash, task_id=task_id, root_run_id=root_run_id, subtask_id=subtask_id, child_run_id=child_run_id, reservation_id=reservation_id, failure_code=_safe_setup_failure_code(exc))
             if disposition["status"] == "READY":
@@ -954,7 +968,7 @@ class DeterministicRuntime:
                 raise
         return result
 
-    def _register_scheduled_attempt(self, *, command_id: str, task_id: str, subtask_id: str, child_run_id: str, route_id: str, requested_capability: str | None, selected_profile: dict[str, Any] | None, attempt_reason: str, predecessor_attempt_id: str | None) -> tuple[str, int, str]:
+    def _register_scheduled_attempt(self, *, command_id: str, schedule_request_hash: str, task_id: str, subtask_id: str, child_run_id: str, route_id: str, requested_capability: str | None, selected_profile: dict[str, Any] | None, attempt_reason: str, predecessor_attempt_id: str | None) -> tuple[str, int, str]:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -967,7 +981,7 @@ class DeterministicRuntime:
                 attempt_no = (previous["attempt_no"] if previous else 0) + 1
                 attempt_id = f"{subtask_id}:attempt:{attempt_no}"
                 capability = requested_capability or (selected_profile["model_class"] if selected_profile else "TOOL")
-                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now()))
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at,schedule_request_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (attempt_id, task_id, subtask_id, attempt_no, child_run_id, route_id, capability, attempt_reason, previous["attempt_id"] if previous else None, "CREATED", command_id, _now(), schedule_request_hash))
                 if current["scheduled_run_id"] is None:
                     conn.execute("UPDATE subtasks SET scheduled_run_id=? WHERE task_id=? AND subtask_id=? AND scheduled_run_id IS NULL", (child_run_id, task_id, subtask_id))
                 conn.commit()

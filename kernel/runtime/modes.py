@@ -260,20 +260,33 @@ class RuntimeModeService:
                 prior_event = conn.execute(
                     "SELECT grant_id,task_id FROM runtime_mode_events WHERE next_mode='RECOVERY' ORDER BY sequence DESC LIMIT 1"
                 ).fetchone()
-                if not state or not prior_event:
+                recovery_session = conn.execute("SELECT session_id FROM recovery_sessions WHERE status='OPEN' ORDER BY opened_at DESC LIMIT 1").fetchone()
+                infrastructure_recovery = bool(state and state["updated_by"] == "nexus-core-recovery" and recovery_session)
+                if not state or (not prior_event and not infrastructure_recovery):
                     raise RuntimeDenied("RECOVERY_ENTRY_AUDIT_MISSING")
                 changed_at = _now()
                 result = {"mode": "NORMAL", "previous_mode": "RECOVERY", "purge_report": purge_report, "validated_objects": len(available)}
+                if infrastructure_recovery:
+                    result["recovery_session_id"] = recovery_session["session_id"]
                 conn.execute("BEGIN IMMEDIATE")
                 self.store._record_command(conn, command_id, operation, request_hash, result)
-                sequence = conn.execute("SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_mode_events").fetchone()[0]
-                conn.execute(
-                    "INSERT INTO runtime_mode_events(sequence,command_id,previous_mode,next_mode,grant_id,task_id,changed_at,request_hash) VALUES(?,?,'RECOVERY','NORMAL',?,?,?,?)",
-                    (sequence, command_id, prior_event["grant_id"], prior_event["task_id"], changed_at, request_hash),
+                if not infrastructure_recovery:
+                    sequence = conn.execute("SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_mode_events").fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO runtime_mode_events(sequence,command_id,previous_mode,next_mode,grant_id,task_id,changed_at,request_hash) VALUES(?,?,'RECOVERY','NORMAL',?,?,?,?)",
+                        (sequence, command_id, prior_event["grant_id"], prior_event["task_id"], changed_at, request_hash),
+                    )
+                else:
+                    conn.execute("UPDATE recovery_sessions SET status='COMPLETED',completed_at=? WHERE session_id=? AND status='OPEN'", (changed_at, recovery_session["session_id"]))
+                self.store._acknowledge_purge_journal_head(
+                    conn,
+                    identity=purge_report["journal_identity"],
+                    sequence=purge_report["journal_sequence"],
+                    record_hash=purge_report["journal_hash"],
                 )
                 conn.execute(
                     "UPDATE runtime_mode_state SET mode='NORMAL',updated_at=?,updated_by=?,command_id=? WHERE singleton=1 AND mode='RECOVERY'",
-                    (changed_at, state["updated_by"], command_id),
+                    (changed_at, state["updated_by"], None if infrastructure_recovery else command_id),
                 )
                 conn.commit()
                 self.store._mode_cache = "NORMAL"

@@ -55,8 +55,15 @@ class ObjectStore:
     the in-process lock also serializes payload rename and barrier checks.
     """
 
-    def __init__(self, data_root: str | Path, schema_dir: str | Path | None = None, policy: dict[str, Any] | None = None):
+    def __init__(self, data_root: str | Path, schema_dir: str | Path | None = None, policy: dict[str, Any] | None = None, *, force_recovery: bool = False, migrations_dir: str | Path | None = None, independent_purge_journal_path: str | Path | None = None):
         self.data_root = Path(data_root).expanduser().resolve()
+        configured_journal = independent_purge_journal_path or os.environ.get("NEXUS_INDEPENDENT_PURGE_JOURNAL")
+        if configured_journal is None:
+            configured_journal = self.data_root.parent / (self.data_root.name + ".purge-journal.jsonl")
+        from kernel.purge.journal import IndependentPurgeJournal
+        self.independent_purge_journal = IndependentPurgeJournal(configured_journal, self.data_root)
+        self.independent_purge_journal_path = self.independent_purge_journal.path
+        self._journal_bootstrap_needed = False
         self.data_root.mkdir(parents=True, exist_ok=True)
         self.blob_root = self.data_root / "objects" / "sha256"
         self.blob_root.mkdir(parents=True, exist_ok=True)
@@ -69,21 +76,48 @@ class ObjectStore:
         policy_schema = json.loads((project_root / "policies" / "nexus.policy@1.schema.json").read_text(encoding="utf-8"))
         Draft202012Validator.check_schema(policy_schema)
         Draft202012Validator(policy_schema, format_checker=self._format_checker).validate(self.policy)
-        self.migrations_dir = project_root / "migrations"
+        self.migrations_dir = Path(migrations_dir).resolve() if migrations_dir else project_root / "migrations"
         self._lock = threading.RLock()
         self._writer_lock_file = None
         self._closed = False
-        self._mode_cache = self._detect_startup_mode()
+        self._purge_redaction_local = threading.local()
+        if force_recovery and not self.database_path.is_file():
+            raise MigrationError("Forced recovery requires an existing database.")
+        self._force_recovery = force_recovery
+        startup_mode = "RECOVERY" if force_recovery else self._detect_startup_mode()
+        journal_state = "recovery" if force_recovery else self._journal_startup_state()
+        if journal_state == "recovery":
+            if not self.database_path.is_file():
+                raise MigrationError("Independent purge journal requires recovery before database initialization.")
+            startup_mode = "RECOVERY"
+        self._mode_cache = startup_mode
         self._recovery_local = threading.local()
         self._schemas: dict[str, dict[str, Any]] = {}
         self._acquire_writer_lock()
         try:
-            if self._mode_cache != "NORMAL":
+            if force_recovery:
+                # First inspect the restored database read-only. Only after
+                # that succeeds may controlled recovery maintenance migrate it.
+                if not self._has_migration_table():
+                    raise MigrationError("Forced recovery requires an existing migrated database.")
+                self._validate_recovery_database()
+                with self._recovery_maintenance():
+                    self._initialize_database()
+                    self._open_recovery_session()
+            elif journal_state == "recovery":
+                if not self._has_migration_table():
+                    raise MigrationError("Stale journal recovery requires an existing migrated database.")
+                self._validate_recovery_database()
+                with self._recovery_maintenance():
+                    self._initialize_database()
+                    self._open_recovery_session(source_mode="JOURNAL_MISMATCH")
+            elif self._mode_cache != "NORMAL":
                 self._validate_recovery_database()
             else:
                 self._initialize_database()
                 self._mode_cache = self._read_persisted_mode()
                 if self._mode_cache == "NORMAL":
+                    self._bootstrap_or_validate_journal_watermark()
                     self._cleanup_orphan_payloads()
                 else:
                     self._validate_recovery_database()
@@ -151,8 +185,46 @@ class ObjectStore:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 10000")
         conn.execute("PRAGMA synchronous = FULL")
+        conn.create_function("nexus_sha256", 1, lambda value: _sha256(str(value).encode("utf-8")))
+        conn.create_function(
+            "nexus_purge_redaction",
+            0,
+            lambda: int(getattr(self._purge_redaction_local, "depth", 0) > 0),
+        )
+        conn.create_function("nexus_exact_purge_json", 2, self._exact_purge_json)
         conn.set_authorizer(self._sqlite_authorizer)
         return conn
+
+    @contextmanager
+    def _allow_purge_redaction(self, object_ids=()):
+        """Permit only the purge service's guarded one-way redaction triggers."""
+        self._purge_redaction_local.depth = getattr(self._purge_redaction_local, "depth", 0) + 1
+        previous = getattr(self._purge_redaction_local, "object_ids", frozenset())
+        self._purge_redaction_local.object_ids = frozenset(previous) | frozenset(object_ids)
+        try:
+            yield
+        finally:
+            self._purge_redaction_local.object_ids = previous
+            self._purge_redaction_local.depth -= 1
+
+    def _exact_purge_json(self, old_json, new_json):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return 0
+        try:
+            old = json.loads(old_json)
+            new = json.loads(new_json)
+            refs = getattr(self._purge_redaction_local, "object_ids", frozenset())
+            def redact(value):
+                if isinstance(value, str):
+                    return "REDACTED_PURGED" if value in refs else value
+                if isinstance(value, list):
+                    return [redact(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: redact(item) for key, item in value.items()}
+                return value
+            return int(_canonical_json(redact(old)) == _canonical_json(new))
+        except (TypeError, ValueError):
+            return 0
 
     def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
         if self._mode_cache != "RECOVERY" or getattr(self._recovery_local, "depth", 0) > 0:
@@ -183,6 +255,116 @@ class ObjectStore:
         if not row or row[0] not in {"NORMAL", "SAFE", "STATELESS", "RECOVERY"}:
             raise MigrationError("Runtime mode state is corrupt; startup denied.")
         return row[0]
+
+    def _has_migration_table(self) -> bool:
+        with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+            return bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").fetchone())
+
+    def _journal_startup_state(self) -> str:
+        """Return current, bootstrap, or recovery based on the external journal head."""
+        if not self.database_path.is_file():
+            try:
+                records = self.independent_purge_journal.read()
+                if records:
+                    return "recovery"
+                self.independent_purge_journal.ensure_empty_exists()
+                self._journal_bootstrap_needed = True
+                return "bootstrap"
+            except Exception:
+                return "recovery"
+        try:
+            with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+                tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                watermark = None
+                if "independent_purge_journal_watermark" in tables:
+                    watermark = conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+                historical_purge = False
+                for table, query in (
+                    ("purge_barriers", "SELECT 1 FROM purge_barriers LIMIT 1"),
+                    ("purge_ledger", "SELECT 1 FROM purge_ledger LIMIT 1"),
+                    ("purge_execution_records", "SELECT 1 FROM purge_execution_records LIMIT 1"),
+                ):
+                    if table in tables and conn.execute(query).fetchone():
+                        historical_purge = True
+                        break
+            journal_exists = self.independent_purge_journal.path.is_file()
+            records = self.independent_purge_journal.read()
+            sequence = len(records)
+            record_hash = records[-1]["record_hash"] if records else "0" * 64
+            if watermark is None:
+                if records or historical_purge or not journal_exists:
+                    return "recovery"
+                self._journal_bootstrap_needed = True
+                return "bootstrap"
+            if not journal_exists:
+                return "recovery"
+            if watermark[0] != self.independent_purge_journal.identity:
+                return "recovery"
+            if sequence != watermark[1] or record_hash != watermark[2]:
+                return "recovery"
+            return "current"
+        except Exception:
+            return "recovery"
+
+    def _bootstrap_or_validate_journal_watermark(self) -> None:
+        if not self.independent_purge_journal.path.is_file():
+            raise MigrationError("Configured independent purge journal disappeared during startup.")
+        identity = self.independent_purge_journal.identity
+        sequence, record_hash = self.independent_purge_journal.verified_head()
+        with self._connection() as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='independent_purge_journal_watermark'").fetchone():
+                # Explicit historical migration-prefix fixtures stop before v19.
+                return
+            row = conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+            if row:
+                if (row[0], row[1], row[2]) != (identity, sequence, record_hash):
+                    raise MigrationError("Independent purge journal watermark changed during startup.")
+                return
+            if sequence != 0 or not self._journal_bootstrap_needed:
+                raise MigrationError("Missing purge journal watermark cannot acknowledge journal history.")
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO independent_purge_journal_watermark(singleton,journal_identity,sequence,record_hash,acknowledged_at) VALUES(1,?,0,?,?)",
+                (identity, record_hash, _utc_now()),
+            )
+            conn.commit()
+        self._journal_bootstrap_needed = False
+
+    def _acknowledge_purge_journal_head(self, conn, *, identity: str, sequence: int, record_hash: str) -> None:
+        if not self.independent_purge_journal.path.is_file():
+            raise MigrationError("Configured independent purge journal is missing during acknowledgement.")
+        if identity != self.independent_purge_journal.identity:
+            raise MigrationError("Configured independent purge journal identity changed during recovery.")
+        current_sequence, current_hash = self.independent_purge_journal.verified_head()
+        if (sequence, record_hash) != (current_sequence, current_hash):
+            raise MigrationError("Independent purge journal advanced during recovery validation.")
+        prior = conn.execute("SELECT 1 FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+        if prior is None and sequence == 0:
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for table in ("purge_barriers", "purge_ledger", "purge_execution_records"):
+                if table in tables and conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                    raise MigrationError("Empty journal cannot acknowledge historical purge facts without a prior watermark.")
+        conn.execute(
+            "INSERT INTO independent_purge_journal_watermark(singleton,journal_identity,sequence,record_hash,acknowledged_at) VALUES(1,?,?,?,?) "
+            "ON CONFLICT(singleton) DO UPDATE SET sequence=excluded.sequence,record_hash=excluded.record_hash,acknowledged_at=excluded.acknowledged_at",
+            (identity, sequence, record_hash, _utc_now()),
+        )
+
+    def _open_recovery_session(self, *, source_mode: str = "FORCED_RECOVERY") -> None:
+        """Persist an infrastructure recovery session without user authority fiction."""
+        from uuid import uuid4
+        with self._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO recovery_sessions(session_id,opened_at,source_mode,status) VALUES(?,?,?,'OPEN')",
+                ("recovery-session-" + str(uuid4()), _utc_now(), source_mode),
+            )
+            conn.execute(
+                "UPDATE runtime_mode_state SET mode='RECOVERY',updated_at=?,updated_by='nexus-core-recovery',command_id=NULL WHERE singleton=1",
+                (_utc_now(),),
+            )
+            conn.commit()
+        self._mode_cache = "RECOVERY"
 
     def _read_persisted_mode(self) -> str:
         with self._connection() as conn:
@@ -275,11 +457,24 @@ class ObjectStore:
                     + f"\nINSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES({version},'{migration_name}','{checksum}','{applied_at}');"
                     + f"\nPRAGMA user_version = {version};\nCOMMIT;"
                 )
+                rebuilding_tables = version == 17
                 try:
+                    if rebuilding_tables:
+                        conn.execute("PRAGMA foreign_keys = OFF")
+                        conn.execute("PRAGMA legacy_alter_table = ON")
                     conn.executescript(script)
+                    if rebuilding_tables:
+                        conn.execute("PRAGMA legacy_alter_table = OFF")
+                        conn.execute("PRAGMA foreign_keys = ON")
+                        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                        if violations:
+                            raise MigrationError("Purge redaction migration produced a foreign-key violation.")
                 except Exception:
                     if conn.in_transaction:
                         conn.rollback()
+                    if rebuilding_tables:
+                        conn.execute("PRAGMA legacy_alter_table = OFF")
+                        conn.execute("PRAGMA foreign_keys = ON")
                     raise
             latest = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
             user_version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -356,11 +551,13 @@ class ObjectStore:
     def _replay_command(
         self, conn: sqlite3.Connection, command_id: str, operation: str, request_hash: str
     ) -> dict[str, Any] | None:
-        row = conn.execute("SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
+        row = conn.execute("SELECT operation,request_hash,result_json,result_state FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
         if not row:
             return None
         if row["operation"] != operation or row["request_hash"] != request_hash:
             raise CommandConflict("COMMAND_CONFLICT")
+        # Purge redacts the persisted result projection while preserving the
+        # committed command identity and immutable result commitment.
         return json.loads(row["result_json"])
 
     def _record_command(
@@ -381,14 +578,36 @@ class ObjectStore:
         if result_ref:
             entry["result_ref"] = result_ref
         self._validate("nexus.command_ledger@1.schema.json", entry)
+        result_json = _canonical_json(result)
         conn.execute(
-            "INSERT INTO command_ledger(command_id,operation,request_hash,result_json,status,created_at) "
-            "VALUES(?,?,?,?,?,?)",
-            (command_id, operation, request_hash, _canonical_json(result), "SUCCEEDED", created_at),
+            "INSERT INTO command_ledger(command_id,operation,request_hash,result_json,status,created_at,result_commitment,result_state) "
+            "VALUES(?,?,?,?,?,?,?,'LIVE')",
+            (command_id, operation, request_hash, result_json, "SUCCEEDED", created_at, _sha256(result_json.encode("utf-8"))),
         )
 
     @staticmethod
     def _assert_unbarred(conn: sqlite3.Connection, object_ids: Iterable[str]) -> None:
+        ids = sorted(set(object_ids))
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        row = conn.execute(
+            "SELECT 1 FROM purge_barrier_refs r JOIN purge_barriers b USING(barrier_id) "
+            f"WHERE b.status IN ('ACTIVE','PARTIAL') AND r.object_id IN ({placeholders}) LIMIT 1",
+            ids,
+        ).fetchone()
+        if row:
+            raise PurgeBarrierActive("PURGE_BARRIER_ACTIVE")
+        row = conn.execute(
+            "SELECT 1 FROM object_states WHERE payload_state='PURGED' "
+            f"AND object_id IN ({placeholders}) LIMIT 1",
+            ids,
+        ).fetchone()
+        if row:
+            raise PurgedObject("PURGED_OBJECT_REFERENCE_DENIED")
+
+    @staticmethod
+    def _assert_readable(conn: sqlite3.Connection, object_ids: Iterable[str]) -> None:
         ids = sorted(set(object_ids))
         if not ids:
             return
@@ -712,6 +931,7 @@ class ObjectStore:
     def get_lineage(self, object_id: str) -> dict[str, list[str]]:
         self._require_mode("core_read")
         with self._connection() as conn:
+            self._assert_readable(conn, (object_id,))
             if not conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
                 raise ObjectNotFound("OBJECT_NOT_FOUND")
             lineage_placeholders = ",".join("?" for _ in _LINEAGE_TYPES)
@@ -731,11 +951,13 @@ class ObjectStore:
                 ") SELECT object_id FROM reachable ORDER BY object_id",
                 (object_id, *_LINEAGE_TYPES, *_LINEAGE_TYPES),
             ).fetchall()
+            self._assert_readable(conn, [row[0] for row in sources] + [row[0] for row in descendants])
         return {"sources": [row[0] for row in sources], "derived": [row[0] for row in descendants]}
 
     def get_object_metadata(self, object_id: str) -> dict[str, Any]:
         self._require_mode("core_read")
         with self._connection() as conn:
+            self._assert_readable(conn, (object_id,))
             row = conn.execute(
                 "SELECT e.*,s.revision,s.lifecycle,s.validity,s.payload_state FROM objects o "
                 "LEFT JOIN object_envelopes e USING(object_id) JOIN object_states s USING(object_id) WHERE o.object_id=?",
@@ -744,7 +966,7 @@ class ObjectStore:
         if not row:
             raise ObjectNotFound("OBJECT_NOT_FOUND")
         if row["payload_state"] == "PURGED" or row["object_type"] is None:
-            return {"object_id": object_id, "payload_state": "PURGED"}
+            return {"payload_state": "PURGED"}
         return dict(row)
 
     def get_payload(self, object_id: str) -> bytes:

@@ -45,13 +45,17 @@ class BudgetService:
                 conn.rollback()
                 raise
 
-    def reserve(self, *, command_id: str, account_id: str, task_id: str, run_id: str, amount: int, model_calls: int = 0, tool_calls: int = 0, child_runs: int = 0) -> str:
+    def reserve(self, *, command_id: str, account_id: str, task_id: str, run_id: str, amount: int, model_calls: int = 0, tool_calls: int = 0, child_runs: int = 0, reservation_id: str | None = None) -> str:
         self.store._require_mode("core_write")
         values = {"amount": amount, "model_calls": model_calls, "tool_calls": tool_calls, "child_runs": child_runs}
         if not account_id or not task_id or not run_id or any(type(value) is not int or value < 0 for value in values.values()):
             raise ValueError("invalid reservation")
         operation = "reserve_budget"
         request = {"account_id": account_id, "task_id": task_id, "run_id": run_id, **values}
+        if reservation_id is not None:
+            if not isinstance(reservation_id, str) or not reservation_id.startswith("bres_"):
+                raise ValueError("invalid reservation identity")
+            request["reservation_id"] = reservation_id
         request_hash = self.store._request_hash(operation, request)
         legacy_request_hash = self.store._request_hash(operation, {"account_id": account_id, "run_id": run_id, **values})
         with self.store._lock, self.store._connection() as conn:
@@ -67,11 +71,16 @@ class BudgetService:
                     raise BudgetExceeded("BUDGET_TASK_MISMATCH")
                 prior = conn.execute("SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?", (command_id,)).fetchone()
                 if prior:
-                    if prior["operation"] != operation or prior["request_hash"] not in {request_hash, legacy_request_hash}:
+                    compatible_hashes = {request_hash, legacy_request_hash}
+                    if reservation_id is not None:
+                        compatible_hashes.add(self.store._request_hash(operation, {"account_id": account_id, "task_id": task_id, "run_id": run_id, **values}))
+                    if prior["operation"] != operation or prior["request_hash"] not in compatible_hashes:
                         raise CommandConflict("COMMAND_CONFLICT")
                     replay = json.loads(prior["result_json"])
                     reservation = conn.execute("SELECT account_id,run_id,amount,model_calls,tool_calls,child_runs FROM budget_reservations WHERE reservation_id=?", (replay.get("reservation_id"),)).fetchone()
                     if not reservation or reservation["account_id"] != account_id or reservation["run_id"] != run_id or any(reservation[key] != values[key] for key in values):
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    if reservation_id is not None and reservation["reservation_id"] != reservation_id:
                         raise CommandConflict("COMMAND_CONFLICT")
                     conn.commit()
                     return replay["reservation_id"]
@@ -79,7 +88,7 @@ class BudgetService:
                 for requested, reserved, consumed, limit in checks:
                     if account[reserved] + account[consumed] + values[requested] > account[limit]:
                         raise BudgetExceeded("BUDGET_EXCEEDED")
-                reservation_id = "bres_" + uuid.uuid4().hex
+                reservation_id = reservation_id or ("bres_" + uuid.uuid4().hex)
                 now = _now()
                 reservation = {"schema_id": "nexus.budget_reservation", "schema_version": 1, "reservation_id": reservation_id, "account_id": account_id, "run_id": run_id, "amount": amount, "unit": account["unit"], "model_calls": model_calls, "tool_calls": tool_calls, "child_runs": child_runs, "state": "RESERVED", "command_id": command_id}
                 self.store._validate("nexus.budget_reservation@1.schema.json", reservation)

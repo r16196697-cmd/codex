@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,9 @@ from jsonschema import ValidationError
 
 from adapters.storage import ObjectStore
 from kernel.purge import PurgeService
+from kernel.purge.journal import IndependentPurgeJournal
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime import RuntimeModeService
 from kernel.runtime.inspect import InspectService
 from kernel.object.errors import (
     CommandConflict,
@@ -234,10 +237,12 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            watermark = conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+            self.assertEqual((watermark[0], watermark[1], watermark[2]), (self.store.independent_purge_journal.identity, 0, "0" * 64))
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows], [(1, "0001_initial.sql", 64), (2, "0002_authority_budget.sql", 64), (3, "0003_trace_state.sql", 64), (4, "0004_runtime.sql", 64), (5, "0005_effect_gate.sql", 64), (6, "0006_memory_purge.sql", 64), (7, "0007_runtime_modes.sql", 64), (8, "0008_purge_identifier_redaction.sql", 64), (9, "0009_purge_trace_state_facts.sql", 64), (10, "0010_purge_run_manifest_indexes.sql", 64), (11, "0011_subtask_attempts.sql", 64), (12, "0012_purge_plan_task_binding.sql", 64), (13, "0013_kernel_recovery_principal.sql", 64), (14, "0014_kernel_recovery_identity_isolation.sql", 64), (15, "0015_kernel_recovery_identity_preexisting_guard.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows][-4:], [(16, "0016_purge_replay_commitments_and_task_provenance.sql", 64), (17, "0017_governed_reference_redaction.sql", 64), (18, "0018_scheduler_setup_request_binding.sql", 64), (19, "0019_independent_purge_journal_watermark.sql", 64)])
             self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
             kernel = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id='nexus-core-recovery'").fetchone()
             self.assertEqual(tuple(kernel), ("SERVICE", "ACTIVE"))
@@ -249,7 +254,7 @@ raise SystemExit(0)
 
     def test_v14_database_guards_recovery_identity_from_ordinary_authority_rows(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             grant_values = ("direct-recovery-grant", None, "test_actor", "nexus-core-recovery", "[]", "[]", "[]", "[]", "2026-09-26T00:00:00Z", "2026-09-27T00:00:00Z", "ACTIVE", "1", None)
             sql = "INSERT INTO delegation_grants(grant_id,parent_grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version,credential_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
@@ -261,18 +266,31 @@ raise SystemExit(0)
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
                 conn.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('direct-recovery-task','nexus-core-recovery','CREATED','2026-09-26T00:00:00Z','direct-recovery-task-command',NULL)")
 
-    def _restore_persisted_v13(self) -> Path:
-        database_path = self.store.database_path
-        self.store.close()
-        legacy = sqlite3.connect(database_path)
+    def _historical_database(self, version: int, label: str) -> Path:
+        source = Path(__file__).resolve().parents[2] / "migrations"
+        target = self.root / (label + "-migrations")
+        target.mkdir()
+        for migration in sorted(source.glob("*.sql")):
+            number = int(migration.name[:4])
+            if number <= version:
+                shutil.copy2(migration, target / migration.name)
+        data_root = self.root / label
         try:
-            for trigger in ("kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"):
-                legacy.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-            legacy.execute("DELETE FROM schema_migrations WHERE version>=14")
-            legacy.execute("PRAGMA user_version=13")
+            store = ObjectStore(data_root, migrations_dir=target)
+            store.close()
+        except sqlite3.OperationalError as exc:
+            # v6 predates runtime_mode_state; migration application itself is
+            # complete before the old runtime's post-migration mode read.
+            if version != 6 or "runtime_mode_state" not in str(exc):
+                raise
+        return data_root / "nexus.sqlite"
+
+    def _restore_persisted_v13(self) -> Path:
+        self.store.close()
+        database_path = self._historical_database(13, "persisted-v13")
+        with closing(sqlite3.connect(database_path)) as legacy:
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('test_actor','HUMAN','ACTIVE')")
             legacy.commit()
-        finally:
-            legacy.close()
         return database_path
 
     def test_persisted_v13_database_applies_v14_and_v15_identity_guards(self) -> None:
@@ -280,12 +298,38 @@ raise SystemExit(0)
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=14").fetchone()[0], "0014_kernel_recovery_identity_isolation.sql")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=15").fetchone()[0], "0015_kernel_recovery_identity_preexisting_guard.sql")
             triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
             self.assertTrue({"kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"}.issubset(triggers))
+
+    def test_persisted_v15_database_upgrades_to_latest_with_fk_integrity(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(15, "persisted-v15")
+        upgraded = ObjectStore(database_path.parent)
+        try:
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,20)))
+        finally:
+            upgraded.close()
+
+    def test_persisted_v14_database_upgrades_to_latest_with_fk_integrity(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(14, "persisted-v14")
+        upgraded = ObjectStore(database_path.parent)
+        try:
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,20)))
+        finally:
+            upgraded.close()
 
     def _assert_v13_contamination_rejected(self, table: str, statement: str) -> None:
         database_path = self._restore_persisted_v13()
@@ -296,7 +340,7 @@ raise SystemExit(0)
         reopened = None
         try:
             with self.assertRaises(sqlite3.IntegrityError):
-                reopened = ObjectStore(self.root / "data")
+                reopened = ObjectStore(database_path.parent)
         finally:
             if reopened is not None:
                 reopened.close()
@@ -324,80 +368,89 @@ raise SystemExit(0)
             with self.assertRaisesRegex(MigrationError, "could not be read safely"):
                 self.store._require_mode("core_write")
 
-    def test_v6_snapshot_replays_v7_through_v15_migrations_deterministically(self) -> None:
-        database_path = self.root / "data" / "nexus.sqlite"
+    def test_ordinary_startup_forces_recovery_when_external_journal_is_ahead(self) -> None:
+        journal = IndependentPurgeJournal(self.store.independent_purge_journal_path, self.store.data_root)
+        journal.append(action="BARRIER_INSTALLED", barrier_id="ahead-barrier", plan_id="ahead-plan", plan_hash="a" * 64, lineage_revision=0, protected_refs=["ahead-object"], task_id="ahead-task")
         self.store.close()
-        legacy_conn = sqlite3.connect(database_path)
+        reopened = ObjectStore(self.root / "data", independent_purge_journal_path=journal.path)
         try:
-            conn = legacy_conn
-            conn.execute("PRAGMA foreign_keys=OFF")
-            conn.execute("DROP INDEX IF EXISTS purge_plan_records_task_idx")
-            conn.execute("ALTER TABLE purge_plan_records DROP COLUMN task_id")
-            conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_identity_immutable")
-            conn.execute("DROP TRIGGER IF EXISTS subtask_attempts_no_delete")
-            conn.execute("DROP TRIGGER IF EXISTS subtasks_identity_immutable")
-            conn.execute("DROP TABLE IF EXISTS subtask_attempts")
-            conn.execute("ALTER TABLE subtasks DROP COLUMN finalized_at")
-            conn.execute("ALTER TABLE subtasks DROP COLUMN final_outcome")
-            conn.execute("ALTER TABLE subtasks DROP COLUMN final_attempt_id")
-            conn.executescript("""CREATE TRIGGER subtasks_identity_immutable BEFORE UPDATE ON subtasks
-                WHEN NEW.subtask_id<>OLD.subtask_id OR NEW.task_id<>OLD.task_id OR NEW.node_index<>OLD.node_index
-                  OR NEW.node_json<>OLD.node_json OR NEW.command_id<>OLD.command_id OR NEW.created_at<>OLD.created_at
-                  OR (NEW.scheduled_run_id IS NOT OLD.scheduled_run_id AND NOT (OLD.status='PENDING' AND OLD.scheduled_run_id IS NULL AND NEW.scheduled_run_id IS NOT NULL AND NEW.status IN ('PENDING','READY')))
-                  OR NOT (OLD.status=NEW.status OR (OLD.status='PENDING' AND NEW.status IN ('READY','CANCELLED','STALE'))
-                    OR (OLD.status='READY' AND NEW.status IN ('RUNNING','CANCELLED','STALE'))
-                    OR (OLD.status='RUNNING' AND NEW.status IN ('WAITING','SUCCEEDED','FAILED','CANCELLED'))
-                    OR (OLD.status='WAITING' AND NEW.status IN ('RUNNING','FAILED','CANCELLED')))
-                BEGIN SELECT RAISE(ABORT,'INVALID_SUBTASK_TRANSITION'); END;""")
-            conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_update")
-            conn.execute("DROP TRIGGER IF EXISTS runtime_mode_events_no_delete")
-            conn.execute("DROP TABLE IF EXISTS runtime_mode_events")
-            conn.execute("DROP TABLE IF EXISTS runtime_mode_state")
-            conn.execute("DROP TRIGGER IF EXISTS approval_decisions_no_update")
-            conn.execute("DROP TRIGGER IF EXISTS effects_identity_immutable")
-            conn.execute("DROP TRIGGER IF EXISTS trace_events_no_update")
-            conn.execute("DROP TRIGGER IF EXISTS purge_refs_no_update")
-            conn.executescript("""
-                CREATE TRIGGER approval_decisions_no_update BEFORE UPDATE ON approval_decisions BEGIN SELECT RAISE(ABORT,'APPROVAL_DECISION_IMMUTABLE'); END;
-                CREATE TRIGGER effects_identity_immutable BEFORE UPDATE ON effects
-                WHEN NEW.effect_id<>OLD.effect_id OR NEW.run_id<>OLD.run_id OR NEW.tool_id<>OLD.tool_id
-                 OR NEW.tool_descriptor_version<>OLD.tool_descriptor_version OR NEW.action_type<>OLD.action_type
-                 OR NEW.target_ref<>OLD.target_ref OR NEW.payload_integrity_hash<>OLD.payload_integrity_hash
-                 OR NEW.payload_object_ref<>OLD.payload_object_ref OR NEW.idempotency_key<>OLD.idempotency_key
-                 OR NEW.grant_id<>OLD.grant_id OR NEW.approval_ref IS NOT OLD.approval_ref
-                 OR NEW.budget_reservation_ref<>OLD.budget_reservation_ref OR NEW.created_at<>OLD.created_at
-                 OR (OLD.effect_outcome IN ('COMMITTED','NOT_COMMITTED') AND NEW.effect_outcome<>OLD.effect_outcome)
-                 OR NOT ((OLD.execution_state='DECLARED' AND NEW.execution_state IN ('PREPARED','CANCELLED'))
-                   OR (OLD.execution_state='PREPARED' AND NEW.execution_state IN ('AUTHORIZED','CANCELLED'))
-                   OR (OLD.execution_state='AUTHORIZED' AND NEW.execution_state IN ('COMMITTING','CANCELLED'))
-                   OR (OLD.execution_state='COMMITTING' AND NEW.execution_state='FINISHED')
-                   OR (OLD.execution_state='FINISHED' AND NEW.execution_state='FINISHED'))
-                BEGIN SELECT RAISE(ABORT,'INVALID_EFFECT_TRANSITION'); END;
-                CREATE TRIGGER trace_events_no_update BEFORE UPDATE ON trace_events BEGIN SELECT RAISE(ABORT,'TRACE_EVENT_IMMUTABLE'); END;
-                CREATE TRIGGER purge_refs_no_update BEFORE UPDATE ON purge_execution_refs BEGIN SELECT RAISE(ABORT,'PURGE_EXECUTION_REF_IMMUTABLE'); END;
-            """)
-            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_update")
-            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_delete")
-            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_delegation_grant")
-            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_trust_anchor")
-            conn.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_task_requester")
-            conn.execute("DELETE FROM principals WHERE principal_id='nexus-core-recovery'")
-            conn.execute("DELETE FROM schema_migrations WHERE version>=7")
-            conn.execute("PRAGMA user_version=6")
-            conn.commit()
+            self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                reopened.get_object_metadata("ahead-object")
+            with reopened._recovery_maintenance():
+                with reopened._connection() as conn:
+                    self.assertEqual(conn.execute("SELECT sequence FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()[0], 0)
         finally:
-            legacy_conn.close()
+            reopened.close()
 
-        self.store = ObjectStore(self.root / "data")
+    def test_ordinary_startup_fails_closed_on_journal_corruption(self) -> None:
+        journal = IndependentPurgeJournal(self.store.independent_purge_journal_path, self.store.data_root)
+        journal.append(action="BARRIER_INSTALLED", barrier_id="corrupt-barrier", plan_id="corrupt-plan", plan_hash="b" * 64, lineage_revision=0, protected_refs=["corrupt-object"], task_id="corrupt-task")
+        journal.path.write_text(journal.path.read_text(encoding="utf-8").replace('"record_hash":"', '"record_hash":"f'), encoding="utf-8")
+        self.store.close()
+        reopened = ObjectStore(self.root / "data", independent_purge_journal_path=journal.path)
+        try:
+            self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
+            with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):
+                reopened.get_object_metadata("corrupt-object")
+        finally:
+            reopened.close()
+
+    def test_ordinary_startup_fails_closed_on_journal_truncation_or_missing_file(self) -> None:
+        journal = IndependentPurgeJournal(self.store.independent_purge_journal_path, self.store.data_root)
+        journal.append(action="BARRIER_INSTALLED", barrier_id="truncate-barrier", plan_id="truncate-plan", plan_hash="d" * 64, lineage_revision=0, protected_refs=["truncate-object"], task_id="truncate-task")
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            conn.execute("BEGIN IMMEDIATE")
+            self.store._acknowledge_purge_journal_head(conn, identity=journal.identity, sequence=1, record_hash=journal.verified_head()[1])
+            conn.commit()
+        journal.path.write_text("", encoding="utf-8")
+        self.store.close()
+        reopened = ObjectStore(self.root / "data", independent_purge_journal_path=journal.path)
+        try:
+            self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
+        finally:
+            reopened.close()
+        journal.path.unlink()
+        missing = ObjectStore(self.root / "data", independent_purge_journal_path=journal.path)
+        try:
+            self.assertEqual(missing._current_runtime_mode(), "RECOVERY")
+            purge = PurgeService(missing, None, None, independent_journal_path=journal.path)
+            with self.assertRaisesRegex(RuntimeDenied, "PURGE_JOURNAL_MISSING"):
+                purge.replay_independent_journal()
+        finally:
+            missing.close()
+
+    def test_historical_database_with_nonempty_journal_and_no_watermark_forces_recovery(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(15, "historical-journal")
+        data_root = database_path.parent
+        journal_path = data_root.parent / (data_root.name + ".purge-journal.jsonl")
+        journal = IndependentPurgeJournal(journal_path, data_root)
+        journal.append(action="BARRIER_INSTALLED", barrier_id="historical-barrier", plan_id="historical-plan", plan_hash="c" * 64, lineage_revision=0, protected_refs=["historical-object"], task_id="historical-task")
+        reopened = ObjectStore(data_root, independent_purge_journal_path=journal_path)
+        try:
+            self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
+            with reopened._recovery_maintenance():
+                with reopened._connection() as conn:
+                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
+                    self.assertIsNone(conn.execute("SELECT 1 FROM independent_purge_journal_watermark WHERE singleton=1").fetchone())
+        finally:
+            reopened.close()
+
+    def test_v6_snapshot_replays_v7_through_v19_migrations_deterministically(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(6, "persisted-v6")
+        self.store = ObjectStore(database_path.parent)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (15, "0015_kernel_recovery_identity_preexisting_guard.sql"))
+            self.assertEqual(tuple(row), (19, "0019_independent_purge_journal_watermark.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_real_v11_legacy_purge_plan_migrates_unbound_and_cannot_execute_or_inspect(self) -> None:
-        object_id = self.put("v11-legacy-purge-target", b"synthetic legacy payload must remain")
+        payload = b"synthetic legacy payload must remain"
+        object_id = "v11-legacy-purge-target"
         command_id = "v11-legacy-plan-command"
         plan_id = "v11-legacy-plan"
         created_at = "2026-09-25T00:00:00Z"
@@ -406,34 +459,30 @@ raise SystemExit(0)
             "planned_actions":["QUIESCE_RUNS","RECONCILE_EFFECTS","DELETE_PAYLOADS","DELETE_INDEX_ROWS","REDACT_DERIVED_METADATA","VERIFY_UNAVAILABLE"],
             "lineage_revision":0,"created_at":created_at,"policy_version":"1"}
         plan["plan_hash"] = hashlib.sha256(json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
-        self.store._validate("nexus.purge_plan@1.schema.json", plan)
-        with self.store._connection() as conn:
-            digest = self.store._request_hash("create_purge_plan", {"legacy_fixture":plan_id})
-            self.store._record_command(conn, command_id, "create_purge_plan", digest, {"plan_id":plan_id,"plan_hash":plan["plan_hash"]})
-            conn.execute("INSERT INTO purge_plan_records(plan_id,plan_hash,lineage_revision,plan_json,command_id,created_at,task_id) VALUES(?,?,?,?,?,?,NULL)",
-                (plan_id,plan["plan_hash"],plan["lineage_revision"],json.dumps(plan,sort_keys=True,separators=(",",":")),command_id,created_at))
-        database_path = self.store.database_path
         self.store.close()
+        database_path = self._historical_database(11, "persisted-v11")
+        payload_root = database_path.parent / "objects" / "sha256"
+        digest = hashlib.sha256(payload).hexdigest()
+        payload_path = payload_root / digest[:2] / digest
+        payload_path.parent.mkdir(parents=True)
+        payload_path.write_bytes(payload)
         legacy = sqlite3.connect(database_path)
         try:
-            legacy.execute("PRAGMA foreign_keys=OFF")
-            legacy.execute("DROP INDEX purge_plan_records_task_idx")
-            legacy.execute("ALTER TABLE purge_plan_records DROP COLUMN task_id")
-            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_update")
-            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_principal_no_delete")
-            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_delegation_grant")
-            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_trust_anchor")
-            legacy.execute("DROP TRIGGER IF EXISTS kernel_recovery_no_task_requester")
-            legacy.execute("DELETE FROM principals WHERE principal_id='nexus-core-recovery'")
-            legacy.execute("DELETE FROM schema_migrations WHERE version>=12")
-            legacy.execute("PRAGMA user_version=11")
+            legacy.execute("INSERT INTO objects(object_id) VALUES(?)", (object_id,))
+            legacy.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES(?,'CURRENT','ACTIVE','VALID','AVAILABLE')", (object_id,))
+            legacy.execute("INSERT INTO object_envelopes(object_id,object_type,schema_id,schema_version,payload_uri,hash_profile_ref,hash_profile_version,integrity_hash,semantic_hash,created_by_run,classification_assertion_ref,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (object_id,"artifact","nexus.artifact",1,f"objects/sha256/{digest[:2]}/{digest}","raw-sha256",1,digest,None,"legacy-run","legacy-class","2026-09-25T00:00:00Z"))
+            legacy.execute("INSERT INTO command_ledger(command_id,operation,request_hash,result_json,status,created_at) VALUES(?,?,?,?,?,?)",
+                (command_id,"create_purge_plan","a"*64,json.dumps({"plan_id":plan_id,"plan_hash":plan["plan_hash"]},sort_keys=True,separators=(",",":")),"SUCCEEDED",created_at))
+            legacy.execute("INSERT INTO purge_plan_records(plan_id,plan_hash,lineage_revision,plan_json,command_id,created_at) VALUES(?,?,?,?,?,?)",
+                (plan_id,plan["plan_hash"],plan["lineage_revision"],json.dumps(plan,sort_keys=True,separators=(",",":")),command_id,created_at))
             legacy.commit()
         finally:
             legacy.close()
-        self.store = ObjectStore(self.root / "data")
+        self.store = ObjectStore(database_path.parent)
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             self.assertIsNone(migrated["task_id"])
@@ -442,7 +491,9 @@ raise SystemExit(0)
             self.assertNotIn("task_id", migrated_plan)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_barriers").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_execution_records").fetchone()[0], 0)
-        purge = PurgeService(self.store, None, None, independent_journal_path=self.root / "independent" / "legacy-purge.jsonl")
+        purge = PurgeService(self.store, None, None, independent_journal_path=self.store.independent_purge_journal_path)
+        if self.store._current_runtime_mode() == "RECOVERY":
+            RuntimeModeService(self.store, None).complete_validated_recovery(command_id="legacy-recovery-complete", purge_service=purge)
         with self.assertRaisesRegex(RuntimeDenied, "PURGE_PLAN_TASK_UNBOUND_LEGACY"):
             purge.execute(command_id="legacy-execute", record_id="legacy-record", barrier_id="legacy-barrier", plan=plan, grant_id="legacy-grant", task_id="task-legacy", approval_id="legacy-approval")
         inspector = InspectService(self.store, None)

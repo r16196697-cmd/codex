@@ -23,27 +23,26 @@ class VerificationService:
         evidence = sorted(set(evidence_refs))
         if not evidence:
             raise RuntimeDenied("VERIFIER_REQUIRES_EVIDENCE_REFS")
-        run = self._run(run_id)
-        grant_id = run["grant_id"]
         axes = {"generator_independence": "NOT_APPLICABLE", "evidence_independence": "UNKNOWN", "method_independence": "INDEPENDENT"}
         if independence is not None and independence != axes:
             raise RuntimeDenied("T1_INDEPENDENCE_IS_NOT_CALLER_ASSERTED")
         with self.store._connection() as conn:
             prior = conn.execute("SELECT target_ref,evidence_used_json,independence_json,run_id,result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
         if prior:
-            same_request = (prior["target_ref"] == target_ref
-                and json.loads(prior["evidence_used_json"]) == evidence
-                and json.loads(prior["independence_json"]) == axes
-                and prior["run_id"] == run_id)
-            if not same_request:
+            original = json.loads(prior["result_json"])
+            # The public result may have been purge-redacted. Reconstruct only
+            # caller-controlled input positions before checking the immutable
+            # historical command hash; never reconstruct/return the result.
+            candidate = dict(original)
+            candidate.update({"target_ref": target_ref, "evidence_used": evidence, "run_id": run_id})
+            digest = self.store._request_hash("record_verification_result", candidate)
+            with self.store._connection() as conn:
+                command = conn.execute("SELECT operation,request_hash FROM command_ledger WHERE command_id=?", ("verify-" + verification_id,)).fetchone()
+            if not command or command["operation"] != "record_verification_result" or command["request_hash"] != digest:
                 raise CommandConflict("COMMAND_CONFLICT")
-            for object_id in sorted(set([target_ref, *evidence])):
-                self.authority.evaluate_authorization(
-                    grant_id,
-                    {"task": run["task_id"], "resource": object_id, "action": "VERIFY", "audience": "nexus-runtime"},
-                    f"verify-auth-{verification_id}-{object_id}",
-                )
-            return json.loads(prior["result_json"])
+            return original
+        run = self._run(run_id)
+        grant_id = run["grant_id"]
         if run["status"] not in {"RUNNING", "VERIFYING"}:
             raise RuntimeDenied("VERIFIER_RUN_NOT_ACTIVE")
         for object_id in sorted(set([target_ref, *evidence])):
@@ -84,6 +83,20 @@ class VerificationService:
             raise RuntimeDenied("VERIFIER_REQUIRES_EVIDENCE_REFS")
         if set(independence) != {"generator_independence", "evidence_independence", "method_independence"}:
             raise RuntimeDenied("VERIFIER_INDEPENDENCE_AXES_REQUIRED")
+        with self.store._connection() as conn:
+            prior = conn.execute("SELECT result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
+        if prior:
+            original = json.loads(prior["result_json"])
+            candidate = dict(original)
+            candidate.update({"target_ref": target_ref, "evidence_used": evidence, "run_id": run_id,
+                "approval_ref": approval_id, "attester_principal_id": attester_principal_id,
+                "independence": independence})
+            digest = self.store._request_hash("record_verification_result", candidate)
+            with self.store._connection() as conn:
+                command = conn.execute("SELECT operation,request_hash FROM command_ledger WHERE command_id=?", ("verify-" + verification_id,)).fetchone()
+            if not command or command["operation"] != "record_verification_result" or command["request_hash"] != digest:
+                raise CommandConflict("COMMAND_CONFLICT")
+            return original
         run = self._run(run_id)
         if run["status"] not in {"RUNNING", "VERIFYING"}:
             raise RuntimeDenied("VERIFIER_RUN_NOT_ACTIVE")

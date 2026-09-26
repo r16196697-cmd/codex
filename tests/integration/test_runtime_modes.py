@@ -22,7 +22,8 @@ class RuntimeModeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-mode-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "data"
-        self.store = ObjectStore(self.root)
+        self.journal_path = Path(self.temp.name) / "purge-ledger.jsonl"
+        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         policy_path = Path(__file__).resolve().parents[2] / "policies" / "default-policy.json"
         self.policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -118,7 +119,7 @@ class RuntimeModeTests(unittest.TestCase):
     def test_mode_persists_when_store_is_reopened(self):
         self.set_mode(command_id="mode-stateless", mode="STATELESS")
         self.store.close()
-        self.store = ObjectStore(self.root)
+        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.modes = RuntimeModeService(self.store, self.authority)
@@ -130,7 +131,7 @@ class RuntimeModeTests(unittest.TestCase):
         orphan.parent.mkdir(parents=True, exist_ok=True)
         orphan.write_bytes(b"non-normal-startup-must-not-clean")
         self.store.close()
-        self.store = ObjectStore(self.root)
+        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.modes = RuntimeModeService(self.store, self.authority)
@@ -228,7 +229,7 @@ class RuntimeModeTests(unittest.TestCase):
         self.store.put_object(command_id="recovery-object-put", object_id="recovery-object", payload=b"recovery sha256 validation", object_type="artifact", created_by_run="unbound-test-run", classification_assertion_ref="recovery-object-class")
         self.set_mode(command_id="mode-recovery", mode="RECOVERY")
         memory = MemoryService(self.store, self.authority, verifier=None)
-        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=Path(self.temp.name) / "purge-ledger.jsonl")
+        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=self.journal_path)
         report = self.modes.complete_validated_recovery(command_id="validated-recovery", purge_service=purge)
         self.assertEqual(report["mode"], "NORMAL")
         self.assertEqual(report["validated_objects"], 1)
@@ -238,7 +239,7 @@ class RuntimeModeTests(unittest.TestCase):
     def test_recovery_keeps_isolation_when_purge_journal_has_pending_barrier(self):
         self.set_mode(command_id="mode-recovery", mode="RECOVERY")
         memory = MemoryService(self.store, self.authority, verifier=None)
-        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=Path(self.temp.name) / "purge-ledger.jsonl")
+        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=self.journal_path)
         purge.journal.append(action="BARRIER_INSTALLED", barrier_id="restore-barrier", plan_id="restore-plan", plan_hash="a" * 64, lineage_revision=0, protected_refs=[])
         with self.assertRaisesRegex(RuntimeDenied, "RECOVERY_PURGE_BARRIER_OR_LEDGER_UNRESOLVED"):
             self.modes.complete_validated_recovery(command_id="validated-recovery-blocked", purge_service=purge)
@@ -253,7 +254,7 @@ class RuntimeModeTests(unittest.TestCase):
         payload_path.write_bytes(b"modified-recovery-payload")
         self.set_mode(command_id="mode-recovery", mode="RECOVERY")
         memory = MemoryService(self.store, self.authority, verifier=None)
-        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=Path(self.temp.name) / "purge-ledger.jsonl")
+        purge = PurgeService(self.store, self.authority, memory, independent_journal_path=self.journal_path)
         with self.assertRaisesRegex(RuntimeDenied, "RECOVERY_OBJECT_INTEGRITY_VALIDATION_FAILED"):
             self.modes.complete_validated_recovery(command_id="validated-recovery-corrupt", purge_service=purge)
         self.assertEqual(self.modes.current()["mode"], "RECOVERY")
@@ -264,7 +265,7 @@ class RuntimeModeTests(unittest.TestCase):
         orphan.parent.mkdir(parents=True, exist_ok=True)
         orphan.write_bytes(b"recovery-must-not-clean")
         self.store.close()
-        self.store = ObjectStore(self.root)
+        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.trace = TraceRuntime(self.store, self.authority)

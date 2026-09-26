@@ -140,6 +140,7 @@ class CodexHostedBridge:
         classifications. The Runtime still validates Grant ancestry, boundaries,
         Manifest binding, budget and every state transition.
         """
+        self.store._require_mode("run_execute")
         kind = run.get("executor_kind")
         if kind not in {"MODEL", "TOOL"} or run.get("parent_run_id") is None:
             raise ValueError("Hosted bridge only records child MODEL or TOOL Runs")
@@ -152,36 +153,72 @@ class CodexHostedBridge:
         if kind == "MODEL" and (manifest.get("execution_source") != "CODEX_HOST_DECLARED" or manifest.get("model_identity_status") != "UNAVAILABLE"):
             raise ValueError("Attached MODEL Run must explicitly declare host execution and unavailable backend identity")
 
-        child_chain = self.authority.validate_delegation_chain(run["grant_id"])
-        parent_chain = self.authority.validate_delegation_chain(parent_grant_id)
-        if len(child_chain) <= len(parent_chain) or [g["grant_id"] for g in child_chain[:len(parent_chain)]] != [g["grant_id"] for g in parent_chain]:
-            raise ValueError("Hosted child Grant must descend from the Root Run Grant")
-        self.authority.evaluate_authorization(
-            run["grant_id"],
-            {"task": run["task_id"], "resource": run["run_id"], "action": "RUN_CREATE", "audience": "nexus-runtime"},
-            command_id + "-preauthorize",
-        )
+        operation = "create_hosted_child_run"
+        request = {"run": run, "manifest": manifest, "account_id": account_id, "estimated_units": estimated_units,
+            "manifest_object_id": manifest_object_id, "manifest_classification_assertion_ref": manifest_classification_assertion_ref,
+            "event_classification_assertion_refs": event_classification_assertion_refs, "parent_grant_id": parent_grant_id,
+            "requested_capability": requested_capability, "attempt_reason": attempt_reason}
+        request_hash = self.store._request_hash(operation, request)
+        with self.store._connection() as conn:
+            committed = self.store._replay_command(conn, command_id, operation, request_hash)
+            if committed is not None:
+                if committed.get("status") == "SETUP_FAILED":
+                    raise RuntimeError("HOSTED_CHILD_SETUP_RECOVERED:" + committed["failure_code"])
+                return committed
+
+        intent_command_id = command_id + "-setup-intent"
+        intent_operation = "hosted_setup_intent"
+        intent_request_hash = self.store._request_hash(intent_operation, {"request_hash": request_hash})
+        planned_reservation_id = "bres_" + hashlib.sha256(("hosted-setup\0" + command_id).encode("utf-8")).hexdigest()
+        intent = {"top_level_command_id": command_id, "request_hash": request_hash, "task_id": run["task_id"],
+            "root_run_id": run["parent_run_id"], "run_id": run["run_id"], "grant_id": run["grant_id"],
+            "reservation_id": planned_reservation_id, "manifest_object_id": manifest_object_id,
+            "subtask_id": run.get("subtask_id"), "executor_kind": kind,
+            "attempt_command_id": command_id + "-bind-subtask" if run.get("subtask_id") else None,
+            "recovery_reason": "HOSTED_SETUP_INTERRUPTED"}
+        with self.store._connection() as conn:
+            intent_row = conn.execute("SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?", (intent_command_id,)).fetchone()
+        if intent_row and (intent_row["operation"] != intent_operation or intent_row["request_hash"] != intent_request_hash or json.loads(intent_row["result_json"]) != intent):
+            raise RuntimeError("HOSTED_SETUP_INTENT_BINDING_MISMATCH")
+
         run_probe = {**run, "status": "CREATED"}
-        manifest_probe = {**manifest, "budget_reservation_ref": "hosted-reservation-validation-placeholder"}
+        manifest_probe = {**manifest, "budget_reservation_ref": planned_reservation_id}
         self.store._validate("nexus.run@1.schema.json", run_probe)
         self.store._validate(f"nexus.run_manifest@{manifest_probe.get('schema_version')}.schema.json", manifest_probe)
 
-        reservation_id = self.budget.reserve(
-            command_id=command_id + "-budget",
-            account_id=account_id,
-            task_id=run["task_id"],
-            run_id=run["run_id"],
-            amount=estimated_units,
-            model_calls=1 if kind == "MODEL" else 0,
-            tool_calls=1 if kind == "TOOL" else 0,
-            child_runs=1,
-        )
+        try:
+            child_chain = self.authority.validate_delegation_chain(run["grant_id"])
+            parent_chain = self.authority.validate_delegation_chain(parent_grant_id)
+            if len(child_chain) <= len(parent_chain) or [g["grant_id"] for g in child_chain[:len(parent_chain)]] != [g["grant_id"] for g in parent_chain]:
+                raise ValueError("Hosted child Grant must descend from the Root Run Grant")
+            self.authority.evaluate_authorization(run["grant_id"], {"task": run["task_id"], "resource": run["run_id"], "action": "RUN_CREATE", "audience": "nexus-runtime"}, command_id + "-preauthorize")
+        except Exception as auth_error:
+            if intent_row:
+                self._recover_hosted_setup(command_id=command_id, request_hash=request_hash, run=run, intent=intent, failure_code="HOSTED_AUTHORITY_NO_LONGER_VALID")
+                raise RuntimeError("HOSTED_CHILD_SETUP_RECOVERED:HOSTED_AUTHORITY_NO_LONGER_VALID") from auth_error
+            raise
+
+        if not intent_row:
+            with self.store._lock, self.store._connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    prior = self.store._replay_command(conn, intent_command_id, intent_operation, intent_request_hash)
+                    if prior is None:
+                        self.store._record_command(conn, intent_command_id, intent_operation, intent_request_hash, intent)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+
+        reservation_id = planned_reservation_id
         run = {**run, "status": "CREATED", "budget_reservation_ref": reservation_id}
         manifest = {**manifest, "budget_reservation_ref": reservation_id}
         create_command = command_id + "-create-run"
         ready_command = command_id + "-ready"
         running_command = command_id + "-running"
         try:
+            reservation_id = self.budget.reserve(command_id=command_id + "-budget", account_id=account_id, task_id=run["task_id"], run_id=run["run_id"], amount=estimated_units,
+                model_calls=1 if kind == "MODEL" else 0, tool_calls=1 if kind == "TOOL" else 0, child_runs=1, reservation_id=reservation_id)
             self.trace.create_run(
                 run,
                 command_id=create_command,
@@ -220,24 +257,50 @@ class CodexHostedBridge:
             )
         except Exception as setup_error:
             try:
-                with self.store._connection() as conn:
-                    persisted = conn.execute("SELECT status FROM runs WHERE run_id=?", (run["run_id"],)).fetchone()
-                if persisted:
-                    if persisted["status"] in {"CREATED", "READY", "RUNNING", "WAITING", "VERIFYING"}:
-                        self.trace.transition_run(
-                            command_id=command_id + "-setup-cancel",
-                            run_id=run["run_id"],
-                            expected_state=persisted["status"],
-                            next_state="CANCELLED",
-                            classification_assertion_ref=event_classification_assertion_refs["cancelled"],
-                        )
-                    elif persisted["status"] != "CANCELLED":
-                        raise RuntimeError("HOSTED_CHILD_SETUP_REACHED_TERMINAL_RUN")
-                self.budget.release(command_id=command_id + "-budget-release", reservation_id=reservation_id)
+                self._recover_hosted_setup(command_id=command_id, request_hash=request_hash, run=run, intent=intent, failure_code="HOSTED_SETUP_INTERRUPTED")
             except Exception as compensation_error:
                 raise RuntimeError("HOSTED_CHILD_SETUP_COMPENSATION_FAILED") from compensation_error
             raise
-        return {"run_id": run["run_id"], "executor_kind": kind, "status": "RUNNING", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id}
+        result = {"run_id": run["run_id"], "executor_kind": kind, "status": "RUNNING", "manifest_ref": manifest_object_id, "reservation_ref": reservation_id}
+        complete_operation = "hosted_setup_complete"
+        complete_request_hash = self.store._request_hash(complete_operation, {"request_hash": request_hash, "run_id": run["run_id"], "reservation_id": reservation_id})
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                prior = self.store._replay_command(conn, command_id, operation, request_hash)
+                if prior is not None:
+                    conn.commit()
+                    return prior
+                self.store._record_command(conn, command_id + "-setup-complete", complete_operation, complete_request_hash,
+                    {"run_id": run["run_id"], "reservation_id": reservation_id, "status": "SETUP_COMPLETE"})
+                self.store._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return result
+
+    def _recover_hosted_setup(self, *, command_id: str, request_hash: str, run: dict[str, Any], intent: dict[str, Any], failure_code: str) -> None:
+        recovery = self.trace._cancel_created_run_for_recovery(schedule_command_id=command_id, schedule_request_hash=request_hash,
+            task_id=run["task_id"], root_run_id=run["parent_run_id"], subtask_id=run.get("subtask_id"), run_id=run["run_id"],
+            reservation_id=intent["reservation_id"], hosted_setup=intent)
+        if recovery["status"] not in {"CANCELLED", "RUN_ABSENT"}:
+            raise RuntimeError("HOSTED_SETUP_RECOVERY_OUTCOME_INVALID")
+        with self.store._connection() as conn:
+            reservation = conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (intent["reservation_id"],)).fetchone()
+        if reservation and reservation["state"] == "RESERVED":
+            self.budget.release(command_id=command_id + "-setup-recovery-release", reservation_id=intent["reservation_id"])
+        result = {"run_id": run["run_id"], "executor_kind": run["executor_kind"], "status": "SETUP_FAILED", "reservation_ref": intent["reservation_id"], "failure_code": failure_code}
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                complete = self.store._replay_command(conn, command_id, "create_hosted_child_run", request_hash)
+                if complete is None:
+                    self.store._record_command(conn, command_id, "create_hosted_child_run", request_hash, result)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def record_output(
         self,
@@ -367,8 +430,12 @@ class CodexHostedBridge:
             {"task": task_id, "resource": tool_id, "action": "TOOL_READ", "audience": "nexus-runtime"},
             "hosted-tool-read-auth-" + hashlib.sha256((task_id + "\0" + tool_id + "\0" + relative.as_posix()).encode()).hexdigest(),
         )
-        raw = target.read_bytes()
-        if len(raw) > 1024 * 1024:
+        limit = 1024 * 1024
+        if target.stat().st_size > limit:
+            raise ValueError("Read-only probe is limited to 1 MiB")
+        with target.open("rb") as source:
+            raw = source.read(limit + 1)
+        if len(raw) > limit:
             raise ValueError("Read-only probe is limited to 1 MiB")
         return json.dumps(
             {"relative_path": relative.as_posix(), "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "utf8": raw.decode("utf-8")},

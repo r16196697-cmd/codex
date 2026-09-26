@@ -185,7 +185,7 @@ class HostedBridgeTests(unittest.TestCase):
             result[key]=assertion_id
         return result
 
-    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id, subtask_id="hosted-model-node", account_id="hosted-budget"):
+    def _start_child(self, kind, run_id, manifest_id, artifact_id, grant_id, actor, command_id, subtask_id="hosted-model-node", account_id="hosted-budget", requested_capability="UNSPECIFIED"):
         self._child_grant(grant_id,actor,run_id,manifest_id,artifact_id,command_id,tool=kind=="TOOL")
         run_class="class-"+run_id
         manifest_class="class-"+manifest_id
@@ -210,7 +210,8 @@ class HostedBridgeTests(unittest.TestCase):
             manifest=self.bridge.tool_manifest(common={**common,"schema_version":1},tool_id=self.tool_id,descriptor_version="1",input_ref=self.input_id)
         return self.bridge.create_child_run(command_id=command_id,run=run,manifest=manifest,parent_grant_id="hosted-root-grant",
             account_id=account_id,estimated_units=1,manifest_object_id=manifest_id,
-            manifest_classification_assertion_ref=manifest_class,event_classification_assertion_refs=events)
+            manifest_classification_assertion_ref=manifest_class,event_classification_assertion_refs=events,
+            requested_capability=requested_capability)
 
     def test_hosted_child_cannot_reserve_another_tasks_budget(self):
         if self.fixture_already_completed:
@@ -258,6 +259,266 @@ class HostedBridgeTests(unittest.TestCase):
             ).fetchone()
             self.assertEqual(tuple(account), (0, 0, 0))
 
+    def _reopen_hosted_services(self):
+        self.store.close()
+        self.store = ObjectStore(self.data_root, policy=self.policy)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        self.verifier = VerificationService(self.store, self.authority)
+        self.bridge = CodexHostedBridge(store=self.store, authority=self.authority, budget=self.budget, trace=self.trace, runtime=self.runtime, verifier=self.verifier)
+
+    def _exercise_hosted_recovery_after_stage(self, stage):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        captured = {}
+        original_bridge_create = self.bridge.create_child_run
+
+        def capture_create(**kwargs):
+            captured.update(kwargs)
+            return original_bridge_create(**kwargs)
+
+        method, original = {
+            "reservation": (self.budget, self.budget.reserve),
+            "run": (self.trace, self.trace.create_run),
+            "manifest": (self.runtime, self.runtime.bind_manifest),
+            "subtask": (self.runtime, self.runtime.bind_hosted_run_to_subtask),
+        }[stage]
+
+        def persist_revoke_and_crash(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.authority.revoke_grant(
+                "hosted-model-budget-failure-grant", "hosted-model-recovery-revoke-" + stage
+            )
+            raise SimulatedProcessLoss("process loss after " + stage)
+
+        with mock.patch.object(self.bridge, "create_child_run", side_effect=capture_create):
+            with mock.patch.object(method, {
+                "reservation": "reserve",
+                "run": "create_run",
+                "manifest": "bind_manifest",
+                "subtask": "bind_hosted_run_to_subtask",
+            }[stage], side_effect=persist_revoke_and_crash):
+                with self.assertRaises(SimulatedProcessLoss):
+                    self._start_child("MODEL", self.model_run_id, self.model_manifest_id,
+                        self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model", "hosted-model")
+
+        self._reopen_hosted_services()
+        with self.assertRaisesRegex(RuntimeError, "HOSTED_CHILD_SETUP_RECOVERED:HOSTED_AUTHORITY_NO_LONGER_VALID"):
+            self.bridge.create_child_run(**captured)
+        with self.store._connection() as conn:
+            run = conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()
+            reservation = conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()
+            self.assertEqual(None if run is None else run["status"], "CANCELLED" if stage != "reservation" else None)
+            self.assertEqual(reservation["state"], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 0 if stage == "reservation" else 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (self.model_run_id,)).fetchone()[0], 0 if stage == "reservation" else 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='hosted-model' AND status='SUCCEEDED'",).fetchone()[0], 1)
+
+    def test_hosted_setup_recovery_after_reservation_revocation_and_reopen(self):
+        self._exercise_hosted_recovery_after_stage("reservation")
+
+    def test_hosted_setup_recovery_after_run_create_revocation_and_reopen(self):
+        self._exercise_hosted_recovery_after_stage("run")
+
+    def test_hosted_setup_recovery_after_manifest_bind_revocation_and_reopen(self):
+        self._exercise_hosted_recovery_after_stage("manifest")
+
+    def test_hosted_setup_intent_recovers_after_revoke_and_reopen_without_duplicate_mutations(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        captured = {}
+        original_bridge_create = self.bridge.create_child_run
+        original_bind = self.runtime.bind_hosted_run_to_subtask
+
+        def capture_create(**kwargs):
+            captured.update(kwargs)
+            return original_bridge_create(**kwargs)
+
+        def bind_then_revoke(**kwargs):
+            result = original_bind(**kwargs)
+            self.authority.revoke_grant("hosted-model-budget-failure-grant", "hosted-model-recovery-revoke")
+            raise SimulatedProcessLoss("after durable subtask binding")
+
+        with mock.patch.object(self.bridge, "create_child_run", side_effect=capture_create):
+            with mock.patch.object(self.runtime, "bind_hosted_run_to_subtask", side_effect=bind_then_revoke):
+                with self.assertRaises(SimulatedProcessLoss):
+                    self._start_child(
+                        "MODEL", self.model_run_id, self.model_manifest_id,
+                        self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model",
+                        "hosted-model",
+                    )
+
+        with self.store._connection() as conn:
+            intent = conn.execute("SELECT operation,result_json FROM command_ledger WHERE command_id='hosted-model-setup-intent'").fetchone()
+            self.assertIsNotNone(intent)
+            self.assertEqual(intent["operation"], "hosted_setup_intent")
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RESERVED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CREATED")
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='hosted-model'").fetchone())
+
+        self._reopen_hosted_services()
+        class RecoveryReleaseInterrupted(BaseException):
+            pass
+
+        with mock.patch.object(self.budget, "release", side_effect=RecoveryReleaseInterrupted("after Core cancellation")):
+            with self.assertRaises(RecoveryReleaseInterrupted):
+                self.bridge.create_child_run(**captured)
+
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RESERVED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (self.model_run_id,)).fetchone()[0], 1)
+
+        self._reopen_hosted_services()
+        with self.assertRaisesRegex(RuntimeError, "HOSTED_CHILD_SETUP_RECOVERED:HOSTED_AUTHORITY_NO_LONGER_VALID"):
+            self.bridge.create_child_run(**captured)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (self.model_run_id,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM route_decisions WHERE decision_object_id=?", ("route-" + self.model_run_id,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT status FROM command_ledger WHERE command_id='hosted-model'").fetchone()[0], "SUCCEEDED")
+            self.assertEqual([r[0] for r in conn.execute("SELECT action FROM budget_ledger WHERE reservation_id=(SELECT reservation_id FROM budget_reservations WHERE run_id=?) ORDER BY ledger_seq", (self.model_run_id,))], ["RESERVED", "RELEASED"])
+
+    def test_hosted_setup_complete_exact_replay_survives_later_grant_revocation(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedResponseLoss(BaseException):
+            pass
+
+        captured = {}
+        committed = {}
+        original = self.bridge.create_child_run
+
+        def capture_create(**kwargs):
+            captured.update(kwargs)
+            committed["result"] = original(**kwargs)
+            raise SimulatedResponseLoss("response lost after durable SETUP_COMPLETE")
+
+        with mock.patch.object(self.bridge, "create_child_run", side_effect=capture_create):
+            with self.assertRaises(SimulatedResponseLoss):
+                self._start_child("MODEL", self.model_run_id, self.model_manifest_id,
+                    self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model", "hosted-model")
+        self.authority.revoke_grant("hosted-model-budget-failure-grant", "hosted-model-complete-replay-revoke")
+        self._reopen_hosted_services()
+        with self.store._connection() as conn:
+            before = tuple(conn.execute("SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM runs WHERE run_id=?),(SELECT COUNT(*) FROM trace_events WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE decision_object_id=?)", (self.model_run_id,self.model_run_id,self.model_run_id,self.model_run_id,"route-"+self.model_run_id)).fetchone())
+        replay = self.bridge.create_child_run(**captured)
+        with self.store._connection() as conn:
+            after = tuple(conn.execute("SELECT (SELECT COUNT(*) FROM budget_reservations WHERE run_id=?),(SELECT COUNT(*) FROM runs WHERE run_id=?),(SELECT COUNT(*) FROM trace_events WHERE run_id=?),(SELECT COUNT(*) FROM subtask_attempts WHERE run_id=?),(SELECT COUNT(*) FROM route_decisions WHERE decision_object_id=?)", (self.model_run_id,self.model_run_id,self.model_run_id,self.model_run_id,"route-"+self.model_run_id)).fetchone())
+        self.assertEqual(replay, committed["result"])
+        self.assertEqual(replay["status"], "RUNNING")
+        self.assertEqual(after, before)
+
+    def test_hosted_setup_recovery_survives_child_grant_expiry(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        captured = {}
+        fake_clock = [datetime.now(timezone.utc) + timedelta(seconds=1)]
+        original_create_grant = self.authority.create_grant
+        original_bridge_create = self.bridge.create_child_run
+        original_bind = self.runtime.bind_hosted_run_to_subtask
+        grant_expiry = {}
+
+        def create_short_grant(grant, command_id):
+            if grant["grant_id"] == "hosted-model-budget-failure-grant":
+                grant = {**grant, "expires_at": (fake_clock[0] + timedelta(seconds=20)).isoformat()}
+                grant_expiry["value"] = datetime.fromisoformat(grant["expires_at"])
+            return original_create_grant(grant, command_id)
+
+        def capture_create(**kwargs):
+            captured.update(kwargs)
+            return original_bridge_create(**kwargs)
+
+        def bind_then_advance_clock(**kwargs):
+            result = original_bind(**kwargs)
+            fake_clock[0] = grant_expiry["value"] + timedelta(seconds=1)
+            raise SimulatedProcessLoss("child grant expired after durable subtask binding")
+
+        with mock.patch("kernel.authority.service._now", side_effect=lambda: fake_clock[0]):
+            with mock.patch.object(self.authority, "create_grant", side_effect=create_short_grant):
+                with mock.patch.object(self.bridge, "create_child_run", side_effect=capture_create):
+                    with mock.patch.object(self.runtime, "bind_hosted_run_to_subtask", side_effect=bind_then_advance_clock):
+                        with self.assertRaises(SimulatedProcessLoss):
+                            self._start_child("MODEL", self.model_run_id, self.model_manifest_id,
+                                self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model", "hosted-model")
+
+            with self.store._connection() as conn:
+                self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CREATED")
+                self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RESERVED")
+            self._reopen_hosted_services()
+            with self.assertRaisesRegex(RuntimeError, "HOSTED_CHILD_SETUP_RECOVERED:HOSTED_AUTHORITY_NO_LONGER_VALID"):
+                self.bridge.create_child_run(**captured)
+
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT outcome FROM subtask_attempts WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CANCELLED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RELEASED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (self.model_run_id,)).fetchone()[0], 1)
+
+    def test_hosted_setup_recovery_refuses_to_cancel_when_effect_exists(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        captured = {}
+        original_bridge_create = self.bridge.create_child_run
+        original_bind = self.runtime.bind_hosted_run_to_subtask
+
+        def capture_create(**kwargs):
+            captured.update(kwargs)
+            return original_bridge_create(**kwargs)
+
+        def bind_then_crash(**kwargs):
+            result = original_bind(**kwargs)
+            raise SimulatedProcessLoss("after attempt registration")
+
+        with mock.patch.object(self.bridge, "create_child_run", side_effect=capture_create):
+            with mock.patch.object(self.runtime, "bind_hosted_run_to_subtask", side_effect=bind_then_crash):
+                with self.assertRaises(SimulatedProcessLoss):
+                    self._start_child("MODEL", self.model_run_id, self.model_manifest_id,
+                        self.model_artifact_id, "hosted-model-budget-failure-grant", "host-model", "hosted-model")
+        with self.store._connection() as conn:
+            reservation_id = conn.execute("SELECT reservation_id FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0]
+            now = datetime.now(timezone.utc).isoformat()
+            effect = {"effect_id":"hosted-setup-unexpected-effect", "run_id":self.model_run_id,
+                "idempotency_key":"hosted-setup-unexpected-effect-key", "execution_state":"DECLARED",
+                "effect_outcome":"UNDETERMINED", "reconciliation_status":"NOT_REQUIRED"}
+            conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (effect["effect_id"],self.model_run_id,"synthetic-tool","1","SYNTHETIC","synthetic-target","0"*64,None,effect["idempotency_key"],"hosted-model-budget-failure-grant",None,reservation_id,"DECLARED","UNDETERMINED","NOT_REQUIRED",None,json.dumps(effect,sort_keys=True),now,now))
+        self.authority.revoke_grant("hosted-model-budget-failure-grant", "hosted-model-effect-recovery-revoke")
+        self._reopen_hosted_services()
+        with self.assertRaisesRegex(Exception, "HOSTED_SETUP_HAS_FORWARD_RECEIPT"):
+            self.bridge.create_child_run(**captured)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "CREATED")
+            self.assertEqual(conn.execute("SELECT state FROM budget_reservations WHERE run_id=?", (self.model_run_id,)).fetchone()[0], "RESERVED")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (self.model_run_id,)).fetchone()[0], 0)
+
     def test_codex_host_model_receipt_and_real_read_only_tool_run_survive_reopen(self):
         if self.fixture_already_completed:
             projection = self.runtime.inspect_task(grant_id="hosted-root-grant", task_id=self.task_id)
@@ -279,7 +540,7 @@ class HostedBridgeTests(unittest.TestCase):
             "network_egress":False,"risk_tags":[],"review_status":"APPROVED"}
         self.runtime.register_tool_descriptor(command_id="register-hosted-read-tool",grant_id="hosted-root-grant",task_id=self.task_id,descriptor=descriptor)
 
-        model=self._start_child("MODEL",self.model_run_id,self.model_manifest_id,self.model_artifact_id,"hosted-model-grant","host-model","hosted-model")
+        model=self._start_child("MODEL",self.model_run_id,self.model_manifest_id,self.model_artifact_id,"hosted-model-grant","host-model","hosted-model",requested_capability="E1")
         self.assertEqual(model["status"],"RUNNING")
         model_class="class-"+self.model_artifact_id
         model_event="evt-hosted-model-output-trace-object"
@@ -374,6 +635,7 @@ class HostedBridgeTests(unittest.TestCase):
         self.assertEqual(self.runtime.replay_subtask("hosted-tool-node")["status"],"SUCCEEDED")
         model_projection = self.runtime.replay_subtask("hosted-model-node")
         self.assertEqual(len(model_projection["attempts"]), 1)
+        self.assertEqual(model_projection["attempts"][0]["requested_capability"], "E1")
         model_route = self.runtime.inspect_route(grant_id="hosted-root-grant", task_id=self.task_id, route_id=model_projection["attempts"][0]["route_decision_ref"])
         self.assertEqual((model_route["schema_version"], model_route["execution_source"], model_route["model_identity_status"]), (2, "CODEX_HOST_DECLARED", "UNAVAILABLE"))
         self.assertNotIn("actual_model_id", model_route)

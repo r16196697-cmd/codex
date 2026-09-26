@@ -35,6 +35,24 @@ class IndependentPurgeJournal:
             raise ValueError("purge journal must be outside the Nexus data root")
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def identity(self) -> str:
+        """Opaque configured-journal identity; never persist the machine path."""
+        material = "nexus-independent-purge-journal-v1\0" + os.path.normcase(str(self.path))
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def ensure_empty_exists(self) -> None:
+        """Durably establish the empty bootstrap journal under its path lock."""
+        with self._exclusive_path_lock():
+            if not self.path.exists():
+                self._create_empty_journal_durably()
+            if self._read_unlocked():
+                raise ValueError("purge journal is not empty")
+
+    def verified_head(self) -> tuple[int, str]:
+        records = self.read()
+        return (len(records), records[-1]["record_hash"] if records else "0" * 64)
+
     @contextmanager
     def _exclusive_path_lock(self):
         """Serialize journal readers/writers by path, including other processes."""
@@ -94,7 +112,9 @@ class IndependentPurgeJournal:
             digest = row.pop("record_hash", None)
             if row.get("previous_hash") != previous or hashlib.sha256(_canon(row).encode("utf-8")).hexdigest() != digest:
                 raise ValueError(f"purge journal hash chain invalid at line {number}")
-            if row.get("sequence") != number or row.get("action") not in {"BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"}:
+            if row.get("sequence") != number or row.get("action") not in {"BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"} or row.get("version") not in {1, 2}:
+                raise ValueError(f"purge journal record invalid at line {number}")
+            if row.get("version") == 2 and not row.get("task_id"):
                 raise ValueError(f"purge journal record invalid at line {number}")
             if not isinstance(row.get("protected_refs"), list) or not row.get("barrier_id") or not row.get("plan_id"):
                 raise ValueError(f"purge journal record invalid at line {number}")
@@ -138,7 +158,7 @@ class IndependentPurgeJournal:
         finally:
             os.close(directory_fd)
 
-    def append(self, *, action: str, barrier_id: str, plan_id: str, plan_hash: str, lineage_revision: int, protected_refs: list[str]) -> dict[str, Any]:
+    def append(self, *, action: str, barrier_id: str, plan_id: str, plan_hash: str, lineage_revision: int, protected_refs: list[str], task_id: str | None = None) -> dict[str, Any]:
         if action not in {"BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"}:
             raise ValueError("unsupported purge journal action")
         if lineage_revision < 0 or len(plan_hash) != 64:
@@ -148,12 +168,17 @@ class IndependentPurgeJournal:
             prior = self._read_unlocked()
             if created_here:
                 self._create_empty_journal_durably()
-            body = {"version": 1, "sequence": len(prior) + 1, "action": action, "barrier_id": barrier_id, "plan_id": plan_id, "plan_hash": plan_hash, "lineage_revision": lineage_revision, "protected_refs": sorted(set(protected_refs)), "previous_hash": prior[-1]["record_hash"] if prior else "0" * 64}
+            body = {"version": 2 if task_id else 1, "sequence": len(prior) + 1, "action": action, "barrier_id": barrier_id, "plan_id": plan_id, "plan_hash": plan_hash, "lineage_revision": lineage_revision, "protected_refs": sorted(set(protected_refs)), "previous_hash": prior[-1]["record_hash"] if prior else "0" * 64}
+            if task_id:
+                body["task_id"] = task_id
             body["record_hash"] = hashlib.sha256(_canon(body).encode("utf-8")).hexdigest()
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(_canon(body) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
-            if created_here and os.name != "nt":
+            # On retry after a directory-fsync error the pathname already
+            # exists; sequence one still means this process must confirm its
+            # namespace durability before reporting success.
+            if (created_here or not prior) and os.name != "nt":
                 self._fsync_posix_parent_directory()
             return body

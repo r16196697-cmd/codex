@@ -74,6 +74,12 @@ class InspectService:
             "JOIN purge_plan_records pp USING(plan_id) WHERE pr.object_id=?",
             (object_id,),
         ).fetchall()
+        barrier_provenance = conn.execute(
+            "SELECT DISTINCT b.task_id FROM purge_barrier_refs br JOIN purge_barriers b USING(barrier_id) "
+            "WHERE br.object_id=? AND b.task_id IS NOT NULL",
+            (object_id,),
+        ).fetchall()
+        provenance = list(provenance) + list(barrier_provenance)
         if purged and not provenance:
             raise RuntimeDenied("INSPECT_OBJECT_TASK_UNRESOLVED")
         if not purged and not direct:
@@ -102,9 +108,10 @@ class InspectService:
                 "SELECT subtask_id,node_index,status,scheduled_run_id,final_attempt_id,final_outcome,finalized_at FROM subtasks WHERE task_id=? ORDER BY node_index", (task_id,)
             )]
             attempts = [dict(row) for row in conn.execute(
-                "SELECT a.attempt_id,a.task_id,a.subtask_id,a.attempt_no,a.run_id,a.route_decision_ref,a.requested_capability,a.attempt_reason,a.predecessor_attempt_id,a.outcome,a.created_at,"
+                "SELECT a.attempt_id,a.task_id,a.subtask_id,a.attempt_no,a.run_id,CASE WHEN prar.attempt_id IS NOT NULL THEN 'REDACTED_PURGED' ELSE a.route_decision_ref END AS route_decision_ref,a.requested_capability,a.attempt_reason,a.predecessor_attempt_id,a.outcome,a.created_at,"
                 "s.payload_state AS route_payload_state,c.sensitivity_level,c.handling_tags_json "
                 "FROM subtask_attempts a LEFT JOIN object_states s ON s.object_id=a.route_decision_ref "
+                "LEFT JOIN purge_redacted_attempt_routes prar ON prar.attempt_id=a.attempt_id "
                 "LEFT JOIN object_envelopes e ON e.object_id=a.route_decision_ref "
                 "LEFT JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref "
                 "WHERE a.task_id=? ORDER BY a.subtask_id,a.attempt_no", (task_id,)
@@ -149,7 +156,7 @@ class InspectService:
             route_class = attempt.pop("sensitivity_level")
             route_tags = attempt.pop("handling_tags_json")
             route_state = attempt.pop("route_payload_state")
-            if route_ref and (not route_class or route_class not in set(boundary["allowed_classifications"]) or not set(json.loads(route_tags or "[]")).issubset(set(boundary["handling_tags"]))):
+            if route_ref and route_ref != "REDACTED_PURGED" and route_state != "PURGED" and (not route_class or route_class not in set(boundary["allowed_classifications"]) or not set(json.loads(route_tags or "[]")).issubset(set(boundary["handling_tags"]))):
                 raise RuntimeDenied("INSPECT_ATTEMPT_CLASSIFICATION_OUTSIDE_BOUNDARY")
             attempt["route_decision_ref"] = "REDACTED_PURGED" if route_ref and route_state == "PURGED" else route_ref
             visible_attempts.append(attempt)
@@ -222,9 +229,10 @@ class InspectService:
         self._task_context(task_id)
         with self.store._connection() as conn:
             row = conn.execute(
-                "SELECT a.*,e.run_id,e.payload_object_ref,r.task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
+                "SELECT a.*,e.run_id,e.payload_object_ref,COALESCE(r.task_id,po.task_id) AS task_id,r.data_boundary_json,c.sensitivity_level,c.handling_tags_json "
                 "FROM approval_decisions a LEFT JOIN effects e ON e.effect_id=a.effect_id "
                 "LEFT JOIN runs r ON r.run_id=e.run_id "
+                "LEFT JOIN purge_redacted_approval_owners po ON po.approval_id=a.approval_id "
                 "LEFT JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
                 "WHERE a.approval_id=?",
                 (approval_id,),
@@ -281,7 +289,8 @@ class InspectService:
             raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         if row["sensitivity_level"] and not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
-        purge_bound = self._is_purged_object(row["payload_object_ref"]) or self._is_purged_object(row["target_ref"])
+        purge_bound = row["target_ref"] == "REDACTED_PURGED" or row["effect_id"] is None and row["task_id"] is not None and self._is_purged_object(row["payload_object_ref"])
+        purge_bound = purge_bound or self._is_purged_object(row["payload_object_ref"]) or self._is_purged_object(row["target_ref"])
         approved_scope = json.loads(row["approved_scope_json"])
         if purge_bound:
             approved_scope = ["REDACTED_PURGED" if item == row["target_ref"] else item for item in approved_scope]
@@ -290,7 +299,7 @@ class InspectService:
             "approver_principal_id": row["approver_principal_id"],
             "target_type": row["target_type"],
             "target_ref": "REDACTED_PURGED" if purge_bound else row["target_ref"],
-            "effect_id": "REDACTED_PURGED" if purge_bound and row["effect_id"] else row["effect_id"],
+            "effect_id": "REDACTED_PURGED" if purge_bound and (row["effect_id"] or row["target_ref"] == "REDACTED_PURGED") else row["effect_id"],
             "decision": row["decision"],
             "approved_scope": approved_scope,
             "policy_version": row["policy_version"],
@@ -358,28 +367,39 @@ class InspectService:
                 "JOIN task_dags g ON g.task_id=s.task_id JOIN runs r ON r.run_id=g.root_run_id "
                 "JOIN classification_assertions c ON c.assertion_id=r.classification_assertion_ref "
                 "JOIN object_states ds ON ds.object_id=d.decision_object_id "
-                "JOIN object_envelopes de ON de.object_id=d.decision_object_id "
-                "JOIN classification_assertions dc ON dc.assertion_id=de.classification_assertion_ref WHERE d.route_decision_id=?",
+                "LEFT JOIN object_envelopes de ON de.object_id=d.decision_object_id "
+                "LEFT JOIN classification_assertions dc ON dc.assertion_id=de.classification_assertion_ref WHERE d.route_decision_id=?",
                 (route_id,),
             ).fetchone()
         if not row:
+            with self.store._connection() as conn:
+                state = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (route_id,)).fetchone()
+                if state and state["payload_state"] == "PURGED":
+                    owner = self._object_task_owner(conn, route_id, None, purged=True)
+                    if owner != task_id:
+                        raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
+                    return {"route_decision_id": "REDACTED_PURGED", "status": "REDACTED_PURGED"}
             raise RuntimeDenied("INSPECT_NOT_FOUND")
         if row["task_id"] != task_id:
             raise RuntimeDenied("INSPECT_TASK_SCOPE_MISMATCH")
         if not self._classification_visible(row, json.loads(self._task_context(task_id)["data_boundary_json"])):
             raise RuntimeDenied("INSPECT_CLASSIFICATION_OUTSIDE_BOUNDARY")
-        boundary = json.loads(self._task_context(task_id)["data_boundary_json"])
-        if row["decision_sensitivity"] not in set(boundary["allowed_classifications"]) or not set(json.loads(row["decision_tags"])).issubset(set(boundary["handling_tags"])):
-            raise RuntimeDenied("INSPECT_ROUTE_CLASSIFICATION_OUTSIDE_BOUNDARY")
         if row["decision_payload_state"] == "PURGED":
             return {"route_decision_id": route_id, "status": "REDACTED_PURGED"}
+        boundary = json.loads(self._task_context(task_id)["data_boundary_json"])
+        if not row["decision_sensitivity"] or row["decision_sensitivity"] not in set(boundary["allowed_classifications"]) or not set(json.loads(row["decision_tags"] or "[]")).issubset(set(boundary["handling_tags"])):
+            raise RuntimeDenied("INSPECT_ROUTE_CLASSIFICATION_OUTSIDE_BOUNDARY")
         decision = json.loads(row["decision_json"])
         self.store._validate(f"nexus.route_decision@{decision.get('schema_version')}.schema.json", decision)
         return decision
 
     def object_metadata(self, *, grant_id: str, task_id: str, object_id: str, include_integrity_hash: bool = False) -> dict[str, Any]:
         self.modes.require("inspect")
-        self._authorize(grant_id, task_id, f"object:{object_id}")
+        purged_lookup = self._is_purged_object(object_id)
+        # A purge narrows object-specific grant resources. A redacted tombstone
+        # may still be inspected through the caller's Task-scoped INSPECT
+        # authority, after durable object-to-Task ownership is proven below.
+        self._authorize(grant_id, task_id, f"task:{task_id}" if purged_lookup else f"object:{object_id}")
         self._task_context(task_id)
         with self.store._connection() as conn:
             row = conn.execute(

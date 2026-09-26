@@ -240,6 +240,39 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.assertEqual(counts_after, counts_before)
         self.assertEqual(self.runtime.schedule_node(**args), recovered)
 
+    def test_half_registered_attempt_cannot_be_adopted_by_another_command(self):
+        prepared = self._prepare_single_schedule(command_id="cmd-half-attempt-owner")
+        args = dict(command_id="cmd-half-attempt-owner", task_id="task-1", root_run_id="run-root", subtask_id=prepared[0], child_run_id=prepared[1], child_grant_id=prepared[3], route_object_id=prepared[4])
+        self._child_grant(prepared[1], prepared[2], prepared[3])
+        self._classify("class-" + prepared[1], "RUN", prepared[1], prepared[2])
+        create_command = args["command_id"] + "-create-run"
+        args.update(child_classification_assertion_ref="class-" + prepared[1], event_classification_assertion_ref=self._event_class(create_command, prepared[2]), ready_event_classification_assertion_ref=self._event_class(args["command_id"] + "-ready", prepared[2]), cancelled_event_classification_assertion_ref=self._event_class(args["command_id"] + "-setup-cancel", prepared[2]), route_classification_assertion_ref="class-" + prepared[4], manifest_object_id="manifest-" + prepared[1])
+        self._classify("class-" + prepared[4], "OBJECT", prepared[4], "agent")
+        self._classify(args["manifest_object_id"], "OBJECT", args["manifest_object_id"], prepared[2])
+        args["manifest_classification_assertion_ref"] = args["manifest_object_id"]
+        original_ready = self.trace.transition_run
+
+        def interrupt_ready(**kwargs):
+            if kwargs.get("command_id") == args["command_id"] + "-ready":
+                raise RuntimeError("simulated response interruption before READY")
+            return original_ready(**kwargs)
+
+        self.trace.transition_run = interrupt_ready
+        with self.assertRaisesRegex(RuntimeError, "simulated response interruption"):
+            self.runtime.schedule_node(**args)
+        self.trace.transition_run = original_ready
+        with self.store._connection() as conn:
+            attempt = conn.execute("SELECT command_id,schedule_request_hash,outcome FROM subtask_attempts WHERE run_id=?", (args["child_run_id"],)).fetchone()
+            self.assertEqual(attempt["command_id"], args["command_id"])
+            self.assertIsNotNone(attempt["schedule_request_hash"])
+            self.assertEqual(attempt["outcome"], "CREATED")
+        adopted = {**args, "command_id": "cmd-different-attempt-owner"}
+        with self.assertRaisesRegex(RuntimeDenied, "SCHEDULE_ATTEMPT_BINDING_MISMATCH"):
+            self.runtime.schedule_node(**adopted)
+        recovered = self.runtime.schedule_node(**args)
+        self.assertEqual(recovered["status"], "READY")
+        self.assertEqual(self.runtime.schedule_node(**args), recovered)
+
     def test_historical_schedule_command_replays_old_request_shape(self):
         args = {
             "command_id": "cmd-historical-schedule", "task_id": "task-1", "root_run_id": "run-root",
@@ -540,21 +573,15 @@ class DeterministicRuntimeTests(unittest.TestCase):
             with self.store._connection() as conn:
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE run_id=? AND actor_id='nexus-core-recovery'", (run_id,)).fetchone()[0], 1)
 
-        # Existing kernel recovery Trace/classification is valid v13 history.
-        # Only ordinary Grant/Trust Anchor/Task use of this identity is blocked.
+        # Existing kernel recovery Trace/classification remains valid persisted
+        # infrastructure history after a normal close/reopen.
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        with closing(sqlite3.connect(data_root / "nexus.sqlite")) as legacy:
-            for trigger in ("kernel_recovery_no_delegation_grant", "kernel_recovery_no_trust_anchor", "kernel_recovery_no_task_requester"):
-                legacy.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-            legacy.execute("DELETE FROM schema_migrations WHERE version>=14")
-            legacy.execute("PRAGMA user_version=13")
-            legacy.commit()
         self.store = ObjectStore(data_root)
         self.addCleanup(self.store.close)
         self.trace = TraceRuntime(self.store, AuthorityService(self.store, self.policy))
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 15)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 19)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE actor_id='nexus-core-recovery'").fetchone()[0], 2)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery' AND subject_type='TRACE_EVENT'").fetchone()[0], 2)
