@@ -12,19 +12,21 @@ class AcademyPhase0ProtocolTests(unittest.TestCase):
         protocol = (ROOT / "eval" / "academy" / "context-exposure-phase0.md").read_text(encoding="utf-8")
         self.assertIn("NOT IMPLEMENTED / CANDIDATE", protocol)
         self.assertIn("ACADEMY GAP", protocol)
-        self.assertIn("does not invoke a model", protocol)
+        self.assertIn("does not invoke or isolate a model", protocol)
 
     def test_results_do_not_invent_host_telemetry_or_identity(self):
         result = json.loads(RESULT.read_text(encoding="utf-8"))
         self.assertEqual(result["schema_version"], 22)
-        self.assertEqual(result["model_task_success"], "UNAVAILABLE — current Hosted Bridge does not invoke/isolate a model")
+        self.assertEqual(result["phase0_structural_status"], "SUPPORTED")
+        self.assertEqual(result["model_task_success"], "UNAVAILABLE / NOT YET TESTED")
         self.assertEqual(result["journal"]["path"], "DISPOSABLE_EXTERNAL_PATH_NOT_COMMITTED")
         for metric in ("input_tokens", "output_tokens", "provider_cost", "wall_clock"):
             self.assertEqual(result["host_telemetry"][metric], "UNAVAILABLE")
-        for row in result["hosted_outputs"].values():
-            self.assertEqual(row["execution_source"], "CODEX_HOST_DECLARED")
-            self.assertEqual(row["model_identity_status"], "UNAVAILABLE")
-            self.assertEqual(row["payload_origin"], "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION")
+        self.assertEqual(result["model_invocation_count"], 0)
+        self.assertEqual(result["model_run_count"], 0)
+        self.assertEqual(result["model_execution_receipts"], [])
+        self.assertTrue(all(row["model_invocation"] == "NOT_EXECUTED" for row in result["proposed_model_context_sets"].values()))
+        self.assertFalse(any("execution_source" in row for row in result["proposed_model_context_sets"].values()))
 
     def test_exposure_conditions_are_safe_and_distinct(self):
         result = json.loads(RESULT.read_text(encoding="utf-8"))

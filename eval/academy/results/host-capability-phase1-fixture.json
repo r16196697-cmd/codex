@@ -1,0 +1,66 @@
+{
+  "all_skill_instructions_theoretical_bytes": 1788730,
+  "all_skill_instructions_theoretical_chars": 1778546,
+  "counts_by_source_kind": {
+    "BUNDLED_PLUGIN_SKILLS": 2,
+    "CODEX_SKILLS": 110,
+    "CURATED_PLUGIN_SKILLS": 24
+  },
+  "counts_by_capability_type": {
+    "RUNTIME_TOOL_REGISTRY": 186,
+    "SKILL": 136
+  },
+  "duplicate_capability_name_groups": 0,
+  "duplicate_exact_skill_groups": 0,
+  "host_enabled_status_counts": {
+    "UNKNOWN": 136
+  },
+  "declared_risk_counts": {
+    "network": {"UNKNOWN": 136},
+    "secret": {"UNKNOWN": 136},
+    "write": {"UNKNOWN": 136}
+  },
+  "host_baseline_instruction": {
+    "always_loaded_status": "UNKNOWN_NOT_EXPOSED_BY_FILESYSTEM",
+    "global_bytes": 2536,
+    "global_chars": 998,
+    "global_source_count": 1,
+    "project_chain_bytes": 0,
+    "project_chain_chars": 0,
+    "project_chain_source_count": 0
+  },
+  "host_tool_registry": {
+    "mcp_server_count": 3,
+    "mcp_tool_count": 172,
+    "status": "OBSERVED_RUNTIME_TOOL_METADATA",
+    "tool_count": 186,
+    "ui_skill_catalog_count": "UNAVAILABLE"
+  },
+  "mcp_server_details": {
+    "credential_values_read": false,
+    "status": "UNAVAILABLE_BY_LOCAL_DISCOVERY_HARNESS"
+  },
+  "inventory_scope": "LOCAL_METADATA_ONLY",
+  "malformed_frontmatter_count": 0,
+  "metadata_registry_serialized_bytes": 110866,
+  "metadata_registry_serialized_chars": 110334,
+  "plugin_catalog": {
+    "credential_presence": "UNAVAILABLE_NOT_SCANNED",
+    "status": "UNAVAILABLE_BY_SUPPORTED_ENUMERATION_INTERFACE"
+  },
+  "project_experience_curator": {
+    "future_relation": "POTENTIAL_CANDIDATE_PRODUCER_OR_COMPATIBILITY_LAYER; NOT EVALUATED",
+    "nexus_lifecycle_status": "DISCOVERED_NOT_EVALUATED",
+    "status": "FOUND"
+  },
+  "provider_cost_telemetry": "UNAVAILABLE",
+  "representative_metadata_only_bytes": 853,
+  "representative_skill_instruction_bytes": 7425,
+  "representative_skill_name_is_project_experience_curator": true,
+  "schema_version": 1,
+  "skill_files_discovered": 136,
+  "tokenizer_telemetry": "UNAVAILABLE",
+  "unknown_version_count": 3,
+  "unreadable_or_invalid_count": 0,
+  "valid_skill_metadata_count": 136
+}

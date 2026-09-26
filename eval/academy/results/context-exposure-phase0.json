@@ -7,43 +7,29 @@
     "academy-memory-production-codeword",
     "academy-memory-review-owner"
   ],
+  "behavioral_overexposure_effect": "UNAVAILABLE / NOT YET TESTED",
   "benchmark_tasks": [
     {
-      "C0": "4",
-      "C1": "4",
-      "C2": "4",
       "expected": "4",
       "id": "T0_NO_HISTORY",
       "prompt": "What is 2 + 2?"
     },
     {
-      "C0": "UNKNOWN without history",
-      "C1": "cedar",
-      "C2": "cedar",
       "expected": "cedar",
       "id": "T1_ONE_FACT",
       "prompt": "What is the Academy demo code word?"
     },
     {
-      "C0": "UNKNOWN without history",
-      "C1": "seven days; local-only",
-      "C2": "seven days; local-only",
       "expected": "seven days; local-only",
       "id": "T2_COMPOSITION",
       "prompt": "Give the demo retention window and sample route mode."
     },
     {
-      "C0": "UNKNOWN without history",
-      "C1": "Academy cedar; production maple",
-      "C2": "Academy cedar; production maple",
       "expected": "Academy cedar; production maple",
       "id": "T3_SIMILAR_DISTRACTOR",
       "prompt": "Distinguish Academy from production code words."
     },
     {
-      "C0": "UNKNOWN without history",
-      "C1": "cedar; quarantined contradiction excluded",
-      "C2": "cedar; quarantined contradiction excluded",
       "expected": "cedar; quarantined contradiction excluded",
       "id": "T4_QUARANTINED_CONFLICT",
       "prompt": "What does admitted memory say is the Academy code word? Do not ground on quarantined notes."
@@ -59,22 +45,10 @@
     "academy-candidate-quarantined-old-codeword": "QUARANTINED",
     "academy-candidate-review-owner": "ADMITTED"
   },
-  "fixture_answer_rubric": {
-    "C0_NONE": {"fixture_matches": 1, "task_count": 5, "meaning": "synthetic fixture strings only; NOT measured model success"},
-    "C1_MINIMAL_RELEVANT": {"fixture_matches": 5, "task_count": 5, "meaning": "synthetic fixture strings only; NOT measured model success"},
-    "C2_BROAD_SAFE": {"fixture_matches": 5, "task_count": 5, "meaning": "synthetic fixture strings only; NOT measured model success"}
-  },
-  "child_runs": {
-    "academy-run-c0": "SUCCEEDED",
-    "academy-run-c1": "SUCCEEDED",
-    "academy-run-c2": "SUCCEEDED",
-    "academy-run-p0": "SUCCEEDED",
-    "academy-run-p1": "SUCCEEDED",
-    "academy-run-p2": "SUCCEEDED"
-  },
   "conditions": {
     "C0_NONE": {
       "eligible_candidate_count": 0,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 0,
       "exposed_object_refs": [],
       "retrieved_candidate_count": 0,
@@ -83,6 +57,7 @@
     },
     "C1_MINIMAL_RELEVANT": {
       "eligible_candidate_count": 4,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 4,
       "exposed_object_refs": [
         "academy-memory-academy-codeword",
@@ -96,6 +71,7 @@
     },
     "C2_BROAD_SAFE": {
       "eligible_candidate_count": 6,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 6,
       "exposed_object_refs": [
         "academy-memory-academy-codeword",
@@ -111,6 +87,7 @@
     },
     "P0_ABSENT": {
       "eligible_candidate_count": 0,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 0,
       "exposed_object_refs": [],
       "retrieved_candidate_count": 0,
@@ -119,6 +96,7 @@
     },
     "P1_METADATA": {
       "eligible_candidate_count": 1,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 1,
       "exposed_object_refs": [
         "academy-capability-read-metadata"
@@ -129,6 +107,7 @@
     },
     "P2_FULL_INSTRUCTION": {
       "eligible_candidate_count": 1,
+      "execution_status": "NOT_EXECUTED_PROPOSED_CONTEXT",
       "exposed_object_count": 1,
       "exposed_object_refs": [
         "academy-capability-read-instruction"
@@ -148,115 +127,25 @@
     }
   },
   "corpus_object_count": 56,
-  "execution_scope": "Outputs are synthetic fixture payloads, not genuine MODEL invocation results. Hosted Bridge records host-declared outputs/context refs but does not invoke or isolate a model. This fixture proves Core-side retrieval eligibility and durable exposure declarations only, not model behavior.",
+  "execution_scope": "No MODEL Run, Hosted MODEL receipt, proposed manifest binding, or model output was created. Exposure sets exist only in this Academy experiment record as PROPOSED_MODEL_CONTEXT_NOT_EXECUTED.",
   "host_telemetry": {
     "input_tokens": "UNAVAILABLE",
     "output_tokens": "UNAVAILABLE",
     "provider_cost": "UNAVAILABLE",
     "wall_clock": "UNAVAILABLE"
   },
-  "hosted_outputs": {
-    "C0_NONE": {
-      "artifact_id": "academy-output-c0",
-      "context_object_refs": [],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-c0",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 257,
-      "output_chars": 257,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-c0",
-      "verification_id": "academy-verify-c0-none",
-      "verification_verdict": "PASS"
-    },
-    "C1_MINIMAL_RELEVANT": {
-      "artifact_id": "academy-output-c1",
-      "context_object_refs": [
-        "academy-memory-academy-codeword",
-        "academy-memory-demo-retention",
-        "academy-memory-demo-route",
-        "academy-memory-production-codeword"
-      ],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-c1",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 276,
-      "output_chars": 276,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-c1",
-      "verification_id": "academy-verify-c1-minimal-relevant",
-      "verification_verdict": "PASS"
-    },
-    "C2_BROAD_SAFE": {
-      "artifact_id": "academy-output-c2",
-      "context_object_refs": [
-        "academy-memory-academy-codeword",
-        "academy-memory-archive-format",
-        "academy-memory-demo-retention",
-        "academy-memory-demo-route",
-        "academy-memory-production-codeword",
-        "academy-memory-review-owner"
-      ],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-c2",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 270,
-      "output_chars": 270,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-c2",
-      "verification_id": "academy-verify-c2-broad-safe",
-      "verification_verdict": "PASS"
-    },
-    "P0_ABSENT": {
-      "artifact_id": "academy-output-p0",
-      "context_object_refs": [],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-p0",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 124,
-      "output_chars": 124,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-p0",
-      "verification_id": "academy-verify-p0-absent",
-      "verification_verdict": "PASS"
-    },
-    "P1_METADATA": {
-      "artifact_id": "academy-output-p1",
-      "context_object_refs": [
-        "academy-capability-read-metadata"
-      ],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-p1",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 126,
-      "output_chars": 126,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-p1",
-      "verification_id": "academy-verify-p1-metadata",
-      "verification_verdict": "PASS"
-    },
-    "P2_FULL_INSTRUCTION": {
-      "artifact_id": "academy-output-p2",
-      "context_object_refs": [
-        "academy-capability-read-instruction"
-      ],
-      "execution_source": "CODEX_HOST_DECLARED",
-      "manifest_id": "academy-manifest-p2",
-      "model_identity_status": "UNAVAILABLE",
-      "output_bytes": 134,
-      "output_chars": 134,
-      "payload_origin": "SYNTHETIC_FIXTURE_NOT_MODEL_INVOCATION",
-      "run_id": "academy-run-p2",
-      "verification_id": "academy-verify-p2-full-instruction",
-      "verification_verdict": "PASS"
-    }
-  },
   "journal": {
     "head_hash": "0000000000000000000000000000000000000000000000000000000000000000",
     "head_sequence": 0,
-    "identity": "eb98312ea114314dcf2d3177068dacc7615152c138ccb5af0db4eb24c161b386",
+    "identity": "2996f38efef39686a559680a4238562ed6abeb2d0de08c6cacb8a3747e3df17e",
     "path": "DISPOSABLE_EXTERNAL_PATH_NOT_COMMITTED"
   },
+  "model_execution_receipts": [],
+  "model_invocation_count": 0,
+  "model_run_count": 0,
+  "model_task_success": "UNAVAILABLE / NOT YET TESTED",
+  "phase0_behavioral_status": "UNAVAILABLE / NOT YET TESTED",
+  "phase0_structural_status": "SUPPORTED",
   "policy": {
     "base": "repository default fail-closed policy",
     "delta": {
@@ -269,8 +158,6 @@
       "learned_router": false
     }
   },
-  "inspect_grant_id": "academy-inspect-grant",
-  "model_task_success": "UNAVAILABLE — current Hosted Bridge does not invoke/isolate a model",
   "presence_probe": {
     "P0_ABSENT": [],
     "P1_METADATA": [
@@ -281,46 +168,101 @@
     ],
     "P3_INVOCATION": "NOT RUN: v0.1 has no late context-pack/exposure event; see Academy gap"
   },
+  "proposed_model_context_sets": {
+    "C0_NONE": {
+      "exposed_object_count": 0,
+      "exposed_object_refs": [],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    },
+    "C1_MINIMAL_RELEVANT": {
+      "exposed_object_count": 4,
+      "exposed_object_refs": [
+        "academy-memory-academy-codeword",
+        "academy-memory-demo-retention",
+        "academy-memory-demo-route",
+        "academy-memory-production-codeword"
+      ],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    },
+    "C2_BROAD_SAFE": {
+      "exposed_object_count": 6,
+      "exposed_object_refs": [
+        "academy-memory-academy-codeword",
+        "academy-memory-archive-format",
+        "academy-memory-demo-retention",
+        "academy-memory-demo-route",
+        "academy-memory-production-codeword",
+        "academy-memory-review-owner"
+      ],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    },
+    "P0_ABSENT": {
+      "exposed_object_count": 0,
+      "exposed_object_refs": [],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    },
+    "P1_METADATA": {
+      "exposed_object_count": 1,
+      "exposed_object_refs": [
+        "academy-capability-read-metadata"
+      ],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    },
+    "P2_FULL_INSTRUCTION": {
+      "exposed_object_count": 1,
+      "exposed_object_refs": [
+        "academy-capability-read-instruction"
+      ],
+      "manifest_bound_to_run": false,
+      "model_invocation": "NOT_EXECUTED",
+      "record_type": "PROPOSED_MODEL_CONTEXT_NOT_EXECUTED"
+    }
+  },
   "quarantined_object_ids": [
     "academy-memory-quarantined-conflict",
     "academy-memory-quarantined-old-codeword"
   ],
   "raw_retained_object_count": 56,
   "replay": {
+    "after_reopen": {
+      "objects": 61,
+      "model_runs": 0,
+      "reservations": 0,
+      "runs": 1,
+      "trace_events": 6,
+      "verification_rows": 8,
+      "exact_result": "academy-memory-academy-codeword",
+      "journal_head_sequence": 0,
+      "journal_head_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
     "after": {
-      "objects": 79,
-      "reservations": 6,
-      "runs": 7,
-      "trace_events": 42
+      "objects": 61,
+      "reservations": 0,
+      "runs": 1,
+      "trace_events": 6
     },
     "before": {
-      "objects": 79,
-      "reservations": 6,
-      "runs": 7,
-      "trace_events": 42
+      "objects": 61,
+      "reservations": 0,
+      "runs": 1,
+      "trace_events": 6
     },
     "changed_payload_conflict": "COMMAND_CONFLICT",
-    "exact_result": "academy-memory-academy-codeword",
-    "after_reopen": {
-      "mode": "NORMAL",
-      "exact_result": "academy-memory-academy-codeword",
-      "before": {
-        "objects": 79,
-        "reservations": 6,
-        "runs": 7,
-        "trace_events": 42
-      },
-      "after": {
-        "objects": 79,
-        "reservations": 6,
-        "runs": 7,
-        "trace_events": 42
-      },
-      "journal_head_sequence": 0,
-      "journal_watermark_matches": true
-    }
+    "exact_result": "academy-memory-academy-codeword"
   },
-  "reservation_count": 6,
+  "replay_conflict_count": 1,
+  "retry_count": 2,
+  "reservation_count": 0,
   "retrieval": {
     "admitted_eligible_counts": {
       "academy code word": 1,
@@ -367,13 +309,58 @@
     }
   },
   "retry_count": 2,
-  "replay_conflict_count": 1,
   "root_run_id": "academy-root-phase0",
   "root_run_status": "SUCCEEDED",
-  "run_count": 7,
+  "route_decision_count": 0,
+  "run_count": 1,
+  "run_kinds": {
+    "ORCHESTRATOR": 1
+  },
   "schema_version": 22,
   "task_id": "academy-context-phase0",
   "task_status": "SUCCEEDED",
   "tool_calls": 0,
-  "trace_event_count": 42
+  "trace_event_count": 6,
+  "verification_facts": [
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t1-quarantined-conflict",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t1-quarantined-old-codeword",
+      "verifier_kind": "T1_DETERMINISTIC"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-academy-codeword",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-archive-format",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-demo-retention",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-demo-route",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-production-codeword",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    },
+    {
+      "verdict": "PASS",
+      "verification_id": "academy-t3-review-owner",
+      "verifier_kind": "T3_HUMAN_OR_DOMAIN"
+    }
+  ]
 }
