@@ -1,10 +1,10 @@
-# Bootstrap Academy Qualification Synthesis — Phases 0–4
+# Bootstrap Academy Qualification Synthesis — Phases 0–5
 
 ## Status and boundary
 
 Core Independent Audit: `CLOSED / PASS`\
 Audited baseline: `nexus-v0.1-audited` → `8c3451a937337d0cb3c58031eebb7afa8b7ef729`\
-Bootstrap Academy: `IN PROGRESS — Phase 4` (external review pending)\
+Bootstrap Academy: `IN PROGRESS — Phase 5`\
 Capability Certification: `NOT STARTED`\
 Shadow: `NOT STARTED`\
 Production qualification: `NOT STARTED`
@@ -19,11 +19,16 @@ This synthesis is Academy-only evidence and candidate tracking. It does not chan
 | 1 — Host & Capability Discovery | Read-only local discovery metadata plus explicitly caller-observed runtime tool metadata | Bounded local roots and sanitized aggregate inventory; metadata footprint is distinct from model context | UI catalog enumeration, complete Plugin/MCP visibility, actual enabled/loaded state, capability usefulness | CLOSED / ACCEPTED |
 | 2 — Search / Evidence | Frozen synthetic corpus/query retrieval metrics and evidence qualification | Audited raw/admitted APIs, deterministic eligibility, synthetic conflict/insufficiency semantics | MODEL answer quality; live Search replay by committed harness; query-normalization relevance gain | CLOSED / ACCEPTED |
 | 3 — Failure Recovery | `REGRESSION_BACKED_OPERATIONAL_QUALIFICATION`; 27 case mappings over 23 unique regression tests | Tested transaction/restart/replay behavior and synthetic failure paths on this Windows environment | Independent black-box resilience campaign, real OS crash, production recovery, all-platform physical durability | CLOSED / ACCEPTED |
-| 4 — Routing Semantics | Frozen synthetic deterministic routing matrix; 18 cases mapped to 7 unique tests | Selected synthetic profile semantics, tested constraints, attempt/run/reservation separation, replay/conflict, selected denial paths | Real provider/model selection, comparative model quality/cost, several constraint/fallback cases, live MODEL execution | IN PROGRESS / external review pending |
+| 4 — Routing Semantics | Frozen synthetic deterministic routing matrix; 18 cases mapped to 7 unique tests | Selected synthetic profile semantics, tested constraints, attempt/run/reservation separation, replay/conflict, selected denial paths | Real provider/model selection, comparative model quality/cost, several constraint/fallback cases, live MODEL execution | CLOSED / ACCEPTED |
+| 5 — Controlled Host Behavioral Bridge / Certification Preflight | Frozen synthetic blind packets and deterministic evaluator; automated fresh ephemeral Host invocation is feasible | Exact explicit packet delivery is supported by a real Host pilot; the formal matrix has not started | Full model-visible context, C0/C1/C2 behavior, capability presence behavior, real Skill A/B, provider/model identity, and cost remain unverified | IN PROGRESS / PREREGISTERED; external review pending |
 
 Phase 3 count correction: the historic `165 tests total, 163 passed + 2 skipped` was the actual prior suite result. A previous summary saying `165 passed + 2 skipped` mislabeled the total as passes; it was not a separate run. This batch re-runs the full suite and records its exact new discovered/passed/failed/error/skipped counts in the final execution report and commit result.
 
 Phase 1 provenance remains bounded: the 186 runtime tools / 172 MCP tools / 3 MCP sources were caller-observed active runtime tool metadata, not enumerated by the committed discovery harness. The UI catalog count cannot be independently verified through the committed supported interface. The 136 discovered local Skills remain `DISCOVERED / UNEVALUATED`; discovered filesystem presence is not proof of host enabled, loaded, or useful status.
+
+Phase 4 closure is `CLOSED / ACCEPTED` with its accepted scope unchanged: 12 mapped supported, 2 `NOT_REPRESENTABLE`, 4 `NOT_TESTED`; synthetic routing only; real provider/model routing remains `NOT TESTED / NOT IMPLEMENTED`.
+
+Phase 5 preflight confirmed `PHASE5_OFFICIAL_HOST_INVOCATION_V1`: `codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -`, with packet text on stdin from a fresh empty temporary working directory outside the repository. The automated Host behavioral bridge is feasible. A real Host pilot supports explicit packet delivery; the formal matrix has not started and no packet is counted as a formal trial. The CLI does not expose a complete attested dump of ambient system/custom-instruction/skill context, so only the explicit packet boundary is known. No `CodexHostedBridge` MODEL Run or Core receipt was fabricated. The manual runbook is retained as a fallback artifact.
 
 ## Candidate ledger
 
@@ -63,19 +68,22 @@ This is a gate candidate only; no Shadow entry is authorized by this artifact.
 | D. Deterministic retrieval/evidence | SUPPORTED (synthetic scope) | Phase 2 fixed synthetic qualification |
 | E. Failure recovery | SUPPORTED (regression-backed scope) | Not black-box, OS-crash, production, or physical-durability qualification |
 | F. Routing semantics | SUPPORTED (synthetic subset) | Not real provider/model routing |
-| G. Exact real MODEL context exposure | UNAVAILABLE | No independently controlled invocation/visibility proof |
-| H. Skill/capability behavioral A/B | NOT TESTED | No utility certification |
+| G1. Explicit experiment packet delivery | SUPPORTED BY REAL HOST PILOT | Exact explicit packet delivery is supported; formal matrix has not started |
+| G2. Full model-visible context proof | UNAVAILABLE | Ambient Host context is held constant but only partially observable |
+| H. Skill/capability behavioral A/B | NOT TESTED | No synthetic pilot completed; no real Skill utility certification |
 | I. Host Memory contamination | UNAVAILABLE | Tool-chat memory is forced on; cross-session effect with primary Memory off is unverified |
 | J. Real token/cost telemetry | UNAVAILABLE | No reliable Host telemetry |
 | K. Production/private-data exclusion | SUPPORTED for Academy runs | No production qualification; keep future data boundary explicit |
 | L. No auto-promotion | SUPPORTED | No candidate is activated or promoted |
 
-For claims that context or Skills improve model behavior, gates G and H are essential evidence, not optional proxies. Real dollar-cost telemetry may be unnecessary for a narrowly read-only Shadow, but no cost claim can be made without it. The current evidence does not qualify a Shadow transition.
+For claims that context or Skills improve model behavior, gates G1, G2, and H are essential evidence, not optional proxies. Real dollar-cost telemetry may be unnecessary for a narrowly read-only Shadow, but no cost claim can be made without it. The current evidence does not qualify a Shadow transition.
 
 ## Frozen Host environment and unresolved gaps
 
 The Host configuration remains unchanged: primary Memory `OFF`; tool-chat memory control `ON_FORCED / USER_NOT_CONTROLLABLE`; cross-session effect `NOT INDEPENDENTLY VERIFIED`; Custom Instructions on and unchanged; global AGENTS unchanged; `project-experience-curator` unchanged. No Phase 4 behavioral evaluation uses Host native Memory.
 
 Known blockers/gaps remain: no independently controlled MODEL invocation per condition; no proof of exact model-visible context; P3 invocation-only presence unobserved; no Presence Regression evaluator; no reliable Host token/cost/model telemetry; Host tool-chat memory cross-session behavior unverified; filesystem Skill presence is not enabled/loaded proof; capability usefulness unevaluated; query normalization parser benefit does not yet establish relevance benefit; real multi-provider routing is not implemented; the Phase 4 untested/not-representable cases remain explicit in its result.
+
+No capability pilot has completed, and no installed Skill was evaluated. `project-experience-curator` was not selected for behavior evaluation because its documented workflow may write project instruction files; its status stays `DISCOVERED / UNEVALUATED`. The synthetic presence packet P3 condition is `NOT TESTED / HOST OBSERVABILITY GAP`.
 
 No Academy PASS, capability certification, Shadow readiness, or Production readiness is asserted. Await external review before any next phase.

@@ -19,14 +19,17 @@
     {"candidate_id":"RECOVERY_QUALIFICATION","origin_phase":"3","problem":"Qualify fail-closed and replay recovery paths","evidence_available":"Regression-backed operational qualification on current Windows environment","evidence_missing":"Real OS crashes, production operations, all-platform physical durability","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
     {"candidate_id":"ROUTING_POLICY","origin_phase":"4","problem":"Make deterministic route choices auditable under constraints","evidence_available":"Synthetic E0/E1/E2 subset: quality/locality, budget denial, replay and escalation mappings","evidence_missing":"Live providers/models, several constraints, behavior/cost comparisons","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
     {"candidate_id":"ESCALATION_FALLBACK","origin_phase":"4","problem":"Represent a permitted second attempt and truthful terminal outcome","evidence_available":"Separate Run/reservation attempts, exact replay, terminal result, third-attempt denial","evidence_missing":"Fallback as distinct policy, inconclusive-attempt retry, child-limit exhaustion","status":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
-    {"candidate_id":"SHADOW_ENTRY_GATE","origin_phase":"0-4","problem":"Define evidence gates before any future Shadow decision","evidence_available":"Per-gate status ledger; no automatic advancement","evidence_missing":"Exact real MODEL exposure and capability behavioral A/B remain unresolved","status":"OBSERVED","promotion_allowed":false}
+    {"candidate_id":"SHADOW_ENTRY_GATE","origin_phase":"0-5","problem":"Define evidence gates before any future Shadow decision","evidence_available":"Per-gate status ledger; explicit packet-boundary real Host pilot is now available","evidence_missing":"Complete ambient context visibility, real Skill A/B, P3 invocation-only, Host Memory characterization remain unresolved","status":"OBSERVED","promotion_allowed":false},
+    {"candidate_id":"HOST_BEHAVIORAL_BRIDGE","origin_phase":"5","problem":"Run fresh controlled Host trials with explicit prompt packets and preserve output provenance","evidence_available":"Installed Codex CLI supports ephemeral non-interactive input/output and deterministic packet hashes","evidence_missing":"Complete ambient Host context and a Nexus Hosted Bridge receipt path are not established by the CLI harness","status":"STRUCTURALLY_SUPPORTED","promotion_allowed":false},
+    {"candidate_id":"SYNTHETIC_CAPABILITY_PRESENCE","origin_phase":"5","problem":"Measure synthetic capability absence/metadata/instruction presence without certifying a real Skill","evidence_available":"Small deterministic nonce task and unrelated legacy-task presence pilot","evidence_missing":"P3 invocation-only visibility; repeated trials and real capability utility","status":"BEHAVIORALLY_UNTESTED","promotion_allowed":false}
   ],
   "phases": [
     {"phase":"0","title":"Context Exposure","status":"CLOSED / ACCEPTED","evidence_type":"STRUCTURAL SYNTHETIC BASELINE","not_qualified":"MODEL behavior/answer quality"},
     {"phase":"1","title":"Host & Capability Discovery / Registry","status":"CLOSED / ACCEPTED","evidence_type":"READ-ONLY STRUCTURAL INVENTORY","not_qualified":"Complete UI catalog or capability utility"},
     {"phase":"2","title":"Search / Evidence + Memory Retrieval","status":"CLOSED / ACCEPTED","evidence_type":"DETERMINISTIC SYNTHETIC QUALIFICATION","not_qualified":"MODEL answer quality or query relevance gain from normalization"},
     {"phase":"3","title":"Failure Recovery / Operational Resilience","status":"CLOSED / ACCEPTED","evidence_type":"REGRESSION_BACKED_OPERATIONAL_QUALIFICATION","not_qualified":"Black-box, OS-crash, production, physical durability"},
-    {"phase":"4","title":"Routing Semantics","status":"IN PROGRESS / EXTERNAL REVIEW PENDING","evidence_type":"SYNTHETIC DETERMINISTIC ROUTING REGRESSION QUALIFICATION","not_qualified":"Real provider/model selection or comparative quality/cost"}
+    {"phase":"4","title":"Routing Semantics","status":"CLOSED / ACCEPTED","evidence_type":"SYNTHETIC DETERMINISTIC ROUTING REGRESSION QUALIFICATION","qualified_scope":"12 mapped supported; 2 NOT_REPRESENTABLE; 4 NOT_TESTED; synthetic routing only","not_qualified":"Real provider/model routing remains NOT TESTED / NOT IMPLEMENTED; no comparative quality/cost"},
+    {"phase":"5","title":"Controlled Host Behavioral Bridge + Capability Certification Preflight","status":"IN PROGRESS / PREREGISTERED; EXTERNAL REVIEW PENDING","evidence_type":"FROZEN PACKETS; AUTOMATED HOST BEHAVIORAL BRIDGE FEASIBLE","qualified_scope":"Explicit packet delivery supported by real Host pilot; formal matrix has not started","not_qualified":"Full model-visible context, C0/C1/C2 behavior, capability presence behavior, real Skill A/B, P3 invocation-only, provider/model identity, Shadow or production"}
   ],
   "shadow_entry_gate_candidate": [
     {"gate":"A_CORE_AUDITED_FROZEN","status":"SUPPORTED"},
@@ -35,14 +38,15 @@
     {"gate":"D_DETERMINISTIC_RETRIEVAL_EVIDENCE","status":"SUPPORTED_SYNTHETIC_SCOPE"},
     {"gate":"E_FAILURE_RECOVERY","status":"SUPPORTED_REGRESSION_BACKED_SCOPE"},
     {"gate":"F_ROUTING_SEMANTICS","status":"SUPPORTED_SYNTHETIC_SUBSET"},
-    {"gate":"G_EXACT_REAL_MODEL_CONTEXT_EXPOSURE","status":"UNAVAILABLE"},
+    {"gate":"G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY","status":"SUPPORTED_BY_REAL_HOST_PILOT"},
+    {"gate":"G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF","status":"UNAVAILABLE"},
     {"gate":"H_SKILL_CAPABILITY_BEHAVIORAL_AB","status":"NOT_TESTED"},
     {"gate":"I_HOST_MEMORY_CONTAMINATION","status":"UNAVAILABLE"},
     {"gate":"J_REAL_TOKEN_COST_TELEMETRY","status":"UNAVAILABLE"},
     {"gate":"K_PRODUCTION_PRIVATE_DATA_EXCLUSION","status":"SUPPORTED_FOR_ACADEMY_RUNS"},
     {"gate":"L_NO_AUTO_PROMOTION","status":"SUPPORTED"}
   ],
-  "capability_certification": {"status":"NOT STARTED","discovered_skill_count":136,"all_discovered_skills_lifecycle":"DISCOVERED / UNEVALUATED","project_experience_curator":"DISCOVERED / UNEVALUATED","promotion_allowed":false},
+  "capability_certification": {"status":"NOT STARTED","preflight_status":"COMPLETED; NO REAL SKILL CANDIDATE SELECTED","preflight_candidates":[],"reviewed_but_excluded":[{"capability":"project-experience-curator","reason":"Documented workflow may write project instruction files; not eligible for the no-write behavioral preflight."}],"discovered_skill_count":136,"all_discovered_skills_lifecycle":"DISCOVERED / UNEVALUATED","project_experience_curator":"DISCOVERED / UNEVALUATED","promotion_allowed":false},
   "host_configuration": {"primary_memory":"OFF","tool_chat_memory":"ON_FORCED / USER_NOT_CONTROLLABLE","cross_session_effect":"NOT INDEPENDENTLY VERIFIED","custom_instructions":"ON / UNCHANGED","global_agents":"UNCHANGED","project_experience_curator":"UNCHANGED / DISCOVERED / UNEVALUATED"},
   "query_normalization_decision": {"parser_error_reduction":"AVAILABLE","retrieval_relevance_improvement":"INSUFFICIENT_EVIDENCE","promotion_allowed":false},
   "production_qualification":"NOT STARTED",

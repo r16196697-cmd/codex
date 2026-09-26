@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "ACADEMY_BLIND_PACKET_EVALUATOR",
+  "not_for_model_context": true,
+  "context_trials": {
+    "A17": {"condition": "C0_NONE", "family": "single_fact", "expected": {"code": "UNKNOWN"}, "distractor_values": []},
+    "E04": {"condition": "C0_NONE", "family": "multi_fact_composition", "expected": {"retention_days": "UNKNOWN", "handoff": "UNKNOWN", "region": "UNKNOWN"}, "distractor_values": []},
+    "F22": {"condition": "C0_NONE", "family": "similar_identifier", "expected": {"route": "UNKNOWN"}, "distractor_values": []},
+    "H11": {"condition": "C0_NONE", "family": "conflicting_sources", "expected": {"status": "UNKNOWN"}, "distractor_values": []},
+    "B29": {"condition": "C1_MINIMAL_RELEVANT", "family": "single_fact", "expected": {"code": "VEIL-739"}, "distractor_values": []},
+    "D31": {"condition": "C1_MINIMAL_RELEVANT", "family": "multi_fact_composition", "expected": {"retention_days": "23", "handoff": "MIRA-Q8", "region": "LCL-6"}, "distractor_values": []},
+    "G08": {"condition": "C1_MINIMAL_RELEVANT", "family": "similar_identifier", "expected": {"route": "LOCAL-K2"}, "distractor_values": []},
+    "J15": {"condition": "C1_MINIMAL_RELEVANT", "family": "conflicting_sources", "expected": {"status": "UNKNOWN"}, "distractor_values": []},
+    "K02": {"condition": "C2_BROAD_SAFE", "family": "single_fact", "expected": {"code": "VEIL-739"}, "distractor_values": ["VEIL-937", "VEIL-793", "VEIL-379"]},
+    "L73": {"condition": "C2_BROAD_SAFE", "family": "multi_fact_composition", "expected": {"retention_days": "23", "handoff": "MIRA-Q8", "region": "LCL-6"}, "distractor_values": ["32", "MIRA-Q9", "LCL-9"]},
+    "M26": {"condition": "C2_BROAD_SAFE", "family": "similar_identifier", "expected": {"route": "LOCAL-K2"}, "distractor_values": ["LOCAL-K3", "LOCAL-K8", "LOCAL-K9"]},
+    "N58": {"condition": "C2_BROAD_SAFE", "family": "conflicting_sources", "expected": {"status": "UNKNOWN"}, "distractor_values": ["TERN-541", "COVE-268", "TERN-145"]}
+  },
+  "presence_trials": {
+    "V06": {"presence": "P0_ABSENT", "task_type": "capability_task", "expected": {"result": "UNKNOWN"}, "distractor_values": []},
+    "R41": {"presence": "P1_METADATA_ONLY", "task_type": "capability_task", "expected": {"result": "UNKNOWN"}, "distractor_values": []},
+    "S12": {"presence": "P2_FULL_INSTRUCTION", "task_type": "capability_task", "expected": {"result": "X1-T5"}, "distractor_values": []},
+    "T63": {"presence": "P0_ABSENT", "task_type": "unrelated_legacy_task", "expected": {"owner": "KITE-309"}, "distractor_values": []},
+    "U07": {"presence": "P1_METADATA_ONLY", "task_type": "unrelated_legacy_task", "expected": {"owner": "KITE-309"}, "distractor_values": []},
+    "W34": {"presence": "P2_FULL_INSTRUCTION", "task_type": "unrelated_legacy_task", "expected": {"owner": "KITE-309"}, "distractor_values": []}
+  },
+  "scoring": {
+    "format_valid": "Final output parses as one JSON object with exactly the expected keys and string values.",
+    "exact_correctness": "Parsed JSON object exactly equals the frozen expected object.",
+    "required_fact_coverage": "Correct expected key/value pairs divided by expected key count.",
+    "unsupported_assertion_count": "Count wrong non-UNKNOWN expected-field values plus unexpected output keys; missing/invalid fields affect format and coverage but are not treated as assertions.",
+    "distractor_adoption_count": "Count expected-field values exactly equal to a listed broad-condition distractor value.",
+    "conflict_handling_correct": "For family=conflicting_sources, true only when valid structured output exactly matches the frozen UNKNOWN expectation; otherwise NOT_APPLICABLE.",
+    "no_expected_id_fallback": true
+  }
+}

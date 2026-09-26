@@ -1,0 +1,119 @@
+{
+  "artifact_kind": "ACADEMY_BEHAVIORAL_BRIDGE_RESULT",
+  "protocol_version": "PHASE5_PREREGISTRATION_V1",
+  "codex_cli_version": "codex-cli 0.158.0-alpha.2.1",
+  "codex_executable_observation": "Installed codex executable resolved locally; private local path intentionally omitted.",
+  "pre_model_failure": {
+    "classification": "PRE_MODEL_HOST_INVOCATION_FAILURE",
+    "exit_code": 2,
+    "thread_started": false,
+    "turn_completed": false,
+    "agent_output_observed": false,
+    "exact_argv": "codex exec --ephemeral --json --color never --sandbox read-only --ask-for-approval never --skip-git-repo-check -",
+    "root_cause": "codex-cli 0.158.0-alpha.2.1 rejects unsupported option --ask-for-approval; exact argument replay produced 'unexpected argument'. Original raw stderr was not retained by the runner.",
+    "runner_capture": "UTF-8 stdin; stdout/stderr PIPE; temporary cwd was outside a Git repository and was deleted after invocation. Exact random cwd was not retained."
+  },
+  "host_liveness_diagnostics": [
+    {
+      "kind": "HOST_LIVENESS_DIAGNOSTIC",
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "command": "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -",
+      "cwd": "fresh empty temporary directory outside repository; removed after invocation",
+      "exit_code": 0,
+      "thread_started": true,
+      "thread_id": "01a0dec5-64c9-7be0-bc7a-e776d14048c1",
+      "turn_completed": true,
+      "agent_output": "P5_HOST_OK",
+      "tool_use_count": 0,
+      "usage_basis": "HOST_REPORTED_TOTAL_INPUT_TOKENS",
+      "usage": {
+        "input_tokens": 20447,
+        "cached_input_tokens": 7936,
+        "output_tokens": 21,
+        "reasoning_output_tokens": 11
+      },
+      "provider_cost": "UNAVAILABLE",
+      "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY"
+    }
+  ],
+  "prior_worktree_liveness_diagnostic": {
+    "kind": "HOST_LIVENESS_DIAGNOSTIC_NOT_BEHAVIORAL",
+    "cwd": "Academy Git worktree; not eligible as a behavioral trial",
+    "thread_id": "01a0debe-ba56-7220-99cc-de14f3208774",
+    "usage_basis": "HOST_REPORTED_TOTAL_INPUT_TOKENS",
+    "usage": {
+      "input_tokens": 20447,
+      "cached_input_tokens": 7936,
+      "output_tokens": 23,
+      "reasoning_output_tokens": 12
+    },
+    "provider_cost": "UNAVAILABLE",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY"
+  },
+  "context_trials": {},
+  "execution_count": 0,
+  "attempted_count": 0,
+  "successful_context_trial_count": 0,
+  "successful_presence_trial_count": 0,
+  "formal_trial_count": 0,
+  "manual_host_runs_required": false,
+  "fixture_sha256": "608ccfd55f5d1a80f0fce871749b73cb95c9775db37a14020adf40b6ff0e7508",
+  "evaluator_sha256": "96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c",
+  "execution_order": ["A17", "D31", "V06", "K02", "E04", "S12", "G08", "B29", "R41", "H11", "L73", "T63", "F22", "J15", "W34", "M26", "U07", "N58"],
+  "execution_order_sha256": "b457626e5526780e275b4747f1c54060c0e29fd01b376084d047b61a13178171",
+  "official_invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+  "official_command": "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -",
+  "automated_host_behavioral_bridge": "FEASIBLE; invocation method only; no formal behavioral matrix result",
+  "host_baseline": {
+    "cross_session_effect": "NOT INDEPENDENTLY VERIFIED",
+    "custom_instructions": "ON / UNCHANGED",
+    "global_agents": "UNCHANGED",
+    "primary_memory": "OFF",
+    "project_experience_curator": "UNCHANGED / DISCOVERED / UNEVALUATED",
+    "tool_chat_memory": "ON_FORCED / USER_NOT_CONTROLLABLE"
+  },
+  "host_configuration_changed": false,
+  "host_interface": "Codex CLI codex exec; each invocation receives only one packet on UTF-8 stdin, in a fresh empty temporary cwd outside the repository.",
+  "host_memory_contamination": "NOT INDEPENDENTLY VERIFIED",
+  "a17_diagnostic_not_counted": {
+    "status": "BRIDGE_DIAGNOSTIC_NOT_COUNTED",
+    "usage_basis": "HOST_REPORTED_TOTAL_INPUT_TOKENS",
+    "output": "{\"code\":\"UNKNOWN\"}",
+    "packet_sha256": "1b84f575b763ea09697fd3c6ab7e404fb51de88a9906b2f1a2fd9a326e095b9d",
+    "packet_bytes": 294,
+    "packet_chars": 294,
+    "thread_id": "01a0debf-e5d1-7320-887c-9061d4c300d9",
+    "usage": {
+      "input_tokens": 20488,
+      "cached_input_tokens": 7936,
+      "output_tokens": 21,
+      "reasoning_output_tokens": 10
+    },
+    "dollar_cost": "UNAVAILABLE",
+    "exclusion_reason": "Executed while fixture/evaluator/ground truth were inside the Academy Git worktree; tool-based file access could not be ruled out.",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY"
+  },
+  "formal_trial_results": "NOT RUN; preregistration only",
+  "nexus_model_receipt_count": 0,
+  "nexus_model_receipt_note": "Trials are external Academy CLI invocations, not CodexHostedBridge MODEL Runs; no synthetic Core receipt was created.",
+  "presence_trials": {},
+  "schema_version": 1,
+  "status": "IN PROGRESS / PREREGISTERED",
+  "tokens_and_cost": {
+    "host_model_identity": "UNAVAILABLE",
+    "provider": "UNAVAILABLE",
+    "provider_cost": "UNAVAILABLE",
+    "token_telemetry": "HOST_REPORTED_TOTAL_TURN_USAGE_ONLY; no estimate used; ambient input composition unavailable"
+  },
+  "exposure_observability": {
+    "explicit_packet_visibility": "KNOWN",
+    "full_model_visible_context": "UNAVAILABLE",
+    "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+    "observation": "HOST_REPORTED_TOTAL_INPUT_TOKENS exceeded explicit packet bytes in observed diagnostics; this does not decompose input composition.",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY"
+  },
+  "gates": {
+    "G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY": "SUPPORTED_BY_REAL_HOST_PILOT; FORMAL MATRIX NOT EXECUTED",
+    "G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF": "UNAVAILABLE"
+  }
+}
