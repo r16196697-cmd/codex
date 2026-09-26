@@ -29,7 +29,7 @@
     {"phase":"2","title":"Search / Evidence + Memory Retrieval","status":"CLOSED / ACCEPTED","evidence_type":"DETERMINISTIC SYNTHETIC QUALIFICATION","not_qualified":"MODEL answer quality or query relevance gain from normalization"},
     {"phase":"3","title":"Failure Recovery / Operational Resilience","status":"CLOSED / ACCEPTED","evidence_type":"REGRESSION_BACKED_OPERATIONAL_QUALIFICATION","not_qualified":"Black-box, OS-crash, production, physical durability"},
     {"phase":"4","title":"Routing Semantics","status":"CLOSED / ACCEPTED","evidence_type":"SYNTHETIC DETERMINISTIC ROUTING REGRESSION QUALIFICATION","qualified_scope":"12 mapped supported; 2 NOT_REPRESENTABLE; 4 NOT_TESTED; synthetic routing only","not_qualified":"Real provider/model routing remains NOT TESTED / NOT IMPLEMENTED; no comparative quality/cost"},
-    {"phase":"5","title":"Controlled Host Behavioral Bridge + Capability Certification Preflight","status":"IN PROGRESS / PREREGISTERED V2; EXTERNAL REVIEW PENDING","evidence_type":"FROZEN V2 PACKETS; AUTOMATED HOST BEHAVIORAL BRIDGE FEASIBLE","qualified_scope":"Explicit packet delivery supported by real Host pilot; formal matrix has not started","not_qualified":"Full model-visible context, C0/C1/C2 behavior, capability presence behavior, real Skill A/B, P3 invocation-only, provider/model identity, Shadow or production"}
+    {"phase":"5","title":"Controlled Host Behavioral Bridge + Capability Certification Preflight","status":"IN PROGRESS / FORMAL MATRIX STOPPED; EXTERNAL REVIEW PENDING","evidence_type":"FROZEN V2 PACKETS; FIRST FORMAL ATTEMPT STOPPED BEFORE HOST TURN","qualified_scope":"Explicit packet delivery supported by prior real Host pilot; first formal A17 attempt failed pre-model; no trial eligible","not_qualified":"Full model-visible context, C0/C1/C2 behavior, capability presence behavior, real Skill A/B, P3 invocation-only, provider/model identity, Shadow or production"}
   ],
   "shadow_entry_gate_candidate": [
     {"gate":"A_CORE_AUDITED_FROZEN","status":"SUPPORTED"},
@@ -40,7 +40,8 @@
     {"gate":"F_ROUTING_SEMANTICS","status":"SUPPORTED_SYNTHETIC_SUBSET"},
     {"gate":"G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY","status":"SUPPORTED_BY_REAL_HOST_PILOT"},
     {"gate":"G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF","status":"UNAVAILABLE"},
-    {"gate":"H_SKILL_CAPABILITY_BEHAVIORAL_AB","status":"NOT_TESTED"},
+    {"gate":"H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR","status":"NOT OBSERVED; NO PRESENCE TRIAL COMPLETED"},
+    {"gate":"H2_REAL_SKILL_CAPABILITY_UTILITY","status":"NOT TESTED"},
     {"gate":"I_HOST_MEMORY_CONTAMINATION","status":"UNAVAILABLE"},
     {"gate":"J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY","status":"SUPPORTED_BY_REAL_HOST"},
     {"gate":"J2_PROVIDER_DOLLAR_COST","status":"UNAVAILABLE"},

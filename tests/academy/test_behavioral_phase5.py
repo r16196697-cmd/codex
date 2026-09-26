@@ -31,19 +31,33 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         cls.evaluator = json.loads(EVALUATOR.read_text(encoding="utf-8"))
         cls.result = json.loads(RESULT.read_text(encoding="utf-8"))
 
-    def test_fixture_hash_is_frozen_and_preregistration_has_no_receipts_or_trials(self):
+    def test_first_formal_execution_stopped_on_first_pre_model_failure(self):
         digest = hashlib.sha256(PACKETS.read_bytes()).hexdigest()
         self.assertEqual(digest, self.result["fixture_sha256"])
         self.assertEqual(18, self.packets["packet_count"])
         self.assertEqual("PHASE5_PREREGISTRATION_V2", self.packets["protocol_version"])
         self.assertEqual("PHASE5_PREREGISTRATION_V2", self.result["protocol_version"])
         self.assertEqual("REPLACED BEFORE ANY FORMAL BEHAVIORAL TRIAL", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V1"])
-        self.assertEqual("IN PROGRESS / PREREGISTERED V2", self.result["status"])
+        self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", self.result["status"])
         self.assertEqual(0, self.result["execution_count"])
         self.assertEqual(0, self.result["formal_trial_count"])
-        self.assertEqual(0, self.result["attempted_count"])
+        self.assertEqual(1, self.result["attempted_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
         self.assertFalse(self.result["manual_host_runs_required"])
+        self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["execution_summary"]["matrix_status"])
+        self.assertTrue(self.result["execution_summary"]["first_execution_only"])
+        self.assertEqual(1, self.result["execution_summary"]["attempted_trial_count"])
+        self.assertEqual(0, self.result["execution_summary"]["eligible_formal_trial_count"])
+        self.assertEqual(0, self.result["execution_summary"]["context_completed_count"])
+        self.assertEqual(0, self.result["execution_summary"]["presence_completed_count"])
+        self.assertEqual(0, self.result["execution_summary"]["unique_thread_id_count"])
+        self.assertEqual(0, self.result["execution_summary"]["tool_contaminated_count"])
+        self.assertEqual(1, self.result["execution_summary"]["incomplete_or_pre_model_failure_count"])
+        self.assertEqual("UNCHARACTERIZED", self.result["execution_summary"]["cross_session_memory_confound"])
+        self.assertEqual(["A17"], list(self.result["context_trials"]))
+        self.assertEqual({}, self.result["presence_trials"])
+        self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", self.result["context_trials"]["A17"]["execution_status"])
+        self.assertFalse(self.result["context_trials"]["A17"]["formal_behavioral_trial_eligible"])
 
     def test_official_invocation_and_fixed_order_are_frozen(self):
         expected_command = "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -"
@@ -121,6 +135,7 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
     def test_a17_is_excluded_and_token_usage_is_host_reported_total(self):
         diagnostic = self.result["a17_diagnostic_not_counted"]
         self.assertEqual("BRIDGE_DIAGNOSTIC_NOT_COUNTED", diagnostic["status"])
+        self.assertFalse(self.result["context_trials"]["A17"]["formal_trial_counted"])
         self.assertEqual("HOST_REPORTED_TOTAL_INPUT_TOKENS", diagnostic["usage_basis"])
         self.assertEqual({"input_tokens": 20488, "cached_input_tokens": 7936, "output_tokens": 21, "reasoning_output_tokens": 10}, diagnostic["usage"])
         self.assertEqual("HOST_REPORTED_TOTAL_INPUT_TOKENS", self.result["prior_worktree_liveness_diagnostic"]["usage_basis"])
@@ -137,8 +152,11 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("packet_tokens", json.dumps(self.result).lower())
 
     def test_gates_exposure_and_lifecycle_states_are_consistent(self):
-        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT; FORMAL MATRIX NOT EXECUTED", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT; NO ELIGIBLE FORMAL TRIAL", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
+        self.assertEqual("NOT OBSERVED; NO PRESENCE TRIAL COMPLETED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
+        self.assertEqual("UNAVAILABLE / NOT INDEPENDENTLY VERIFIED", self.result["gates"]["I_HOST_MEMORY_CONTAMINATION"])
         self.assertEqual("SUPPORTED_BY_REAL_HOST", self.result["gates"]["J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["J2_PROVIDER_DOLLAR_COST"])
         self.assertEqual("KNOWN", self.result["exposure_observability"]["explicit_packet_visibility"])
@@ -158,7 +176,9 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("No reliable Host telemetry", synthesis_text)
         phases = {item["phase"]: item["status"] for item in candidates["phases"]}
         self.assertEqual("CLOSED / ACCEPTED", phases["4"])
-        self.assertTrue(phases["5"].startswith("IN PROGRESS / PREREGISTERED V2"))
+        self.assertTrue(phases["5"].startswith("IN PROGRESS / FORMAL MATRIX STOPPED"))
+        self.assertEqual("NOT OBSERVED; NO PRESENCE TRIAL COMPLETED", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("NOT TESTED", candidate_gates["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
         self.assertEqual("NOT STARTED", candidates["shadow"])
         self.assertEqual("NOT STARTED", candidates["production_qualification"])
@@ -172,6 +192,8 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("HOST_MANUAL_EXECUTION_REQUIRED", synthesis + runbook + phase5_doc)
         self.assertNotIn("MANUAL HOST RUNS REQUIRED", synthesis + runbook + phase5_doc)
         self.assertNotIn("manual fresh-chat runs are required", (synthesis + phase5_doc).lower())
+        self.assertIn("CROSS_SESSION_MEMORY_CONFOUND` is `UNCHARACTERIZED", phase5_doc)
+        self.assertIn("STOPPED_ON_PROTOCOL_CONDITION", phase5_doc)
         self.assertIn("fallback artifact", runbook.lower())
 
     def test_runner_serialization_omits_executable_and_capture_absolute_paths(self):

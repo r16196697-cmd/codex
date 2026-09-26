@@ -1,6 +1,6 @@
 # Phase 5 — Controlled Host Behavioral Bridge + Certification Preflight
 
-- Status: `IN PROGRESS / PREREGISTERED V2`
+- Status: `IN PROGRESS / FORMAL MATRIX STOPPED — EXTERNAL REVIEW PENDING`
 - Core Independent Audit: `CLOSED / PASS`
 - Capability Certification: `NOT STARTED`
 - Shadow: `NOT STARTED`
@@ -8,7 +8,7 @@
 
 ## Host execution preflight
 
-The installed local interface reported `codex-cli 0.158.0-alpha.2.1`. Its actual `codex exec --help` exposes non-interactive execution, stdin prompt input, `--ephemeral`, JSONL output, and final-message capture. The frozen official invocation is `PHASE5_OFFICIAL_HOST_INVOCATION_V1`: `codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -`, stdin only, no resume, a fresh thread, and a fresh empty temporary cwd outside the repository with no evaluator or ground-truth files. `--ask-for-approval` is not part of the invocation. The automated Host behavioral bridge is feasible; a real Host pilot supports explicit packet delivery. The formal matrix has not started. Manual fresh-chat instructions remain only as a fallback artifact.
+The installed local interface reported `codex-cli 0.158.0-alpha.2.1`. Its actual `codex exec --help` exposes non-interactive execution, stdin prompt input, `--ephemeral`, JSONL output, and final-message capture. The frozen official invocation is `PHASE5_OFFICIAL_HOST_INVOCATION_V1`: `codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -`, stdin only, no resume, a fresh thread, and a fresh empty temporary cwd outside the repository with no evaluator or ground-truth files. `--ask-for-approval` is not part of the invocation. A prior real Host pilot supports explicit packet delivery. The one formal matrix invocation stopped on A17 with `PRE_MODEL_HOST_INVOCATION_FAILURE` before a thread or Host turn; the remaining packets were not attempted and no retry was made. Manual fresh-chat instructions remain only as a fallback artifact.
 
 The harness hashes and records the exact user packet sent on stdin, its UTF-8 byte and character sizes, and the observed final Host message. This supports exact **explicit packet** provenance. The complete ambient system/custom-instruction/skill context is not attested or fully enumerable by this CLI interface; no claim is made that the packet hash represents every token visible to the model. Ambient Host settings were not changed.
 
@@ -49,7 +49,7 @@ The machine-readable results artifact records one row per trial: explicit task a
 
 The runner writes raw captures only to a temporary directory outside the repository. Persisted Academy results omit the absolute Codex executable and capture-directory paths; capture filenames remain basenames only.
 
-The result records the historical pre-model CLI failure and pilot diagnostics separately; neither is a formal trial. The formal trial count remains zero. A prepared fixture alone is not behavioral evidence. No aggregate score is calculated. No skill utility, model quality gain, cost saving, or Shadow readiness is inferred from a small pilot.
+The first formal execution record contains one attempted packet (A17), zero eligible formal trials, zero completed Context trials, and zero completed Presence trials. The matrix status is `STOPPED_ON_PROTOCOL_CONDITION`. Host Memory contamination remains `NOT INDEPENDENTLY VERIFIED`, so `CROSS_SESSION_MEMORY_CONFOUND` is `UNCHARACTERIZED`. No condition or family aggregate is calculated from this partial execution, and no causal comparison is claimed.
 
 ## Skill certification preflight
 
@@ -66,6 +66,8 @@ No real Skill was selected: the sanitized Phase 1 inventory establishes 136 disc
 - Gate J1 Host total-turn token telemetry: `SUPPORTED_BY_REAL_HOST`.
 - Gate J2 provider dollar cost: `UNAVAILABLE`; Host model identity: `UNAVAILABLE`.
 - Per-exposure token attribution and ambient input composition: `UNAVAILABLE / NOT DECOMPOSABLE`.
+- H1 synthetic capability presence behavior: `NOT OBSERVED`; no Presence trial completed. H2 real Skill capability utility: `NOT TESTED`.
+- Cross-session Memory confound: `UNCHARACTERIZED` because Host Memory contamination is `NOT INDEPENDENTLY VERIFIED`.
 - Nexus Core Hosted MODEL receipt: none created by the external CLI harness.
 
 G1 explicit experiment packet delivery is `SUPPORTED_BY_REAL_HOST_PILOT`. G2 full model-visible context proof is `UNAVAILABLE`; ambient context is held constant but partially observable. Gate H has no completed pilot and no real Skill A/B. No capability may enter `EVALUATED`, `SHADOW`, or `ACTIVE`. `HOST_BASELINE_V1` remains unchanged.
