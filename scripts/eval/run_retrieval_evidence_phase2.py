@@ -154,7 +154,7 @@ def run(*, data_root: Path, journal: Path, results_path: Path = RESULT_PATH, fix
         raise SystemExit("Frozen Phase 2 fixture is missing")
     fixture_bytes = fixture_path.read_bytes()
     fixture = json.loads(fixture_bytes)
-    if not fixture.get("frozen_before_evaluation") or not fixture.get("synthetic_public_only"):
+    if not fixture.get("frozen_before_evaluation") or not fixture.get("synthetic_nonproduction_fixture"):
         raise SystemExit("Phase 2 fixture must be frozen and synthetic-only")
     data_root.mkdir(parents=True, exist_ok=True)
     journal.parent.mkdir(parents=True, exist_ok=True)
@@ -372,6 +372,9 @@ def run(*, data_root: Path, journal: Path, results_path: Path = RESULT_PATH, fix
                 classification_assertion_ref=evidence_class, event_classification_assertion_ref="p2-live-public-search-evidence-event-class",
                 verifier_id=live_verification_id)
             public_search_result = {"status": "RECORDED_THROUGH_HOSTED_EVIDENCE_API", "receipt_count": 1,
+                "observation_source": "CALLER_OBSERVED_HOST_SEARCH",
+                "network_search_executed_by_runner": False, "receipt_persisted_by_runner": True,
+                "reproducibility": "HOST_OBSERVATION_NOT_REPERFORMED_BY_COMMITTED_HARNESS",
                 "receipts": [{"query": query, "source_host": urlparse(source_url).hostname,
                     "evidence_object_id": live_receipt["evidence_id"],
                     "verification_id": live_verification_id,
@@ -514,7 +517,8 @@ def run(*, data_root: Path, journal: Path, results_path: Path = RESULT_PATH, fix
                 "test_only_difference": "trust_anchors replaced with academy-human-root",
                 "other_policy_fields_changed": False, "persistent_default_policy_modified": False},
             "corpus": {"item_count": len(items), "query_count": len(fixture["queries"]),
-                "all_payloads_unique": True, "synthetic_public_only": True,
+                "all_payloads_unique": True, "synthetic_nonproduction_fixture": True,
+                "contains_mixed_test_classifications": True,
                 "candidate_status_counts": {status: list(candidate_status.values()).count(status) for status in sorted(set(candidate_status.values()))},
                 "verification_verdict_counts": counts_by_verdict,
                 "raw_discovered_is_distinct_from_admitted_and_eligible": True},

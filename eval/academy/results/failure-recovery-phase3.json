@@ -1,0 +1,356 @@
+{
+  "blocker_case_count": 0,
+  "case_count": 27,
+  "cases": [
+    {
+      "case_id": "C1_COMMIT_RESPONSE_LOSS",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_committed_object_response_loss_replays_once_after_reopen"
+        }
+      ],
+      "family": "COMMAND_RESPONSE_LOSS",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C2_CHANGED_REQUEST_CONFLICT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_committed_object_response_loss_replays_once_after_reopen"
+        }
+      ],
+      "family": "COMMAND_IDEMPOTENCY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "C3_REOPEN_REPLAY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_trace_state.TraceStateTests.test_reopen_replay_reconstructs_run_projection"
+        }
+      ],
+      "family": "RESTART_PERSISTENCE",
+      "status": "PASS"
+    },
+    {
+      "case_id": "R1_REVOKE_AFTER_COMMIT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_authority_budget.AuthorityBudgetTests.test_classification_exact_replay_after_grant_revocation"
+        },
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_authority_budget.AuthorityBudgetTests.test_principal_revocation_invalidates_every_chain"
+        }
+      ],
+      "family": "AUTHORITY_REVOCATION_REPLAY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "R2_NEW_WORK_AFTER_REVOKE",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_authority_budget.AuthorityBudgetTests.test_principal_revocation_invalidates_every_chain"
+        }
+      ],
+      "family": "AUTHORITY_REVOCATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E1_DETERMINISTIC_COMMIT",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_OUTCOME",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E2_DETERMINISTIC_NOT_COMMITTED",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_OUTCOME",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E3_UNKNOWN_AFTER_POSSIBLE_EXECUTION",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_OUTCOME",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E4_RECONCILE_COMMITTED",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_RECONCILIATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E5_RECONCILE_NOT_COMMITTED",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_RECONCILIATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E6_RECONCILE_INCONCLUSIVE",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_fake_dispatch_outcomes_reconcile_without_blind_retry"
+        }
+      ],
+      "family": "EFFECT_RECONCILIATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E7_UNKNOWN_RECONCILE_COMPENSATE",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_unknown_effect_is_reconciled_without_retry_and_compensation_is_independent"
+        }
+      ],
+      "family": "EFFECT_UNKNOWN_RECONCILIATION_COMPENSATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "E8_COMMIT_GATE_NO_DISPATCH",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_deterministic_runtime.DeterministicRuntimeTests.test_effect_commit_revalidates_payload_bound_approval_and_revocation"
+        }
+      ],
+      "family": "EFFECT_AUTHORITY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "D1_HOSTED_SETUP_COMPENSATION",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_hosted_bridge.HostedBridgeTests.test_hosted_setup_intent_recovers_after_revoke_and_reopen_without_duplicate_mutations"
+        }
+      ],
+      "family": "COMPENSATION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "P1_ACTIVE_BARRIER_DENIAL",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_purge_barrier_persists_and_blocks_derived_writes"
+        }
+      ],
+      "family": "PURGE_BARRIER",
+      "status": "PASS"
+    },
+    {
+      "case_id": "P2_ACTIVE_RUN_HOLD",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_memory_purge.MemoryPurgeTests.test_barrier_stays_partial_for_active_run_and_unknown_effect"
+        }
+      ],
+      "family": "PURGE_DEPENDENCY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "P3_PURGE_DOMINATES_REPLAY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_memory_purge.MemoryPurgeTests.test_proof_purge_redacts_governed_derivatives_and_replay_results"
+        }
+      ],
+      "family": "PURGE_REPLAY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "P4_OLD_SNAPSHOT_RECOVERY",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_memory_purge.MemoryPurgeTests.test_old_snapshot_recovery_replays_purge_ledger_before_normal"
+        },
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_memory_purge.MemoryPurgeTests.test_purge_backup_restore_replays_external_ledger_without_resurrection"
+        }
+      ],
+      "family": "OLD_SNAPSHOT_RESTORE",
+      "status": "PASS"
+    },
+    {
+      "case_id": "J1_STALE_JOURNAL",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_ordinary_startup_forces_recovery_when_external_journal_is_ahead"
+        }
+      ],
+      "family": "JOURNAL_REPLAY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "J2_CORRUPT_JOURNAL",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_ordinary_startup_fails_closed_on_journal_corruption"
+        }
+      ],
+      "family": "CONTROL_PLANE_CORRUPTION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "J3_MISSING_TRUNCATED_JOURNAL",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_ordinary_startup_fails_closed_on_journal_truncation_or_missing_file"
+        }
+      ],
+      "family": "CONTROL_PLANE_CORRUPTION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "J4_JOURNAL_IDENTITY_MISMATCH",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.academy.test_failure_recovery_phase3.FailureRecoveryPhase3Tests.test_journal_identity_mismatch_forces_recovery"
+        }
+      ],
+      "family": "JOURNAL_REPLAY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "I1_FOUR_MODE_MATRIX",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_runtime_modes.RuntimeModeTests.test_four_mode_policy_matrix_fails_closed"
+        }
+      ],
+      "family": "RUNTIME_MODE",
+      "status": "PASS"
+    },
+    {
+      "case_id": "I2_MODE_API_RESTART",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_runtime_modes.RuntimeModeTests.test_safe_and_stateless_are_enforced_at_memory_trace_and_egress_apis"
+        },
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_runtime_modes.RuntimeModeTests.test_recovery_mode_cannot_be_exited_by_ordinary_set_mode"
+        },
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_runtime_modes.RuntimeModeTests.test_mode_persists_when_store_is_reopened"
+        }
+      ],
+      "family": "RUNTIME_MODE",
+      "status": "PASS"
+    },
+    {
+      "case_id": "K1_PAYLOAD_HASH_MISMATCH",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_byte_tampering_and_missing_payload_never_verify"
+        }
+      ],
+      "family": "INTEGRITY_RECOVERY",
+      "status": "PASS"
+    },
+    {
+      "case_id": "K2_UNKNOWN_SCHEMA",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_object_store.ObjectStoreTests.test_unknown_schema_version_is_rejected_as_unsupported"
+        }
+      ],
+      "family": "CONTROL_PLANE_CORRUPTION",
+      "status": "PASS"
+    },
+    {
+      "case_id": "L1_RESTART_PROJECTION",
+      "evidence_tests": [
+        {
+          "status": "PASS",
+          "test_id": "tests.integration.test_trace_state.TraceStateTests.test_reopen_replay_reconstructs_run_projection"
+        }
+      ],
+      "family": "RESTART_PERSISTENCE",
+      "status": "PASS"
+    }
+  ],
+  "detected_corruption_case_count": 3,
+  "duplicate_mutation_count": 0,
+  "duplicate_synthetic_external_effect_count": 0,
+  "evidence_test_count": 23,
+  "evidence_test_status_counts": {
+    "ERROR": 0,
+    "FAIL": 0,
+    "PASS": 23,
+    "SKIP": 0
+  },
+  "execution_mode": "SYNTHETIC_EXISTING_CORE_INTEGRATION_TESTS",
+  "expected_fail_closed_count": 27,
+  "failure_injection_semantics": "SIMULATED_CRASH_BOUNDARY; temporary test roots and explicit close/reopen/fault hooks, not OS power-loss",
+  "fixture_id": "academy-failure-recovery-phase3-v2",
+  "fixture_sha256": "707952f433fe6081bf3ca823bfd7f46c95785888985e00d8bca349f1823e0541",
+  "host_configuration_changed": false,
+  "host_configuration_observation": {
+    "chatgpt_primary_memory": "OFF",
+    "cross_session_effect_while_primary_memory_off": "NOT_INDEPENDENTLY_VERIFIED",
+    "custom_instructions": "ON / UNCHANGED",
+    "global_agents_md": "UNCHANGED",
+    "model_behavioral_evaluation": "NOT RUN; Host native Memory not an input to recovery qualification",
+    "project_experience_curator": "UNCHANGED / DISCOVERED / UNEVALUATED",
+    "tool_chat_memory_generation": "ON_FORCED / USER_NOT_CONTROLLABLE"
+  },
+  "inconclusive_case_count": 0,
+  "observed_fail_closed_count": 27,
+  "passed_case_count": 27,
+  "physical_durability": "NOT FULLY QUALIFIED; Windows run does not execute POSIX directory-fsync path or power-cut tests",
+  "purged_identifier_reexposure_count": 0,
+  "recovery_inconclusive_count": 0,
+  "recovery_success_count": 1,
+  "schema_version": 1,
+  "temporary_data_policy": "isolated per-test TemporaryDirectory under a fresh Academy scratch root; no DB/journal committed",
+  "unauthorized_new_mutation_after_revocation_count": 0,
+  "undetected_corruption_case_count": 0,
+  "unexpected_normal_entry_count": 0
+}

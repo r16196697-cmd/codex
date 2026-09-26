@@ -30,7 +30,8 @@
     "item_count": 18,
     "query_count": 14,
     "raw_discovered_is_distinct_from_admitted_and_eligible": true,
-    "synthetic_public_only": true,
+    "synthetic_nonproduction_fixture": true,
+    "contains_mixed_test_classifications": true,
     "verification_verdict_counts": {
       "INCONCLUSIVE": 1,
       "PASS": 17
@@ -91,7 +92,7 @@
   },
   "execution_mode": "SYNTHETIC_DETERMINISTIC_ONLY",
   "fixture_id": "academy-phase2-synthetic-corpus-v1",
-  "fixture_sha256": "c913ff262674e133cde63f0333421cf2828e3d8fe218eec5d91148412fa5d081",
+  "fixture_sha256": "291fc3c7e73c3c0eaea080ced0a1177e62d529ca39d98f2ed3af6028e490abc9",
   "host_configuration_observation": {
     "chatgpt_primary_memory": "OFF",
     "cross_session_effect_while_primary_memory_off": "NOT_INDEPENDENTLY_VERIFIED",
@@ -1081,8 +1082,12 @@
   },
   "real_public_search": {
     "execution_source": "CODEX_HOST_DECLARED",
+    "network_search_executed_by_runner": false,
+    "observation_source": "CALLER_OBSERVED_HOST_SEARCH",
     "provider_model_request_id": "UNAVAILABLE",
     "receipt_count": 1,
+    "receipt_persisted_by_runner": true,
+    "reproducibility": "HOST_OBSERVATION_NOT_REPERFORMED_BY_COMMITTED_HARNESS",
     "receipts": [
       {
         "evidence_object_id": "p2-live-public-search-evidence",

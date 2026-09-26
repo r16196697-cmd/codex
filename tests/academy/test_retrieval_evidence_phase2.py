@@ -19,7 +19,9 @@ class RetrievalEvidencePhase2Tests(unittest.TestCase):
     def test_fixture_is_fixed_and_ground_truth_is_separate(self):
         fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
         self.assertTrue(fixture["frozen_before_evaluation"])
-        self.assertTrue(fixture["synthetic_public_only"])
+        self.assertTrue(fixture["synthetic_nonproduction_fixture"])
+        self.assertTrue(fixture["contains_mixed_test_classifications"])
+        self.assertIn("PERSONAL", {item["classification"] for item in fixture["items"]})
         self.assertEqual(len(fixture["items"]), 18)
         self.assertEqual(len(fixture["queries"]), 14)
         self.assertEqual(len(fixture["query_robustness_probes"]), 9)
@@ -80,6 +82,11 @@ class RetrievalEvidencePhase2Tests(unittest.TestCase):
         result = json.loads(RESULT.read_text(encoding="utf-8"))
         self.assertEqual(result["real_public_search"]["receipt_count"], 1)
         self.assertEqual(result["real_public_search"]["status"], "RECORDED_THROUGH_HOSTED_EVIDENCE_API")
+        self.assertEqual(result["real_public_search"]["observation_source"], "CALLER_OBSERVED_HOST_SEARCH")
+        self.assertFalse(result["real_public_search"]["network_search_executed_by_runner"])
+        self.assertTrue(result["real_public_search"]["receipt_persisted_by_runner"])
+        self.assertEqual(result["real_public_search"]["reproducibility"],
+            "HOST_OBSERVATION_NOT_REPERFORMED_BY_COMMITTED_HARNESS")
         self.assertEqual(result["real_public_search"]["execution_source"], "CODEX_HOST_DECLARED")
         self.assertEqual(result["real_public_search"]["provider_model_request_id"], "UNAVAILABLE")
         self.assertTrue(all(not row["raw_url_and_excerpt_in_committed_result"]

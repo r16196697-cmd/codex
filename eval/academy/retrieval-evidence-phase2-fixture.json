@@ -2,7 +2,8 @@
   "fixture_id": "academy-phase2-synthetic-corpus-v1",
   "schema_version": 1,
   "frozen_before_evaluation": true,
-  "synthetic_public_only": true,
+  "synthetic_nonproduction_fixture": true,
+  "contains_mixed_test_classifications": true,
   "items": [
     {"id":"retention-current-14d","claim":"The current synthetic archive retention window is fourteen days.","eligibility":"ADMITTED","classification":"PUBLIC","verification":"T3_TWO_INDEPENDENT","source_facts":[{"source_id":"primary-policy-a","source_type":"PRIMARY_SYNTHETIC","authority_class":"AUTHORITATIVE_SYNTHETIC","observed_at":"2026-09-20T00:00:00Z","freshness":"FRESH","independence_group":"org-a"},{"source_id":"primary-policy-b","source_type":"PRIMARY_SYNTHETIC","authority_class":"AUTHORITATIVE_SYNTHETIC","observed_at":"2026-09-21T00:00:00Z","freshness":"FRESH","independence_group":"org-b"}],"relevance":["q-current-retention","q-composition","q-retention-broad"]},
     {"id":"retention-alias-fortnight","claim":"A fortnight is the current synthetic archive retention period.","eligibility":"ADMITTED","classification":"PUBLIC","verification":"T3_TWO_INDEPENDENT","source_facts":[{"source_id":"primary-alias","source_type":"PRIMARY_SYNTHETIC","authority_class":"AUTHORITATIVE_SYNTHETIC","observed_at":"2026-09-21T00:00:00Z","freshness":"FRESH","independence_group":"org-c"},{"source_id":"secondary-alias-confirmation","source_type":"SECONDARY_SYNTHETIC","authority_class":"CORROBORATING_SYNTHETIC","observed_at":"2026-09-22T00:00:00Z","freshness":"FRESH","independence_group":"org-d"}],"relevance":["q-current-retention","q-alias-fortnight","q-retention-broad"]},
