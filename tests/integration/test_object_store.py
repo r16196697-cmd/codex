@@ -10,12 +10,17 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from unittest import mock
+from datetime import datetime, timedelta, timezone
 
 from jsonschema import ValidationError
 
 from adapters.storage import ObjectStore
+from kernel.authority import AuthorityService
+from kernel.budget import BudgetService
 from kernel.purge import PurgeService
 from kernel.purge.journal import IndependentPurgeJournal
+from kernel.run import TraceRuntime
+from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
 from kernel.runtime import RuntimeModeService
 from kernel.runtime.inspect import InspectService
@@ -237,12 +242,12 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             watermark = conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
             self.assertEqual((watermark[0], watermark[1], watermark[2]), (self.store.independent_purge_journal.identity, 0, "0" * 64))
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows][-5:], [(16, "0016_purge_replay_commitments_and_task_provenance.sql", 64), (17, "0017_governed_reference_redaction.sql", 64), (18, "0018_scheduler_setup_request_binding.sql", 64), (19, "0019_independent_purge_journal_watermark.sql", 64), (20, "0020_known_schema_purge_guards.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows][-6:], [(16, "0016_purge_replay_commitments_and_task_provenance.sql", 64), (17, "0017_governed_reference_redaction.sql", 64), (18, "0018_scheduler_setup_request_binding.sql", 64), (19, "0019_independent_purge_journal_watermark.sql", 64), (20, "0020_known_schema_purge_guards.sql", 64), (21, "0021_canonical_purge_resource_redaction.sql", 64)])
             self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
             kernel = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id='nexus-core-recovery'").fetchone()
             self.assertEqual(tuple(kernel), ("SERVICE", "ACTIVE"))
@@ -254,7 +259,7 @@ raise SystemExit(0)
 
     def test_v14_database_guards_recovery_identity_from_ordinary_authority_rows(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             grant_values = ("direct-recovery-grant", None, "test_actor", "nexus-core-recovery", "[]", "[]", "[]", "[]", "2026-09-26T00:00:00Z", "2026-09-27T00:00:00Z", "ACTIVE", "1", None)
             sql = "INSERT INTO delegation_grants(grant_id,parent_grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version,credential_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
@@ -298,7 +303,7 @@ raise SystemExit(0)
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=14").fetchone()[0], "0014_kernel_recovery_identity_isolation.sql")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=15").fetchone()[0], "0015_kernel_recovery_identity_preexisting_guard.sql")
@@ -311,10 +316,10 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
-                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,21)))
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,22)))
         finally:
             upgraded.close()
 
@@ -324,11 +329,219 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-                self.assertEqual(tuple(row), (20, "0020_known_schema_purge_guards.sql"))
+                self.assertEqual(tuple(row), (21, "0021_canonical_purge_resource_redaction.sql"))
+        finally:
+            upgraded.close()
+
+    def test_pre_v20_task_contract_and_manifest_put_commands_replay_after_v19_upgrade(self) -> None:
+        """A v19 committed inner put survives the v20 known-ref hash change."""
+        self.store.close()
+        database_path = self._historical_database(19, "v19-put-object-replay")
+        data_root = database_path.parent
+        now = "2026-09-26T00:00:00+00:00"
+        input_id = "v19-replay-input"
+        contract_id = "v19-replay-contract"
+        manifest_id = "v19-replay-manifest"
+        contract_command = "v19-bind-contract-object"
+        manifest_command = "v19-bind-manifest-object"
+        input_payload = b"v19 replay input"
+        contract = {
+            "schema_id":"nexus.task_contract", "schema_version":1, "task_id":"v19-task",
+            "requester_id":"v19-human", "goal":"replay exact committed put", "constraints":[],
+            "input_object_refs":[input_id], "open_questions":[], "success_criteria":["preserve the commit"],
+            "risk_class":"LOW", "budget_account_ref":"v19-budget",
+            "routing_constraints":{"allowed_providers":[],"forbidden_providers":[],"locality":"ANY","network_required":False,"modalities":[]},
+            "routing_preferences":{"optimize_for":"BALANCED"}, "created_at":now,
+        }
+        manifest = {
+            "schema_id":"nexus.run_manifest", "schema_version":1, "executor_kind":"ORCHESTRATOR",
+            "runtime_version":"v19", "policy_version":"1", "schema_versions":{"nexus.run_manifest":1},
+            "input_object_refs":[input_id], "authority_grant_ref":"v19-grant", "budget_reservation_ref":"v19-reservation",
+            "data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},
+            "classification_assertion_ref":"v19-run-class", "task_contract_ref":contract_id,
+            "dag_version":"v1", "scheduler_version":"v1",
+        }
+
+        def seed_object(conn, object_id, object_type, payload, run_id, class_id):
+            digest = hashlib.sha256(payload).hexdigest()
+            relative = f"objects/sha256/{digest[:2]}/{digest}"
+            path = data_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES(?, 'OBJECT', ?,'PUBLIC','[]','1','v19 fixture','v19-actor')", (class_id, object_id))
+            conn.execute("INSERT INTO objects(object_id) VALUES(?)", (object_id,))
+            conn.execute("INSERT INTO object_envelopes(object_id,object_type,schema_id,schema_version,payload_uri,hash_profile_ref,hash_profile_version,integrity_hash,semantic_hash,created_by_run,classification_assertion_ref,created_at) VALUES(?,?, 'nexus.object',1,?,'raw-sha256',1,?,NULL,?,?,?)", (object_id, object_type, relative, digest, run_id, class_id, now))
+            conn.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES(?,NULL,'ACTIVE','VALID','AVAILABLE')", (object_id,))
+            return digest
+
+        with closing(sqlite3.connect(database_path)) as legacy:
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('v19-actor','HUMAN','ACTIVE')")
+            # Run rows are only needed by the manifest object. Foreign keys are
+            # disabled on this offline fixture writer, while the upgraded
+            # runtime still validates all object/command projections.
+            legacy.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('v19-run-class','RUN','v19-child','PUBLIC','[]','1','v19 fixture','v19-actor')")
+            legacy.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('v19-child','v19-task',NULL,'v19-root','MODEL','CREATED','v19-grant',NULL,'v19-reservation',?,'v19-run-class',?)", (json.dumps(manifest["data_boundary"],sort_keys=True,separators=(",",":")), now))
+            seed_object(legacy, input_id, "artifact", input_payload, "v19-root", "v19-input-class")
+            contract_payload = json.dumps(contract,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
+            contract_digest = seed_object(legacy, contract_id, "task_contract", contract_payload, "v19-root", "v19-contract-class")
+            manifest_payload = json.dumps(manifest,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
+            manifest_digest = seed_object(legacy, manifest_id, "run_manifest", manifest_payload, "v19-child", "v19-manifest-class")
+            legacy.execute("INSERT INTO object_relations(from_id,relation_type,to_id) VALUES(?, 'derived_from', ?)", (manifest_id, input_id))
+            for command_id, object_id, digest, object_type, run_id, class_id, payload, sources in (
+                (contract_command, contract_id, contract_digest, "task_contract", "v19-root", "v19-contract-class", contract_payload, []),
+                (manifest_command, manifest_id, manifest_digest, "run_manifest", "v19-child", "v19-manifest-class", manifest_payload, [input_id]),
+            ):
+                request = {"payload_integrity_hash":digest,"object_id":object_id,"object_type":object_type,
+                    "created_by_run":run_id,"classification_assertion_ref":class_id,"derived_from":sources}
+                request_hash = self.store._request_hash("put_object", request)
+                result = json.dumps({"object_id":object_id},sort_keys=True,separators=(",",":"))
+                legacy.execute("INSERT INTO command_ledger(command_id,operation,request_hash,result_json,status,created_at,result_commitment,result_state) VALUES(?,'put_object',?,?, 'SUCCEEDED',?,?,'LIVE')", (command_id,request_hash,result,now,hashlib.sha256(result.encode()).hexdigest()))
+            legacy.commit()
+
+        upgraded = ObjectStore(data_root)
+        try:
+            self.assertEqual(upgraded.put_object(command_id=contract_command,object_id=contract_id,payload=contract_payload,
+                object_type="task_contract",created_by_run="v19-root",classification_assertion_ref="v19-contract-class"), contract_id)
+            self.assertEqual(upgraded.put_object(command_id=manifest_command,object_id=manifest_id,payload=manifest_payload,
+                object_type="run_manifest",created_by_run="v19-child",classification_assertion_ref="v19-manifest-class"), manifest_id)
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id IN (?,?)",(contract_id,manifest_id)).fetchone()[0],2)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM object_relations WHERE from_id=? AND relation_type='derived_from'",(manifest_id,)).fetchone()[0],1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id IN (?,?)",(contract_command,manifest_command)).fetchone()[0],2)
+                contract_hash = conn.execute("SELECT request_hash FROM command_ledger WHERE command_id=?",(contract_command,)).fetchone()[0]
+                changed = {**contract,"goal":"changed payload"}
+                with self.assertRaises(CommandConflict):
+                    upgraded.put_object(command_id=contract_command,object_id=contract_id,payload=json.dumps(changed,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode(),
+                        object_type="task_contract",created_by_run="v19-root",classification_assertion_ref="v19-contract-class")
+                with self.assertRaises(CommandConflict):
+                    upgraded.put_object(command_id=contract_command,object_id="different-object-id",payload=contract_payload,
+                        object_type="task_contract",created_by_run="v19-root",classification_assertion_ref="v19-contract-class")
+                self.assertEqual(conn.execute("SELECT request_hash FROM command_ledger WHERE command_id=?",(contract_command,)).fetchone()[0], contract_hash)
+                self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='v19-bind-contract-outer' ").fetchone())
+        finally:
+            upgraded.close()
+
+    def test_v19_inner_task_contract_put_commit_with_missing_outer_bind_replays_after_upgrade(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(19, "v19-partial-task-contract-bind")
+        data_root = database_path.parent
+        migration_dir = data_root.parent / "v19-partial-task-contract-bind-migrations"
+        policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
+        policy["trust_anchors"] = ["human-root"]
+        old_store = ObjectStore(data_root, migrations_dir=migration_dir)
+        now = datetime.now(timezone.utc)
+        issued = now.isoformat()
+        expires = (now + timedelta(days=30)).isoformat()
+        try:
+            authority = AuthorityService(old_store, policy)
+            budget = BudgetService(old_store)
+            trace = TraceRuntime(old_store, authority)
+            runtime = DeterministicRuntime(old_store, authority, budget, trace)
+            for principal_id, principal_type in (("human-root","HUMAN"),("agent","SERVICE")):
+                authority.register_principal({"schema_id":"nexus.principal","schema_version":1,"principal_id":principal_id,"principal_type":principal_type,"status":"ACTIVE"}, "v19-principal-"+principal_id)
+            authority.register_trust_anchor({"schema_id":"nexus.trust_anchor","schema_version":1,"anchor_id":"v19-anchor","principal_id":"human-root","policy_ref":"1"}, "v19-anchor-command")
+            authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"v19-root-grant","issued_by":"human-root","granted_to":"agent","task_scope":["v19-task"],"resource_scope":["v19-root"],"action_scope":["RUN_CREATE","RUN_TRANSITION","TRACE_APPEND","OBJECT_WRITE"],"audience_scope":["nexus-runtime"],"issued_at":issued,"expires_at":expires,"status":"ACTIVE","policy_version":"1"}, "v19-root-grant-command")
+            task = {"schema_id":"nexus.task","schema_version":1,"task_id":"v19-task","requester_id":"human-root","status":"CREATED","created_at":issued,"command_id":"v19-task-command"}
+            trace.create_task(task)
+            budget.create_account(command_id="v19-budget-command",account_id="v19-budget",task_id="v19-task",amount_limit=10,unit="credits",model_call_limit=0,tool_call_limit=0,child_run_limit=0)
+            boundary = {"allowed_classifications":["PUBLIC"],"handling_tags":[]}
+            with old_store._connection() as conn:
+                conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('v19-root-run-class','RUN','v19-root','PUBLIC','[]','1','fixture','agent')")
+                conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('v19-root-create-class','TRACE_EVENT','evt-v19-root-create','PUBLIC','[]','1','fixture','agent')")
+            run = {"schema_id":"nexus.run","schema_version":1,"run_id":"v19-root","task_id":"v19-task","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"v19-root-grant","data_boundary":boundary,"classification_assertion_ref":"v19-root-run-class","created_at":issued}
+            trace.create_run(run,command_id="v19-root-create",event_classification_assertion_ref="v19-root-create-class")
+            with old_store._connection() as conn:
+                conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('v19-input-class','OBJECT','v19-replay-input','PUBLIC','[]','1','fixture','agent')")
+            old_store.put_object(command_id="v19-input-command",object_id="v19-replay-input",payload=b"v19 governed input",object_type="artifact",created_by_run="v19-root",classification_assertion_ref="v19-input-class")
+            contract = {"schema_id":"nexus.task_contract","schema_version":1,"task_id":"v19-task","requester_id":"human-root","goal":"complete a previously interrupted bind","constraints":[],"input_object_refs":["v19-replay-input"],"open_questions":[],"success_criteria":["replay exact historical inner write"],"risk_class":"LOW","budget_account_ref":"v19-budget","routing_constraints":{"allowed_providers":[],"forbidden_providers":[],"locality":"ANY","network_required":False,"modalities":[]},"routing_preferences":{"optimize_for":"BALANCED"},"created_at":issued}
+            contract_bytes = json.dumps(contract,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode()
+            contract_hash = hashlib.sha256(contract_bytes).hexdigest()
+            with old_store._connection() as conn:
+                conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('v19-contract-class','OBJECT','v19-contract','PUBLIC','[]','1','fixture','agent')")
+                rel = f"objects/sha256/{contract_hash[:2]}/{contract_hash}"
+                payload_path = data_root / rel
+                payload_path.parent.mkdir(parents=True,exist_ok=True)
+                payload_path.write_bytes(contract_bytes)
+                conn.execute("INSERT INTO objects(object_id) VALUES('v19-contract')")
+                conn.execute("INSERT INTO object_envelopes(object_id,object_type,schema_id,schema_version,payload_uri,hash_profile_ref,hash_profile_version,integrity_hash,semantic_hash,created_by_run,classification_assertion_ref,created_at) VALUES('v19-contract','task_contract','nexus.object',1,?,'raw-sha256',1,?,NULL,'v19-root','v19-contract-class',?)", (rel,contract_hash,issued))
+                conn.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES('v19-contract',NULL,'ACTIVE','VALID','AVAILABLE')")
+                old_request = {"payload_integrity_hash":contract_hash,"object_id":"v19-contract","object_type":"task_contract","created_by_run":"v19-root","classification_assertion_ref":"v19-contract-class","derived_from":[]}
+                legacy_hash = old_store._request_hash("put_object",old_request)
+                result_json = json.dumps({"object_id":"v19-contract"},sort_keys=True,separators=(",",":"))
+                conn.execute("INSERT INTO command_ledger(command_id,operation,request_hash,result_json,status,created_at,result_commitment,result_state) VALUES('v19-bind-contract-object','put_object',?,?,'SUCCEEDED',?,?,'LIVE')", (legacy_hash,result_json,issued,hashlib.sha256(result_json.encode()).hexdigest()))
+            with old_store._connection() as conn:
+                self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id='v19-bind-contract'").fetchone())
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM object_relations WHERE from_id='v19-contract'").fetchone()[0],0)
+        finally:
+            old_store.close()
+
+        upgraded = ObjectStore(data_root)
+        try:
+            authority = AuthorityService(upgraded, policy)
+            budget = BudgetService(upgraded)
+            trace = TraceRuntime(upgraded, authority)
+            runtime = DeterministicRuntime(upgraded, authority, budget, trace)
+            revision = runtime.bind_task_contract(command_id="v19-bind-contract",root_run_id="v19-root",contract_object_id="v19-contract",classification_assertion_ref="v19-contract-class",contract=contract)
+            self.assertEqual(revision,1)
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],21)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id='v19-contract'").fetchone()[0],1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='v19-bind-contract-object'").fetchone()[0],1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='v19-bind-contract'").fetchone()[0],1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM logical_refs WHERE ref_id='task-contract:v19-task' AND current_object_id='v19-contract'").fetchone()[0],1)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM object_relations WHERE from_id='v19-contract'").fetchone()[0],0)
+            self.assertEqual(runtime.bind_task_contract(command_id="v19-bind-contract",root_run_id="v19-root",contract_object_id="v19-contract",classification_assertion_ref="v19-contract-class",contract=contract),1)
+        finally:
+            upgraded.close()
+
+    def test_persisted_v20_canonical_approval_residue_is_redacted_during_v21_upgrade(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(20, "persisted-v20-canonical-residue")
+        now = "2026-09-26T00:00:00+00:00"
+        with closing(sqlite3.connect(database_path)) as legacy:
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('audit-human','HUMAN','ACTIVE')")
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('legacy-agent','SERVICE','ACTIVE')")
+            legacy.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('legacy-task','audit-human','ACTIVE',?,'legacy-task-command',NULL)", (now,))
+            legacy.execute("INSERT INTO delegation_grants(grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version) VALUES('legacy-grant','audit-human','legacy-agent','[\"legacy-task\"]','[]','[]','[\"nexus-runtime\"]',?,?,'ACTIVE','1')", (now,"2027-09-26T00:00:00+00:00"))
+            legacy.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('legacy-run-class','RUN','legacy-run','PUBLIC','[]','1','legacy fixture','legacy-agent')")
+            legacy.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('legacy-run','legacy-task',NULL,NULL,'ORCHESTRATOR','SUCCEEDED','legacy-grant',NULL,NULL,'{\"allowed_classifications\":[\"PUBLIC\"],\"handling_tags\":[]}','legacy-run-class',?)", (now,))
+            legacy.execute("INSERT INTO budget_accounts(account_id,task_id,amount_limit,unit,model_call_limit,tool_call_limit,child_run_limit) VALUES('legacy-account','legacy-task',1,'credits',0,1,1)")
+            legacy.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,tool_calls,child_runs,state,command_id,created_at) VALUES('legacy-reservation','legacy-account','legacy-run',0,1,1,'CONSUMED','legacy-reservation-command',?)", (now,))
+            legacy.execute("INSERT INTO objects(object_id) VALUES('legacy-purged-object')")
+            legacy.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES('legacy-purged-object',NULL,'ACTIVE','VALID','AVAILABLE')")
+            legacy.execute("INSERT INTO objects(object_id) VALUES('legacy-live-payload')")
+            legacy.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES('legacy-live-payload',NULL,'ACTIVE','VALID','AVAILABLE')")
+            legacy.execute("INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES('legacy-canonical-target','audit-human','TEST','object:legacy-purged-object',NULL,NULL,'APPROVE','[]','1',?,NULL,NULL,NULL)", (now,))
+            legacy.execute("INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES('legacy-canonical-scope','audit-human','TEST','external-target',NULL,NULL,'APPROVE','[\"object:legacy-purged-object\",\"external-target\"]','1',?,NULL,NULL,NULL)", (now,))
+            legacy.execute("INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES('legacy-canonical-request','audit-human','TEST','external-target',NULL,NULL,'APPROVE','[\"external-target\"]','1',?,NULL,NULL,'object:legacy-purged-object')", (now,))
+            legacy.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES('legacy-canonical-effect','legacy-run','legacy-tool','1','WRITE','object:legacy-purged-object',?,'legacy-live-payload','legacy-effect-key','legacy-grant',NULL,'legacy-reservation','FINISHED','NOT_COMMITTED','RESOLVED','legacy-target-receipt',? ,?,?)", ("1"*64,json.dumps({"target_ref":"object:legacy-purged-object","payload_object_ref":"legacy-live-payload"},sort_keys=True,separators=(",",":")),now,now))
+            legacy.execute("UPDATE object_states SET lifecycle='RETIRED',validity='INVALIDATED',payload_state='PURGED' WHERE object_id='legacy-purged-object'")
+            legacy.commit()
+        upgraded = ObjectStore(database_path.parent)
+        try:
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                rows = {row["approval_id"]:dict(row) for row in conn.execute("SELECT * FROM approval_decisions WHERE approval_id LIKE 'legacy-canonical-%'")}
+                self.assertEqual(rows["legacy-canonical-target"]["target_ref"], "REDACTED_PURGED")
+                self.assertEqual(rows["legacy-canonical-scope"]["approved_scope_json"], '["external-target"]')
+                self.assertEqual(rows["legacy-canonical-scope"]["target_ref"], "external-target")
+                self.assertIsNone(rows["legacy-canonical-request"]["request_ref"])
+                effect = dict(conn.execute("SELECT target_ref,payload_object_ref,payload_integrity_hash,idempotency_key,external_receipt_ref,effect_json FROM effects WHERE effect_id='legacy-canonical-effect'").fetchone())
+                self.assertEqual(effect["target_ref"], "REDACTED_PURGED")
+                self.assertEqual(effect["payload_object_ref"], "legacy-live-payload")
+                self.assertEqual(effect["payload_integrity_hash"], "1"*64)
+                self.assertEqual(effect["idempotency_key"], "legacy-effect-key")
+                self.assertIsNone(effect["external_receipt_ref"])
+                self.assertNotIn("legacy-purged-object", effect["effect_json"])
+                self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id='legacy-live-payload'").fetchone()[0], "AVAILABLE")
+                self.assertNotIn("legacy-purged-object", json.dumps(list(rows.values())))
+                self.assertNotIn("object:legacy-purged-object", json.dumps(list(rows.values())))
         finally:
             upgraded.close()
 
@@ -338,10 +551,10 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
-                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,21)))
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,22)))
         finally:
             upgraded.close()
 
@@ -446,19 +659,19 @@ raise SystemExit(0)
             self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
             with reopened._recovery_maintenance():
                 with reopened._connection() as conn:
-                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
                     self.assertIsNone(conn.execute("SELECT 1 FROM independent_purge_journal_watermark WHERE singleton=1").fetchone())
         finally:
             reopened.close()
 
-    def test_v6_snapshot_replays_v7_through_v20_migrations_deterministically(self) -> None:
+    def test_v6_snapshot_replays_v7_through_v21_migrations_deterministically(self) -> None:
         self.store.close()
         database_path = self._historical_database(6, "persisted-v6")
         self.store = ObjectStore(database_path.parent)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (20, "0020_known_schema_purge_guards.sql"))
+            self.assertEqual(tuple(row), (21, "0021_canonical_purge_resource_redaction.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
@@ -496,7 +709,7 @@ raise SystemExit(0)
         self.store = ObjectStore(database_path.parent)
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             self.assertIsNone(migrated["task_id"])

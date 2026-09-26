@@ -581,7 +581,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.trace = TraceRuntime(self.store, AuthorityService(self.store, self.policy))
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 20)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE actor_id='nexus-core-recovery'").fetchone()[0], 2)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery' AND subject_type='TRACE_EVENT'").fetchone()[0], 2)

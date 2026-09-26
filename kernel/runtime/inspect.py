@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from kernel.runtime.errors import RuntimeDenied
+from kernel.object_refs import resolve_governed_object_resource
 from kernel.runtime.modes import RuntimeModeService
 
 
@@ -96,7 +97,10 @@ class InspectService:
         if not object_id:
             return False
         with self.store._connection() as conn:
-            row = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (object_id,)).fetchone()
+            resolved = resolve_governed_object_resource(conn, object_id)
+            if resolved is None:
+                return False
+            row = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (resolved,)).fetchone()
         return bool(row and row["payload_state"] == "PURGED")
 
     def task(self, *, grant_id: str, task_id: str) -> dict[str, Any]:

@@ -9,14 +9,14 @@ import re
 import sqlite3
 import tempfile
 import threading
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from kernel.object_refs import known_object_refs
+from kernel.object_refs import known_object_refs, redact_governed_object_values, resolve_governed_object_resource
 from kernel.object.errors import (
     CommandConflict,
     ConcurrentModification,
@@ -193,6 +193,10 @@ class ObjectStore:
             lambda: int(getattr(self._purge_redaction_local, "depth", 0) > 0),
         )
         conn.create_function("nexus_exact_purge_json", 2, self._exact_purge_json)
+        conn.create_function("nexus_redact_purge_json", 1, self._redact_purge_json)
+        conn.create_function("nexus_purge_scope_json", 1, self._purge_scope_json)
+        conn.create_function("nexus_effect_purge_json", 5, self._effect_purge_json)
+        conn.create_function("nexus_redact_effect_json", 4, self._redact_effect_json)
         conn.set_authorizer(self._sqlite_authorizer)
         return conn
 
@@ -215,17 +219,63 @@ class ObjectStore:
             old = json.loads(old_json)
             new = json.loads(new_json)
             refs = getattr(self._purge_redaction_local, "object_ids", frozenset())
-            def redact(value):
-                if isinstance(value, str):
-                    return "REDACTED_PURGED" if value in refs else value
-                if isinstance(value, list):
-                    return [redact(item) for item in value]
-                if isinstance(value, dict):
-                    return {key: redact(item) for key, item in value.items()}
-                return value
-            return int(_canonical_json(redact(old)) == _canonical_json(new))
+            return int(_canonical_json(redact_governed_object_values(old, set(refs))) == _canonical_json(new))
         except (TypeError, ValueError):
             return 0
+
+    def _redact_purge_json(self, value):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return value
+        try:
+            refs = set(getattr(self._purge_redaction_local, "object_ids", frozenset()))
+            return _canonical_json(redact_governed_object_values(json.loads(value), refs))
+        except (TypeError, ValueError):
+            return value
+
+    def _purge_scope_json(self, value):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return value
+        try:
+            refs = set(getattr(self._purge_redaction_local, "object_ids", frozenset()))
+            scope = json.loads(value)
+            if not isinstance(scope, list):
+                return value
+            return _canonical_json([
+                item for item in scope
+                if not (isinstance(item, str) and (item in refs or item.startswith("object:") and item[7:] in refs))
+            ])
+        except (TypeError, ValueError):
+            return value
+
+    def _effect_purge_json(self, old_json, new_json, effect_id, payload_object_ref, target_ref):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return 0
+        try:
+            expected = self._effect_purge_projection(old_json, effect_id, payload_object_ref, target_ref)
+            return int(expected == _canonical_json(json.loads(new_json)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _redact_effect_json(self, old_json, effect_id, payload_object_ref, target_ref):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return old_json
+        try:
+            return self._effect_purge_projection(old_json, effect_id, payload_object_ref, target_ref)
+        except (TypeError, ValueError):
+            return old_json
+
+    def _effect_purge_projection(self, old_json, effect_id, payload_object_ref, target_ref):
+        refs = set(getattr(self._purge_redaction_local, "object_ids", frozenset()))
+        old = redact_governed_object_values(json.loads(old_json), refs)
+        payload_purged = payload_object_ref in refs
+        target_value = target_ref[7:] if isinstance(target_ref, str) and target_ref.startswith("object:") else target_ref
+        target_purged = target_value in refs
+        if payload_purged or target_purged:
+            old["target_ref"] = "REDACTED_PURGED"
+        if payload_purged:
+            old["payload_integrity_hash"] = "0" * 64
+            old["idempotency_key"] = "REDACTED_PURGED:" + effect_id
+        return _canonical_json(old)
 
     def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
         if self._mode_cache != "RECOVERY" or getattr(self._recovery_local, "depth", 0) > 0:
@@ -463,7 +513,14 @@ class ObjectStore:
                     if rebuilding_tables:
                         conn.execute("PRAGMA foreign_keys = OFF")
                         conn.execute("PRAGMA legacy_alter_table = ON")
-                    conn.executescript(script)
+                    redaction_scope = nullcontext()
+                    if version == 21:
+                        purged_ids = tuple(row[0] for row in conn.execute(
+                            "SELECT object_id FROM object_states WHERE payload_state='PURGED'"
+                        ))
+                        redaction_scope = self._allow_purge_redaction(purged_ids)
+                    with redaction_scope:
+                        conn.executescript(script)
                     if rebuilding_tables:
                         conn.execute("PRAGMA legacy_alter_table = OFF")
                         conn.execute("PRAGMA foreign_keys = ON")
@@ -610,14 +667,10 @@ class ObjectStore:
     @staticmethod
     def _assert_unbarred_object_resources(conn: sqlite3.Connection, resources: Iterable[str | None]) -> None:
         """Guard exact object IDs/canonical object: IDs without guessing strings."""
-        candidates = {
-            value[7:] if value.startswith("object:") else value
-            for value in resources if isinstance(value, str) and value
+        existing = {
+            object_id for resource in resources
+            if (object_id := resolve_governed_object_resource(conn, resource)) is not None
         }
-        if not candidates:
-            return
-        marks = ",".join("?" for _ in candidates)
-        existing = [row[0] for row in conn.execute(f"SELECT object_id FROM objects WHERE object_id IN ({marks})", sorted(candidates))]
         ObjectStore._assert_unbarred(conn, existing)
 
     @staticmethod
@@ -687,23 +740,61 @@ class ObjectStore:
             governed_inputs = known_object_refs(governed_doc)
         explicit_sources = sorted(set(derived_from))
         source_ids = sorted(set(explicit_sources) | set(governed_inputs))
-        request = {
+        request_base = {
             "payload_integrity_hash": digest,
             "object_id": object_id,
             "object_type": object_type,
             "created_by_run": created_by_run,
             "classification_assertion_ref": classification_assertion_ref,
-            "derived_from": source_ids,
         }
         operation = "put_object"
-        request_hash = self._request_hash(operation, request)
+        request_hash = self._request_hash(operation, {**request_base, "derived_from": source_ids})
+        compatible_hashes = {request_hash}
+        if object_type == "task_contract":
+            compatible_hashes.add(self._request_hash(operation, {**request_base, "derived_from": explicit_sources}))
+        elif object_type == "run_manifest":
+            legacy_inputs = governed_doc.get("input_object_refs", [])
+            if not isinstance(legacy_inputs, list):
+                legacy_inputs = []
+            legacy_sources = sorted(set(explicit_sources) | {item for item in legacy_inputs if isinstance(item, str) and item})
+            compatible_hashes.add(self._request_hash(operation, {**request_base, "derived_from": legacy_sources}))
         with self._lock, self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                replay = self._replay_command(conn, command_id, operation, request_hash)
-                if replay is not None:
+                prior = conn.execute(
+                    "SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?",
+                    (command_id,),
+                ).fetchone()
+                if prior:
+                    if prior["operation"] != operation or prior["request_hash"] not in compatible_hashes:
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    replay = json.loads(prior["result_json"])
+                    if replay.get("object_id") not in {object_id, "REDACTED_PURGED"}:
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    projection = conn.execute(
+                        "SELECT e.object_type,e.integrity_hash,e.created_by_run,e.classification_assertion_ref,s.payload_state "
+                        "FROM objects o JOIN object_states s USING(object_id) LEFT JOIN object_envelopes e USING(object_id) "
+                        "WHERE o.object_id=?",
+                        (object_id,),
+                    ).fetchone()
+                    if not projection:
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    if projection["payload_state"] == "PURGED":
+                        result = "REDACTED_PURGED"
+                    elif (projection["object_type"] != object_type or projection["integrity_hash"] != digest
+                          or projection["created_by_run"] != created_by_run
+                          or projection["classification_assertion_ref"] != classification_assertion_ref):
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    else:
+                        linked = {row[0] for row in conn.execute(
+                            "SELECT to_id FROM object_relations WHERE from_id=? AND relation_type='derived_from'",
+                            (object_id,),
+                        )}
+                        if not set(explicit_sources).issubset(linked):
+                            raise CommandConflict("COMMAND_CONFLICT")
+                        result = object_id
                     conn.commit()
-                    return replay["object_id"]
+                    return result
                 if conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
                     raise CommandConflict("OBJECT_ID_ALREADY_EXISTS")
                 self._assert_unbarred(conn, source_ids)

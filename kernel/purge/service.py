@@ -8,7 +8,7 @@ from pathlib import Path
 
 from kernel.purge.journal import IndependentPurgeJournal
 from kernel.object.errors import CommandConflict
-from kernel.object_refs import known_object_refs
+from kernel.object_refs import known_object_refs, redact_governed_object_values, resolve_governed_object_resource
 from kernel.runtime.errors import RuntimeDenied
 
 
@@ -435,14 +435,11 @@ class PurgeService:
         purged = {row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE payload_state='PURGED'")}
         if not purged:
             return
+        def resolve(value):
+            return resolve_governed_object_resource(conn, value)
+
         def redact(value):
-            if isinstance(value, str):
-                return "REDACTED_PURGED" if value in purged else value
-            if isinstance(value, list):
-                return [redact(item) for item in value]
-            if isinstance(value, dict):
-                return {key: redact(item) for key, item in value.items()}
-            return value
+            return redact_governed_object_values(value, purged)
 
         def contains_purged(value):
             if isinstance(value, str):
@@ -493,35 +490,41 @@ class PurgeService:
 
         # Effect object targets are matched only to actual Object tombstones;
         # arbitrary external target strings are not treated as Nexus objects.
-        effects = conn.execute(
-            "SELECT e.* FROM effects e WHERE e.payload_object_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED') "
-            "OR e.target_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
-        ).fetchall()
-        effect_ids = {row["effect_id"] for row in effects}
-        for row in effects:
+        effects = []
+        for row in conn.execute("SELECT * FROM effects").fetchall():
+            payload_purged = row["payload_object_ref"] in purged
+            target_purged = resolve(row["target_ref"]) in purged
+            if payload_purged or target_purged:
+                effects.append((row, payload_purged, target_purged))
+        effect_ids = {row["effect_id"] for row, _, _ in effects}
+        for row, payload_purged, target_purged in effects:
             effect_json = json.loads(row["effect_json"])
             effect_json = redact(effect_json)
-            effect_json.update({"target_ref": "REDACTED_PURGED", "payload_integrity_hash": "0" * 64, "idempotency_key": "REDACTED_PURGED:" + row["effect_id"]})
+            effect_json["target_ref"] = "REDACTED_PURGED"
+            if payload_purged:
+                effect_json["payload_integrity_hash"] = "0" * 64
+                effect_json["idempotency_key"] = "REDACTED_PURGED:" + row["effect_id"]
             conn.execute(
-                "UPDATE effects SET target_ref='REDACTED_PURGED',payload_integrity_hash=?,payload_object_ref=NULL,idempotency_key=?,external_receipt_ref=NULL,effect_json=? WHERE effect_id=?",
-                ("0" * 64, "REDACTED_PURGED:" + row["effect_id"], _canon(effect_json), row["effect_id"]),
+                "UPDATE effects SET target_ref='REDACTED_PURGED',payload_integrity_hash=?,payload_object_ref=?,idempotency_key=?,external_receipt_ref=NULL,effect_json=? WHERE effect_id=?",
+                ("0" * 64 if payload_purged else row["payload_integrity_hash"],
+                 None if payload_purged else row["payload_object_ref"],
+                 "REDACTED_PURGED:" + row["effect_id"] if payload_purged else row["idempotency_key"],
+                 _canon(effect_json), row["effect_id"]),
             )
         for row in conn.execute("SELECT * FROM approval_decisions").fetchall():
             scopes = json.loads(row["approved_scope_json"])
             effect_redacted = row["effect_id"] in effect_ids
-            target_redacted = row["target_ref"] in purged or effect_redacted
-            scope_redacted = contains_purged(scopes)
+            target_redacted = resolve(row["target_ref"]) in purged or effect_redacted
+            scope_redacted = any(resolve(value) in purged for value in scopes)
             reason_redacted = any(ref in (row["reason"] or "") for ref in purged)
-            request_redacted = isinstance(row["request_ref"], str) and any(
-                row["request_ref"] in {ref, "object:" + ref} for ref in purged
-            )
-            provenance_redacted = row["target_ref"] in purged or scope_redacted or effect_redacted
+            request_redacted = resolve(row["request_ref"]) in purged
+            provenance_redacted = resolve(row["target_ref"]) in purged or scope_redacted or effect_redacted
             if not (provenance_redacted or reason_redacted or request_redacted):
                 continue
             owner = conn.execute("SELECT r.task_id FROM effects e JOIN runs r ON r.run_id=e.run_id WHERE e.effect_id=?", (row["effect_id"],)).fetchone() if row["effect_id"] else None
             if owner is None:
-                linked_refs = {row["target_ref"]} if row["target_ref"] in purged else set()
-                linked_refs.update(value.removeprefix("object:") for value in scopes if isinstance(value, str) and value.removeprefix("object:") in purged)
+                linked_refs = {resolve(row["target_ref"])} if resolve(row["target_ref"]) in purged else set()
+                linked_refs.update(ref for value in scopes if (ref := resolve(value)) in purged)
                 owner_rows = []
                 if linked_refs:
                     ref_marks = ",".join("?" for _ in linked_refs)
@@ -534,7 +537,7 @@ class PurgeService:
                 owner_task = owner["task_id"]
             if owner_task and provenance_redacted:
                 conn.execute("INSERT OR IGNORE INTO purge_redacted_approval_owners(approval_id,task_id,recorded_at) VALUES(?,?,?)", (row["approval_id"], owner_task, _now()))
-            narrowed_scopes = [value for value in scopes if not any(value in {ref, "object:" + ref} for ref in purged)]
+            narrowed_scopes = [value for value in scopes if resolve(value) not in purged]
             conn.execute(
                 "UPDATE approval_decisions SET target_ref=?,effect_id=?,payload_integrity_hash=?,approved_scope_json=?,reason=?,request_ref=? WHERE approval_id=?",
                 ("REDACTED_PURGED" if target_redacted else row["target_ref"],
@@ -792,12 +795,16 @@ class PurgeService:
             if own: conn.close()
 
     def _unknown_effects(self, refs):
-        marks = ",".join("?" for _ in refs)
-        if not marks: return []
+        protected = set(refs)
+        if not protected:
+            return []
         with self.store._connection() as conn:
             rows = conn.execute(
-                f"SELECT effect_id FROM effects WHERE (payload_object_ref IN ({marks}) OR target_ref IN ({marks})) "
-                "AND (effect_outcome='UNKNOWN' OR execution_state IN ('COMMITTING','DECLARED','PREPARED','AUTHORIZED'))",
-                (*refs, *refs),
+                "SELECT effect_id,payload_object_ref,target_ref FROM effects "
+                "WHERE effect_outcome='UNKNOWN' OR execution_state IN ('COMMITTING','DECLARED','PREPARED','AUTHORIZED')",
             ).fetchall()
-        return sorted(row[0] for row in rows)
+            return sorted(
+                row["effect_id"] for row in rows
+                if row["payload_object_ref"] in protected
+                or resolve_governed_object_resource(conn, row["target_ref"]) in protected
+            )

@@ -17,6 +17,7 @@ from kernel.budget import BudgetService
 from kernel.budget import BudgetService
 from kernel.memory import MemoryService
 from kernel.purge import PurgeService
+from kernel.object_refs import resolve_governed_object_resource
 from kernel.runtime.errors import RuntimeDenied
 from kernel.runtime import RuntimeModeService
 from kernel.run import TraceRuntime
@@ -137,6 +138,14 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertNotEqual(payload_hash, "0" * 64)
         with self.assertRaises(AuthorizationDenied):
             self.verifier.record_human_verification(verification_id="verify-human-bad", target_ref=self.claim, evidence_refs=[self.evidence], run_id="run-7", approval_id="approval-human-bad", attester_principal_id="human-root", independence=axes)
+
+    def test_unknown_effect_dependency_resolves_canonical_object_target_only(self):
+        self._seed_unknown_effect(effect_id="effect-canonical-unknown", target_ref="object:claim-7", payload_ref="evidence-7")
+        self.assertEqual(self.purge._unknown_effects([self.claim]), ["effect-canonical-unknown"])
+        with self.store._connection() as conn:
+            self.assertIsNone(resolve_governed_object_resource(conn, "https://example/object:claim-7"))
+            self.assertIsNone(resolve_governed_object_resource(conn, "foo-object:claim-7"))
+        self.assertEqual(self.purge._unknown_effects([self.claim]), ["effect-canonical-unknown"])
 
     def test_barrier_stays_partial_for_active_run_and_unknown_effect(self):
         self._classify("class-manifest-late", "OBJECT", "manifest-late")
@@ -651,6 +660,61 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual((candidate["claim_ref"], candidate["status"]), (self.evidence, "PURGED"))
         self.assertNotIn(self.claim, candidate["metadata_json"])
 
+    def test_canonical_object_resources_are_redacted_and_effect_target_only_preserves_payload(self):
+        now = datetime.now(timezone.utc).isoformat()
+        payload_hash = hashlib.sha256(b"Independent synthetic evidence for governed memory.").hexdigest()
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO budget_accounts(account_id,task_id,amount_limit,unit,model_call_limit,tool_call_limit,child_run_limit) VALUES('budget-canonical','task-7',10,'credits',0,1,0)")
+            conn.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,model_calls,tool_calls,child_runs,state,command_id,created_at) VALUES('reservation-canonical','budget-canonical','run-7',1,0,1,0,'RESERVED','reservation-canonical',?)", (now,))
+            effect = {"effect_id":"effect-canonical-target","run_id":"run-7","idempotency_key":"effect-canonical-key","execution_state":"FINISHED","effect_outcome":"NOT_COMMITTED","reconciliation_status":"RESOLVED","target_ref":"object:claim-7","external_note":"https://example/object:claim-7"}
+            conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("effect-canonical-target","run-7","fake","1","FAKE_WRITE","object:claim-7",payload_hash,"evidence-7","effect-canonical-key","grant-7",None,"reservation-canonical","FINISHED","NOT_COMMITTED","RESOLVED","receipt-for-target",json.dumps(effect,sort_keys=True),now,now))
+            rows = [
+                ("approval-canonical-target", "object:claim-7", "effect-canonical-target", '["PURGE_EXECUTE","object:claim-7"]', None),
+                ("approval-canonical-scope", "external-target", None, '["external-target","object:claim-7","https://example/object:claim-7","foo-object:claim-7"]', None),
+                ("approval-canonical-request", "external-target", None, '["external-target"]', "object:claim-7"),
+            ]
+            for approval_id, target, effect_id, scope, request_ref in rows:
+                conn.execute("INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES(?,'human-root','TEST',?,?,?,'APPROVE',?,'1',?,NULL,'unrelated external explanation',?)", (approval_id,target,effect_id,payload_hash if effect_id else None,scope,now,request_ref))
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="canonical-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        result = self.purge.execute(command_id="canonical-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertEqual(self.store.get_payload(self.evidence), b"Independent synthetic evidence for governed memory.")
+        self.assertTrue(InspectService(self.store, self.authority)._is_purged_object("object:" + self.claim))
+        with self.store._connection() as conn:
+            effect = conn.execute("SELECT target_ref,payload_object_ref,payload_integrity_hash,idempotency_key,external_receipt_ref,effect_json FROM effects WHERE effect_id='effect-canonical-target'").fetchone()
+            self.assertEqual((effect["target_ref"],effect["payload_object_ref"],effect["payload_integrity_hash"],effect["idempotency_key"],effect["external_receipt_ref"]), ("REDACTED_PURGED","evidence-7",payload_hash,"effect-canonical-key",None))
+            self.assertNotIn('"claim-7"',effect["effect_json"])
+            self.assertNotIn('"object:claim-7"',effect["effect_json"])
+            self.assertIn("https://example/object:claim-7",effect["effect_json"])
+            approval_rows = [dict(row) for row in conn.execute("SELECT approval_id,target_ref,approved_scope_json,request_ref FROM approval_decisions WHERE approval_id LIKE 'approval-canonical-%'")]
+            by_id = {row["approval_id"]:row for row in approval_rows}
+            self.assertEqual(by_id["approval-canonical-target"]["target_ref"], "REDACTED_PURGED")
+            self.assertEqual(by_id["approval-canonical-scope"]["target_ref"], "external-target")
+            self.assertEqual(by_id["approval-canonical-scope"]["approved_scope_json"], '["external-target","https://example/object:claim-7","foo-object:claim-7"]')
+            self.assertEqual(by_id["approval-canonical-request"]["target_ref"], "external-target")
+            self.assertIsNone(by_id["approval-canonical-request"]["request_ref"])
+            def contains_exact_reference(value, needles):
+                if isinstance(value, str):
+                    return value in needles
+                if isinstance(value, list):
+                    return any(contains_exact_reference(item, needles) for item in value)
+                if isinstance(value, dict):
+                    return any(contains_exact_reference(item, needles) for item in value.values())
+                return False
+
+            for table in ("effects","approval_decisions","delegation_grants","verification_results","memory_candidates","command_ledger"):
+                for column in conn.execute(f'PRAGMA table_info("{table}")'):
+                    name = column[1]
+                    needles = {self.claim, "object:" + self.claim}
+                    if name.endswith("_json"):
+                        values = [json.loads(row[0]) for row in conn.execute(f'SELECT "{name}" FROM "{table}" WHERE "{name}" IS NOT NULL')]
+                        self.assertFalse(any(contains_exact_reference(value, needles) for value in values), f"{table}.{name} retained an exact governed reference")
+                    else:
+                        for needle in needles:
+                            found = conn.execute(f'SELECT 1 FROM "{table}" WHERE CAST("{name}" AS TEXT)=? LIMIT 1', (needle,)).fetchone()
+                            self.assertIsNone(found, f"{table}.{name} retained governed identifier {needle}")
     def test_inconclusive_verification_exact_replay_uses_immutable_input_binding_after_purge(self):
         missing = self._put("missing-evidence-7", b"evidence bytes intentionally removed before verification")
         missing_meta = self.store.get_object_metadata(missing)
@@ -1559,13 +1623,17 @@ class MemoryPurgeTests(unittest.TestCase):
         finally:
             restored.close()
 
-    def _seed_unknown_effect(self):
+    def _seed_unknown_effect(self, effect_id="effect-unknown-7", target_ref="target", payload_ref="claim-7"):
         now = datetime.now(timezone.utc).isoformat()
+        suffix = effect_id.removeprefix("effect-")
+        account_id = "budget-" + suffix
+        reservation_id = "reservation-" + suffix
+        idempotency_key = "key-" + suffix
         with self.store._connection() as conn:
-            conn.execute("INSERT INTO budget_accounts(account_id,task_id,amount_limit,unit,model_call_limit,tool_call_limit,child_run_limit) VALUES('budget-7','task-7',10,'credits',0,1,0)")
-            conn.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,model_calls,tool_calls,child_runs,state,command_id,created_at) VALUES('reservation-7','budget-7','run-7',1,0,1,0,'RESERVED','reservation-7',?)", (now,))
-            effect = {"effect_id": "effect-unknown-7", "run_id": "run-7", "idempotency_key": "key-unknown-7", "execution_state": "COMMITTING", "effect_outcome": "UNKNOWN", "reconciliation_status": "PENDING"}
-            conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES('effect-unknown-7','run-7','fake','1','FAKE_WRITE','target','" + "0" * 64 + "','claim-7','key-unknown-7','grant-7',NULL,'reservation-7','COMMITTING','UNKNOWN','PENDING',NULL,?,?,?)", (json.dumps(effect, sort_keys=True), now, now))
+            conn.execute("INSERT INTO budget_accounts(account_id,task_id,amount_limit,unit,model_call_limit,tool_call_limit,child_run_limit) VALUES(?, 'task-7',10,'credits',0,1,0)", (account_id,))
+            conn.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,model_calls,tool_calls,child_runs,state,command_id,created_at) VALUES(?,?, 'run-7',1,0,1,0,'RESERVED',?,?)", (reservation_id, account_id, reservation_id, now))
+            effect = {"effect_id": effect_id, "run_id": "run-7", "idempotency_key": idempotency_key, "execution_state": "COMMITTING", "effect_outcome": "UNKNOWN", "reconciliation_status": "PENDING", "target_ref": target_ref}
+            conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?, 'run-7','fake','1','FAKE_WRITE',?,'" + "0" * 64 + "',?,?, 'grant-7',NULL,?,'COMMITTING','UNKNOWN','PENDING',NULL,?,?,?)", (effect_id,target_ref,payload_ref,idempotency_key,reservation_id,json.dumps(effect,sort_keys=True),now,now))
 
 
 if __name__ == "__main__":
