@@ -197,6 +197,7 @@ class ObjectStore:
         conn.create_function("nexus_purge_scope_json", 1, self._purge_scope_json)
         conn.create_function("nexus_effect_purge_json", 5, self._effect_purge_json)
         conn.create_function("nexus_redact_effect_json", 4, self._redact_effect_json)
+        conn.create_function("nexus_effect_receipt_cleanup_json", 2, self._effect_receipt_cleanup_json)
         conn.set_authorizer(self._sqlite_authorizer)
         return conn
 
@@ -256,6 +257,19 @@ class ObjectStore:
         except (TypeError, ValueError):
             return 0
 
+    def _effect_receipt_cleanup_json(self, old_json, new_json):
+        if getattr(self._purge_redaction_local, "depth", 0) <= 0:
+            return 0
+        try:
+            old = json.loads(old_json)
+            new = json.loads(new_json)
+            if not isinstance(old, dict) or "external_receipt_ref" not in old:
+                return 0
+            old.pop("external_receipt_ref")
+            return int(_canonical_json(old) == _canonical_json(new))
+        except (TypeError, ValueError):
+            return 0
+
     def _redact_effect_json(self, old_json, effect_id, payload_object_ref, target_ref):
         if getattr(self._purge_redaction_local, "depth", 0) <= 0:
             return old_json
@@ -275,6 +289,8 @@ class ObjectStore:
         if payload_purged:
             old["payload_integrity_hash"] = "0" * 64
             old["idempotency_key"] = "REDACTED_PURGED:" + effect_id
+        if payload_purged or target_purged:
+            old.pop("external_receipt_ref", None)
         return _canonical_json(old)
 
     def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
@@ -514,7 +530,7 @@ class ObjectStore:
                         conn.execute("PRAGMA foreign_keys = OFF")
                         conn.execute("PRAGMA legacy_alter_table = ON")
                     redaction_scope = nullcontext()
-                    if version == 21:
+                    if version in {21, 22}:
                         purged_ids = tuple(row[0] for row in conn.execute(
                             "SELECT object_id FROM object_states WHERE payload_state='PURGED'"
                         ))

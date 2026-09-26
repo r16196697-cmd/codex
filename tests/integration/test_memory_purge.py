@@ -14,7 +14,7 @@ from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import CommandConflict, PurgedObject, PurgeBarrierActive
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
-from kernel.budget import BudgetService
+from kernel.effect import DeterministicEffectService
 from kernel.memory import MemoryService
 from kernel.purge import PurgeService
 from kernel.object_refs import resolve_governed_object_resource
@@ -41,8 +41,8 @@ class MemoryPurgeTests(unittest.TestCase):
         for principal_id, principal_type in (("human-root", "HUMAN"), ("agent", "SERVICE")):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "anchor-root")
-        self.actions = ["RUN_CREATE", "TRACE_APPEND", "VERIFY", "CLASSIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
-        self.resources = ["run-7", "claim-7", "evidence-7", "missing-evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "candidate-human-conflict", "plan-7", "record-7", "evt-purge-ref-event"]
+        self.actions = ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "VERIFY", "CLASSIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE", "RUNTIME_CONFIGURE", "EFFECT_PREPARE", "EFFECT_COMMIT", "FAKE_WRITE"]
+        self.resources = ["run-7", "run-pending", "effect-run-target", "effect-run-unrelated", "effect-run-payload", "fake-read", "https://example/external-target", "claim-7", "evidence-7", "missing-evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "candidate-human-conflict", "plan-7", "record-7", "evt-purge-ref-event"]
         now = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-7", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-7"], "resource_scope": self.resources, "action_scope": self.actions, "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "grant-7")
         self._seed_task_run()
@@ -98,6 +98,115 @@ class MemoryPurgeTests(unittest.TestCase):
         if expires_at is not None:
             approval["expires_at"] = expires_at
         self.authority.create_approval(approval, "approval-7")
+
+    def _finish_fixture_root(self):
+        trace = TraceRuntime(self.store, self.authority)
+        with self.store._connection() as conn:
+            conn.execute("UPDATE tasks SET status='ACTIVE',root_run_id='run-7' WHERE task_id='task-7' AND status='CREATED'")
+        command_id = "finish-purge-effect-root"
+        class_ref = "class-evt-" + command_id
+        self._classify(class_ref, "TRACE_EVENT", "evt-" + command_id)
+        trace.transition_run(command_id=command_id, run_id="run-7", expected_state="VERIFYING", next_state="SUCCEEDED", classification_assertion_ref=class_ref)
+
+    def _create_receipted_effect(self, *, effect_id, run_id, target_ref, payload_object_ref, receipt_ref):
+        budget = BudgetService(self.store)
+        account_id = "account-receipted-effects"
+        reservation_id = "bres_" + effect_id
+        with self.store._connection() as conn:
+            account_exists = conn.execute("SELECT 1 FROM budget_accounts WHERE account_id=?", (account_id,)).fetchone()
+        if not account_exists:
+            budget.create_account(command_id="account-command-receipted-effects", account_id=account_id, task_id="task-7", amount_limit=0, unit="credits", model_call_limit=0, tool_call_limit=4, child_run_limit=0)
+        budget.reserve(command_id="reserve-command-" + effect_id, account_id=account_id, task_id="task-7", run_id=run_id, amount=0, tool_calls=1, reservation_id=reservation_id)
+        self._classify("class-" + run_id, "RUN", run_id)
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES(?, 'task-7',NULL,'run-7','TOOL','RUNNING','grant-7','manifest-pending',?,?,?,?)",
+                         (run_id, reservation_id, json.dumps({"allowed_classifications":["PUBLIC"],"handling_tags":[]}), "class-" + run_id, datetime.now(timezone.utc).isoformat()))
+        service = DeterministicEffectService(self.store, self.authority, TraceRuntime(self.store, self.authority), budget,
+                                             dispatchers={"fake-read": type("ReceiptDispatcher", (), {"dispatch": lambda _self, **_kwargs: {"outcome":"COMMITTED","receipt_ref":receipt_ref}})()})
+        descriptor = {"schema_id":"nexus.tool_descriptor","schema_version":1,"tool_id":"fake-read","version":"1",
+                      "input_schema_id":"nexus.object@1.schema.json","output_schema_id":"nexus.object@1.schema.json",
+                      "effect_class":"LOCAL_MUTATION","required_authority":["FAKE_WRITE"],"required_classifications":["PUBLIC"],
+                      "idempotency_support":True,"reconciliation_capability":"not-applicable","compensation_capability":"not-applicable",
+                      "network_egress":False,"risk_tags":["synthetic"],"review_status":"APPROVED"}
+        with self.store._connection() as conn:
+            descriptor_exists = conn.execute("SELECT 1 FROM tool_descriptors WHERE tool_id='fake-read' AND version='1'").fetchone()
+        if not descriptor_exists:
+            service.register_descriptor(command_id="descriptor-command-" + effect_id, grant_id="grant-7", task_id="task-7", descriptor=descriptor)
+        digest = self.store.get_object_metadata(payload_object_ref)["integrity_hash"]
+        effect = {"schema_id":"nexus.effect","schema_version":1,"effect_id":effect_id,"run_id":run_id,"tool_id":"fake-read",
+                  "action_type":"FAKE_WRITE","target_ref":target_ref,"payload_integrity_hash":digest,
+                  "idempotency_key":"key-" + effect_id,"grant_id":"grant-7","execution_state":"DECLARED",
+                  "effect_outcome":"UNDETERMINED","reconciliation_status":"NOT_REQUIRED"}
+        create_command = "create-effect-" + effect_id
+        create_class = "class-evt-" + create_command
+        self._classify(create_class, "TRACE_EVENT", "evt-" + create_command)
+        service.create_effect(command_id=create_command, effect=effect, payload_object_ref=payload_object_ref, classification_assertion_ref=create_class)
+        prepare_command = "prepare-effect-" + effect_id
+        prepare_class = "class-evt-" + prepare_command
+        self._classify(prepare_class, "TRACE_EVENT", "evt-" + prepare_command)
+        service.prepare(command_id=prepare_command, effect_id=effect_id, classification_assertion_ref=prepare_class)
+        authorize_command = "authorize-effect-" + effect_id
+        authorize_class = "class-evt-" + authorize_command
+        self._classify(authorize_class, "TRACE_EVENT", "evt-" + authorize_command)
+        service.authorize(command_id=authorize_command, effect_id=effect_id, classification_assertion_ref=authorize_class)
+        commit_command = "commit-effect-" + effect_id
+        outcome_class = "class-evt-" + commit_command + "-outcome"
+        start_class = "class-evt-" + commit_command + "-start"
+        self._classify(outcome_class, "TRACE_EVENT", "evt-" + commit_command + "-outcome")
+        self._classify(start_class, "TRACE_EVENT", "evt-" + commit_command + "-start")
+        result = service.commit(command_id=commit_command, effect_id=effect_id, classification_assertion_ref=outcome_class, start_classification_assertion_ref=start_class)
+        self.assertEqual(result["effect_outcome"], "COMMITTED")
+        trace = TraceRuntime(self.store, self.authority)
+        verifying_command = "verify-run-" + effect_id
+        verifying_class = "class-evt-" + verifying_command
+        self._classify(verifying_class, "TRACE_EVENT", "evt-" + verifying_command)
+        trace.transition_run(command_id=verifying_command, run_id=run_id, expected_state="RUNNING", next_state="VERIFYING", classification_assertion_ref=verifying_class)
+        success_command = "succeed-run-" + effect_id
+        success_class = "class-evt-" + success_command
+        self._classify(success_class, "TRACE_EVENT", "evt-" + success_command)
+        trace.transition_run(command_id=success_command, run_id=run_id, expected_state="VERIFYING", next_state="SUCCEEDED", classification_assertion_ref=success_class)
+        return service
+
+    def test_real_effect_receipts_are_removed_from_json_when_target_or_payload_is_purged(self):
+        self._create_receipted_effect(effect_id="effect-target-receipt", run_id="effect-run-target", target_ref=self.claim, payload_object_ref=self.evidence, receipt_ref="target-receipt-sensitive")
+        self._create_receipted_effect(effect_id="effect-unrelated-receipt", run_id="effect-run-unrelated", target_ref="https://example/external-target", payload_object_ref=self.evidence, receipt_ref="unrelated-receipt-retained")
+        self._finish_fixture_root()
+        with self.store._connection() as conn:
+            before = {row["effect_id"]:dict(row) for row in conn.execute("SELECT effect_id,external_receipt_ref,effect_json FROM effects")}
+        self.assertEqual(before["effect-target-receipt"]["external_receipt_ref"], "target-receipt-sensitive")
+        self.assertEqual(json.loads(before["effect-target-receipt"]["effect_json"])["external_receipt_ref"], "target-receipt-sensitive")
+        plan = self.purge.plan(command_id="receipt-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        result = self.purge.execute(command_id="receipt-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(result["status"], "COMPLETED")
+        with self.store._connection() as conn:
+            effects = {row["effect_id"]:dict(row) for row in conn.execute("SELECT effect_id,target_ref,payload_object_ref,payload_integrity_hash,idempotency_key,external_receipt_ref,effect_json FROM effects")}
+        target = effects["effect-target-receipt"]
+        self.assertEqual(target["target_ref"], "REDACTED_PURGED")
+        self.assertEqual(target["payload_object_ref"], self.evidence)
+        self.assertEqual(target["payload_integrity_hash"], self.store.get_object_metadata(self.evidence)["integrity_hash"])
+        self.assertEqual(target["idempotency_key"], "key-effect-target-receipt")
+        self.assertIsNone(target["external_receipt_ref"])
+        self.assertNotIn("external_receipt_ref", json.loads(target["effect_json"]))
+        unrelated = effects["effect-unrelated-receipt"]
+        self.assertEqual(unrelated["external_receipt_ref"], "unrelated-receipt-retained")
+        self.assertEqual(json.loads(unrelated["effect_json"])["external_receipt_ref"], "unrelated-receipt-retained")
+        self.assertEqual(self.store.get_object_metadata(self.evidence)["payload_state"], "AVAILABLE")
+
+    def test_real_effect_payload_purge_removes_receipt_from_column_and_json(self):
+        self._create_receipted_effect(effect_id="effect-payload-receipt", run_id="effect-run-payload", target_ref="https://example/external-target", payload_object_ref=self.claim, receipt_ref="payload-receipt-sensitive")
+        self._finish_fixture_root()
+        plan = self.purge.plan(command_id="payload-receipt-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        result = self.purge.execute(command_id="payload-receipt-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(result["status"], "COMPLETED")
+        with self.store._connection() as conn:
+            effect = dict(conn.execute("SELECT payload_object_ref,payload_integrity_hash,idempotency_key,external_receipt_ref,effect_json FROM effects WHERE effect_id='effect-payload-receipt'").fetchone())
+        self.assertIsNone(effect["payload_object_ref"])
+        self.assertEqual(effect["payload_integrity_hash"], "0" * 64)
+        self.assertEqual(effect["idempotency_key"], "REDACTED_PURGED:effect-payload-receipt")
+        self.assertIsNone(effect["external_receipt_ref"])
+        self.assertNotIn("external_receipt_ref", json.loads(effect["effect_json"]))
 
     def _human_verification(self, verification_id):
         axes = {"generator_independence": "NOT_APPLICABLE", "evidence_independence": "INDEPENDENT", "method_independence": "INDEPENDENT"}

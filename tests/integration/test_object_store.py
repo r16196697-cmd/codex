@@ -242,12 +242,12 @@ raise SystemExit(0)
 
     def test_migrations_are_recorded_and_sqlite_is_consistent(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             watermark = conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
             self.assertEqual((watermark[0], watermark[1], watermark[2]), (self.store.independent_purge_journal.identity, 0, "0" * 64))
             rows = conn.execute("SELECT version,name,length(checksum) FROM schema_migrations").fetchall()
-            self.assertEqual([(row[0], row[1], row[2]) for row in rows][-6:], [(16, "0016_purge_replay_commitments_and_task_provenance.sql", 64), (17, "0017_governed_reference_redaction.sql", 64), (18, "0018_scheduler_setup_request_binding.sql", 64), (19, "0019_independent_purge_journal_watermark.sql", 64), (20, "0020_known_schema_purge_guards.sql", 64), (21, "0021_canonical_purge_resource_redaction.sql", 64)])
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows][-7:], [(16, "0016_purge_replay_commitments_and_task_provenance.sql", 64), (17, "0017_governed_reference_redaction.sql", 64), (18, "0018_scheduler_setup_request_binding.sql", 64), (19, "0019_independent_purge_journal_watermark.sql", 64), (20, "0020_known_schema_purge_guards.sql", 64), (21, "0021_canonical_purge_resource_redaction.sql", 64), (22, "0022_effect_receipt_purge_redaction.sql", 64)])
             self.assertIn("task_id", {row[1] for row in conn.execute("PRAGMA table_info(purge_plan_records)")})
             kernel = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id='nexus-core-recovery'").fetchone()
             self.assertEqual(tuple(kernel), ("SERVICE", "ACTIVE"))
@@ -259,7 +259,7 @@ raise SystemExit(0)
 
     def test_v14_database_guards_recovery_identity_from_ordinary_authority_rows(self) -> None:
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
             grant_values = ("direct-recovery-grant", None, "test_actor", "nexus-core-recovery", "[]", "[]", "[]", "[]", "2026-09-26T00:00:00Z", "2026-09-27T00:00:00Z", "ACTIVE", "1", None)
             sql = "INSERT INTO delegation_grants(grant_id,parent_grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version,credential_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
             with self.assertRaisesRegex(sqlite3.IntegrityError, "KERNEL_RECOVERY_IDENTITY_RESERVED"):
@@ -303,7 +303,7 @@ raise SystemExit(0)
         self.store = ObjectStore(self.root / "data")
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=14").fetchone()[0], "0014_kernel_recovery_identity_isolation.sql")
             self.assertEqual(conn.execute("SELECT name FROM schema_migrations WHERE version=15").fetchone()[0], "0015_kernel_recovery_identity_preexisting_guard.sql")
@@ -316,10 +316,10 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
-                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,22)))
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,23)))
         finally:
             upgraded.close()
 
@@ -329,11 +329,11 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-                self.assertEqual(tuple(row), (21, "0021_canonical_purge_resource_redaction.sql"))
+                self.assertEqual(tuple(row), (22, "0022_effect_receipt_purge_redaction.sql"))
         finally:
             upgraded.close()
 
@@ -488,7 +488,7 @@ raise SystemExit(0)
             revision = runtime.bind_task_contract(command_id="v19-bind-contract",root_run_id="v19-root",contract_object_id="v19-contract",classification_assertion_ref="v19-contract-class",contract=contract)
             self.assertEqual(revision,1)
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],21)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0],22)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id='v19-contract'").fetchone()[0],1)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='v19-bind-contract-object'").fetchone()[0],1)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id='v19-bind-contract'").fetchone()[0],1)
@@ -524,7 +524,7 @@ raise SystemExit(0)
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 rows = {row["approval_id"]:dict(row) for row in conn.execute("SELECT * FROM approval_decisions WHERE approval_id LIKE 'legacy-canonical-%'")}
@@ -545,16 +545,63 @@ raise SystemExit(0)
         finally:
             upgraded.close()
 
+    def test_persisted_v21_redacted_effect_receipt_residue_is_removed_by_v22(self) -> None:
+        self.store.close()
+        database_path = self._historical_database(21, "persisted-v21-effect-receipt-residue")
+        now = "2026-09-26T00:00:00+00:00"
+        zero_hash = "0" * 64
+        with closing(sqlite3.connect(database_path)) as legacy:
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('receipt-human','HUMAN','ACTIVE')")
+            legacy.execute("INSERT INTO principals(principal_id,principal_type,status) VALUES('receipt-agent','SERVICE','ACTIVE')")
+            legacy.execute("INSERT INTO delegation_grants(grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version) VALUES('receipt-grant','receipt-human','receipt-agent','[]','[]','[]','[]',?,?,'ACTIVE','1')", (now,"2027-09-26T00:00:00+00:00"))
+            legacy.execute("INSERT INTO tasks(task_id,requester_id,status,created_at,command_id,root_run_id) VALUES('receipt-task','receipt-human','SUCCEEDED',?,'receipt-task-command',NULL)", (now,))
+            legacy.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('receipt-root-class','RUN','receipt-root','PUBLIC','[]','1','fixture','receipt-agent')")
+            legacy.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES('receipt-root','receipt-task',NULL,NULL,'ORCHESTRATOR','SUCCEEDED','receipt-grant',NULL,NULL,'{\"allowed_classifications\":[\"PUBLIC\"],\"handling_tags\":[]}','receipt-root-class',?)", (now,))
+            legacy.execute("INSERT INTO budget_accounts(account_id,task_id,amount_limit,unit,model_call_limit,tool_call_limit,child_run_limit) VALUES('receipt-account','receipt-task',0,'credits',0,2,0)")
+            for object_id in ("receipt-payload-redacted", "receipt-payload-unrelated"):
+                legacy.execute("INSERT INTO objects(object_id) VALUES(?)", (object_id,))
+                legacy.execute("INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES(?,NULL,'ACTIVE','VALID','AVAILABLE')", (object_id,))
+            for suffix, object_id in (("redacted", "receipt-payload-redacted"), ("unrelated", "receipt-payload-unrelated")):
+                run_id = "receipt-run-" + suffix
+                reservation_id = "receipt-reservation-" + suffix
+                effect_id = "receipt-effect-" + suffix
+                legacy.execute("INSERT INTO budget_reservations(reservation_id,account_id,run_id,amount,model_calls,tool_calls,child_runs,state,command_id,created_at) VALUES(?,?,?,0,0,1,0,'CONSUMED',?,?)", (reservation_id,"receipt-account",run_id,"receipt-reserve-"+suffix,now))
+                legacy.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES(?, 'RUN',?,'PUBLIC','[]','1','fixture','receipt-agent')", ("receipt-class-"+suffix,run_id))
+                legacy.execute("INSERT INTO runs(run_id,task_id,subtask_id,parent_run_id,executor_kind,status,grant_id,manifest_ref,budget_reservation_ref,data_boundary_json,classification_assertion_ref,created_at) VALUES(?,'receipt-task',NULL,'receipt-root','TOOL','SUCCEEDED','receipt-grant',NULL,?,'{\"allowed_classifications\":[\"PUBLIC\"],\"handling_tags\":[]}',?,?)", (run_id,reservation_id,"receipt-class-"+suffix,now))
+                target = "REDACTED_PURGED" if suffix == "redacted" else "https://example/unrelated"
+                key = "REDACTED_PURGED:" + effect_id if suffix == "redacted" else "receipt-key-unrelated"
+                effect_json = {"effect_id":effect_id,"run_id":run_id,"idempotency_key":key,"execution_state":"FINISHED","effect_outcome":"COMMITTED","reconciliation_status":"RESOLVED","target_ref":target,"external_receipt_ref":"legacy-receipt-"+suffix}
+                sql_receipt = None if suffix == "redacted" else "legacy-receipt-unrelated"
+                legacy.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?,?, 'receipt-tool','1','WRITE',?,?,?,?,'receipt-grant',NULL,?,'FINISHED','COMMITTED','RESOLVED',?,?,?,?)",
+                               (effect_id,run_id,target,zero_hash if suffix == "redacted" else "1"*64,object_id,key,reservation_id,sql_receipt,json.dumps(effect_json,sort_keys=True,separators=(",",":")),now,now))
+            legacy.commit()
+        upgraded = ObjectStore(database_path.parent)
+        try:
+            with upgraded._connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+                redacted = dict(conn.execute("SELECT * FROM effects WHERE effect_id='receipt-effect-redacted'").fetchone())
+                unrelated = dict(conn.execute("SELECT * FROM effects WHERE effect_id='receipt-effect-unrelated'").fetchone())
+                self.assertIsNone(redacted["external_receipt_ref"])
+                self.assertNotIn("external_receipt_ref", json.loads(redacted["effect_json"]))
+                self.assertEqual((redacted["target_ref"],redacted["payload_object_ref"],redacted["payload_integrity_hash"],redacted["idempotency_key"],redacted["execution_state"],redacted["effect_outcome"],redacted["reconciliation_status"]),
+                                 ("REDACTED_PURGED","receipt-payload-redacted",zero_hash,"REDACTED_PURGED:receipt-effect-redacted","FINISHED","COMMITTED","RESOLVED"))
+                self.assertEqual(unrelated["external_receipt_ref"], "legacy-receipt-unrelated")
+                self.assertEqual(json.loads(unrelated["effect_json"])["external_receipt_ref"], "legacy-receipt-unrelated")
+        finally:
+            upgraded.close()
+
     def test_persisted_v14_database_upgrades_to_latest_with_fk_integrity(self) -> None:
         self.store.close()
         database_path = self._historical_database(14, "persisted-v14")
         upgraded = ObjectStore(database_path.parent)
         try:
             with upgraded._connection() as conn:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
-                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,22)))
+                self.assertEqual([row[0] for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")], list(range(1,23)))
         finally:
             upgraded.close()
 
@@ -659,19 +706,19 @@ raise SystemExit(0)
             self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
             with reopened._recovery_maintenance():
                 with reopened._connection() as conn:
-                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+                    self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
                     self.assertIsNone(conn.execute("SELECT 1 FROM independent_purge_journal_watermark WHERE singleton=1").fetchone())
         finally:
             reopened.close()
 
-    def test_v6_snapshot_replays_v7_through_v21_migrations_deterministically(self) -> None:
+    def test_v6_snapshot_replays_v7_through_v22_migrations_deterministically(self) -> None:
         self.store.close()
         database_path = self._historical_database(6, "persisted-v6")
         self.store = ObjectStore(database_path.parent)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
             row = conn.execute("SELECT version,name FROM schema_migrations ORDER BY version DESC LIMIT 1").fetchone()
-            self.assertEqual(tuple(row), (21, "0021_canonical_purge_resource_redaction.sql"))
+            self.assertEqual(tuple(row), (22, "0022_effect_receipt_purge_redaction.sql"))
             self.assertEqual(conn.execute("SELECT mode FROM runtime_mode_state WHERE singleton=1").fetchone()[0], "NORMAL")
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
@@ -709,7 +756,7 @@ raise SystemExit(0)
         self.store = ObjectStore(database_path.parent)
         self.addCleanup(self.store.close)
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 21)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 22)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             migrated = conn.execute("SELECT task_id,plan_json FROM purge_plan_records WHERE plan_id=?", (plan_id,)).fetchone()
             self.assertIsNone(migrated["task_id"])

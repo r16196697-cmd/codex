@@ -501,6 +501,7 @@ class PurgeService:
             effect_json = json.loads(row["effect_json"])
             effect_json = redact(effect_json)
             effect_json["target_ref"] = "REDACTED_PURGED"
+            effect_json.pop("external_receipt_ref", None)
             if payload_purged:
                 effect_json["payload_integrity_hash"] = "0" * 64
                 effect_json["idempotency_key"] = "REDACTED_PURGED:" + row["effect_id"]
