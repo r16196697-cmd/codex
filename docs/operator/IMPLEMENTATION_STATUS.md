@@ -1,5 +1,17 @@
 # Nexus v2 Implementation Status
 
+## Independent Audit Closure — Nexus v0.1
+
+- Independent Audit: **CLOSED / PASS**.
+- Audited source candidate: `59c0f54d091b02290f1b14b09fef492f27d40f40` (`codex/nexus-v0.1-audit`).
+- Latest schema: v22.
+- Full regression at closure: 165 passed; 2 environment-dependent skips (external Hosted search evidence was not supplied, and the persistent Hosted data root was absent from this checkout).
+- Platform limitation: the POSIX directory-fsync durability branch was not executed on Windows.
+- Bootstrap Academy: **NOT STARTED**.
+- Frozen published refs remain `nexus-v2-runtime` and `nexus-v0.1-hosted` at `0cb9d1ed1e3f452d341b1d780b9a91caee7fbd8a`.
+
+This is an audit/status record only; it does not change Nexus Core semantics.
+
 ## T10 RUNTIME CORRECTION — MULTI-ATTEMPT DAG EXECUTION
 
 Goal:
