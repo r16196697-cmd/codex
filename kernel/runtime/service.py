@@ -210,6 +210,7 @@ class DeterministicRuntime:
                     return replay["subtask_ids"]
                 if conn.execute("SELECT 1 FROM task_dags WHERE task_id=?", (task_id,)).fetchone():
                     raise RuntimeDenied("DAG_VERSION_IMMUTABLE_IN_V0_1")
+                self.store._assert_unbarred(conn, [ref for node in nodes for ref in node.get("input_object_refs", [])])
                 for node_index, node in enumerate(nodes):
                     conn.execute("INSERT INTO subtasks(subtask_id,task_id,node_index,node_json,status,command_id,created_at) VALUES(?,?,?,?,'PENDING',?,?)", (node["subtask_id"], task_id, node_index, _canonical(node), command_id + ":" + node["subtask_id"], node["created_at"]))
                 for node in nodes:
@@ -512,12 +513,12 @@ class DeterministicRuntime:
                 return prior
             root = conn.execute("SELECT status,grant_id,task_id,executor_kind FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
             child = conn.execute("SELECT status,task_id,parent_run_id,subtask_id,executor_kind,manifest_ref,grant_id,created_at FROM runs WHERE run_id=?", (child_run_id,)).fetchone()
-            node_row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
+            node_row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id,input_state FROM subtasks WHERE task_id=? AND subtask_id=?", (task_id, subtask_id)).fetchone()
         if not root or root["task_id"] != task_id or root["executor_kind"] != "ORCHESTRATOR" or root["status"] != "RUNNING":
             raise RuntimeDenied("HOSTED_SUBTASK_ROOT_NOT_RUNNING")
         if not child or child["task_id"] != task_id or child["parent_run_id"] != root_run_id or child["subtask_id"] != subtask_id or child["status"] != "CREATED":
             raise RuntimeDenied("HOSTED_SUBTASK_CHILD_BINDING_INVALID")
-        if not node_row or node_row["final_attempt_id"] is not None or node_row["status"] not in {"PENDING", "WAITING"}:
+        if not node_row or node_row["input_state"] == "PURGED_INPUT" or node_row["final_attempt_id"] is not None or node_row["status"] not in {"PENDING", "WAITING"}:
             raise RuntimeDenied("HOSTED_SUBTASK_NOT_BINDABLE")
         node = json.loads(node_row["node_json"])
         if node["requested_executor"] != child["executor_kind"]:
@@ -563,6 +564,11 @@ class DeterministicRuntime:
                 if attempt_no != decision["attempt_no"]:
                     raise RuntimeDenied("HOSTED_SUBTASK_ATTEMPT_ORDER_RACE")
                 attempt_id = f"{subtask_id}:attempt:{attempt_no}"
+                manifest_ref = child["manifest_ref"]
+                if manifest_ref and manifest.get("route_decision_ref") == route_object_id:
+                    self.store._assert_unbarred(conn, [manifest_ref, route_object_id])
+                    conn.execute("INSERT OR IGNORE INTO object_relations(from_id,relation_type,to_id) VALUES(?, 'derived_from', ?)", (manifest_ref, route_object_id))
+                    conn.execute("INSERT OR IGNORE INTO run_manifest_inputs(run_id,manifest_object_id,input_object_id) VALUES(?,?,?)", (child_run_id, manifest_ref, route_object_id))
                 # This records requested capability provenance only; it is not
                 # evidence of the actual Codex backend/model identity.
                 capability = requested_capability if child["executor_kind"] == "MODEL" else "TOOL"
@@ -705,9 +711,11 @@ class DeterministicRuntime:
             raise RuntimeDenied("SCHEDULE_SETUP_COMPENSATED")
         with self.store._connection() as conn:
             root = conn.execute("SELECT * FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
-            row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id FROM subtasks WHERE subtask_id=? AND task_id=?", (subtask_id, task_id)).fetchone()
+            row = conn.execute("SELECT node_json,status,scheduled_run_id,final_attempt_id,input_state FROM subtasks WHERE subtask_id=? AND task_id=?", (subtask_id, task_id)).fetchone()
         if not root or root["executor_kind"] != "ORCHESTRATOR" or root["task_id"] != task_id or root["status"] != "RUNNING" or not row:
             raise RuntimeDenied("SCHEDULER_OWNERSHIP_OR_NODE_INVALID")
+        if row["input_state"] == "PURGED_INPUT":
+            raise RuntimeDenied("SCHEDULE_INPUT_PURGED")
         node = json.loads(row["node_json"])
         with self.store._connection() as conn:
             prior_attempt_no = conn.execute("SELECT COALESCE(MAX(attempt_no),0) FROM subtask_attempts WHERE task_id=? AND subtask_id=?", (task_id,subtask_id)).fetchone()[0]

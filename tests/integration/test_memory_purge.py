@@ -14,11 +14,13 @@ from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import CommandConflict, PurgedObject, PurgeBarrierActive
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
+from kernel.budget import BudgetService
 from kernel.memory import MemoryService
 from kernel.purge import PurgeService
 from kernel.runtime.errors import RuntimeDenied
 from kernel.runtime import RuntimeModeService
 from kernel.run import TraceRuntime
+from kernel.runtime import DeterministicRuntime
 from kernel.verification import VerificationService
 from kernel.runtime.inspect import InspectService
 
@@ -38,8 +40,8 @@ class MemoryPurgeTests(unittest.TestCase):
         for principal_id, principal_type in (("human-root", "HUMAN"), ("agent", "SERVICE")):
             self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1, "principal_id": principal_id, "principal_type": principal_type, "status": "ACTIVE"}, "principal-" + principal_id)
         self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1, "anchor_id": "anchor-root", "principal_id": "human-root", "policy_ref": "1"}, "anchor-root")
-        self.actions = ["RUN_CREATE", "TRACE_APPEND", "VERIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
-        self.resources = ["run-7", "claim-7", "evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "candidate-human-conflict", "plan-7", "record-7", "evt-purge-ref-event"]
+        self.actions = ["RUN_CREATE", "TRACE_APPEND", "VERIFY", "CLASSIFY", "MEMORY_RETAIN", "MEMORY_ADMIT", "MEMORY_SEARCH", "PURGE_EXECUTE"]
+        self.resources = ["run-7", "claim-7", "evidence-7", "missing-evidence-7", "manifest-7", "candidate-7", "candidate-quarantine", "candidate-human", "candidate-human-conflict", "plan-7", "record-7", "evt-purge-ref-event"]
         now = datetime.now(timezone.utc)
         self.authority.create_grant({"schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "grant-7", "issued_by": "human-root", "granted_to": "agent", "task_scope": ["task-7"], "resource_scope": self.resources, "action_scope": self.actions, "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1"}, "grant-7")
         self._seed_task_run()
@@ -166,6 +168,11 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE runs SET status='READY' WHERE run_id='run-pending'")
+            conn.execute("INSERT INTO subtasks(subtask_id,task_id,node_index,node_json,status,command_id,created_at) VALUES('late-route-subtask','task-7',99,'{}','PENDING','late-route-subtask-command',?)", (now.isoformat(),))
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute("INSERT INTO route_decisions(route_decision_id,subtask_id,decision_object_id,decision_json,command_id,created_at) VALUES('late-route-decision','late-route-subtask',?,'{}','late-route-decision-command',?)", (self.claim, now.isoformat()))
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute("INSERT INTO subtask_attempts(attempt_id,task_id,subtask_id,attempt_no,run_id,route_decision_ref,requested_capability,attempt_reason,predecessor_attempt_id,outcome,command_id,created_at) VALUES('late-route-attempt','task-7','late-route-subtask',1,'run-pending',?,'MODEL','INITIAL',NULL,'CREATED','late-route-attempt-command',?)", (self.claim, now.isoformat()))
         late_manifest = {"schema_id": "nexus.run_manifest", "schema_version": 1, "executor_kind": "TOOL", "runtime_version": "0.1", "policy_version": "1", "schema_versions": {"nexus.run_manifest": 1}, "input_object_refs": [self.claim], "authority_grant_ref": "grant-7", "data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": []}, "classification_assertion_ref": "class-run-pending", "tool_id": "fake-read", "tool_descriptor_version": "1", "tool_adapter_version": "test", "input_ref": self.claim}
         with self.assertRaises(PurgeBarrierActive):
             self.store.put_object(command_id="late-manifest", object_id="manifest-late", payload=json.dumps(late_manifest).encode(), object_type="run_manifest", created_by_run="run-pending", classification_assertion_ref="class-manifest-late")
@@ -492,14 +499,182 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM purge_plan_records WHERE command_id='stable-plan-command'").fetchone()[0], 1)
 
+    def test_known_schema_contract_manifest_and_subtask_refs_enter_purge_closure(self):
+        budget = BudgetService(self.store)
+        trace = TraceRuntime(self.store, self.authority)
+        runtime = DeterministicRuntime(self.store, self.authority, budget, trace)
+        now = datetime.now(timezone.utc)
+        self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-known-root","issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["run-known-root","contract-known","manifest-known","subtask-known"],"action_scope":["RUN_CREATE","TRACE_APPEND","OBJECT_WRITE","CLASSIFY"],"audience_scope":["nexus-runtime"],"issued_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-known-root-command")
+        budget.create_account(command_id="budget-known-root-command", account_id="budget-known-root", task_id="task-7", amount_limit=10, unit="credits", model_call_limit=2, tool_call_limit=2, child_run_limit=2)
+        self._classify("class-known-root", "RUN", "run-known-root")
+        self._classify("class-known-root-created", "TRACE_EVENT", "evt-create-known-root-root")
+        trace.create_run({"schema_id":"nexus.run","schema_version":1,"run_id":"run-known-root","task_id":"task-7","executor_kind":"ORCHESTRATOR","status":"CREATED","grant_id":"grant-known-root","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-known-root","created_at":now.isoformat()}, command_id="create-known-root-root", event_classification_assertion_ref="class-known-root-created")
+        contract = {
+            "schema_id":"nexus.task_contract","schema_version":1,"task_id":"task-7",
+            "requester_id":"human-root","goal":"synthetic governed task","constraints":[],
+            "input_object_refs":[self.claim],"open_questions":[],"success_criteria":["complete safely"],
+            "risk_class":"LOW","budget_account_ref":"budget-known-root",
+            "routing_constraints":{"allowed_providers":[],"forbidden_providers":[],"locality":"ANY","network_required":False,"modalities":[]},
+            "routing_preferences":{"optimize_for":"BALANCED"},"created_at":datetime.now(timezone.utc).isoformat(),
+        }
+        self._classify("class-contract-known", "OBJECT", "contract-known")
+        runtime.bind_task_contract(command_id="bind-contract-known", root_run_id="run-known-root", contract_object_id="contract-known", classification_assertion_ref="class-contract-known", contract=contract)
+        self._classify("class-route-known", "OBJECT", "route-known")
+        self.store.put_object(command_id="put-route-known", object_id="route-known", payload=b"route provenance", object_type="artifact", created_by_run="run-pending", classification_assertion_ref="class-route-known", derived_from=[self.claim])
+        # The manifest is materialized before the hosted route object. Its
+        # later exact binding must become a durable lineage edge before use.
+        manifest = {"schema_id":"nexus.run_manifest","schema_version":1,"executor_kind":"ORCHESTRATOR","runtime_version":"0.1","policy_version":"1","schema_versions":{"nexus.run_manifest":1},"input_object_refs":[self.claim],"authority_grant_ref":"grant-7","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-run-7","task_contract_ref":"contract-known","dag_version":"1","scheduler_version":"1"}
+        self._classify("class-manifest-known", "OBJECT", "manifest-known")
+        self.store.put_object(command_id="put-manifest-known", object_id="manifest-known", payload=json.dumps(manifest).encode(), object_type="run_manifest", created_by_run="run-known-root", classification_assertion_ref="class-manifest-known")
+        self.store.add_relation(command_id="bind-late-route-known", from_id="manifest-known", relation_type="derived_from", to_id="route-known")
+        model_manifest = {"schema_id":"nexus.run_manifest","schema_version":2,"executor_kind":"MODEL","runtime_version":"0.1","policy_version":"1","schema_versions":{"nexus.run_manifest":2},"input_object_refs":[self.claim],"authority_grant_ref":"grant-7","budget_reservation_ref":"reservation-placeholder","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-model-manifest-known","execution_source":"CODEX_HOST_DECLARED","host_kind":"CODEX","host_adapter_version":"test","model_identity_status":"UNAVAILABLE","context_object_refs":[self.evidence],"route_decision_ref":"route-known"}
+        self._classify("class-model-manifest-known", "OBJECT", "model-manifest-known")
+        self.store.put_object(command_id="put-model-manifest-known", object_id="model-manifest-known", payload=json.dumps(model_manifest).encode(), object_type="run_manifest", created_by_run="run-pending", classification_assertion_ref="class-model-manifest-known")
+        tool_manifest = {"schema_id":"nexus.run_manifest","schema_version":1,"executor_kind":"TOOL","runtime_version":"0.1","policy_version":"1","schema_versions":{"nexus.run_manifest":1},"input_object_refs":[self.claim],"authority_grant_ref":"grant-7","budget_reservation_ref":"reservation-placeholder","data_boundary":{"allowed_classifications":["PUBLIC"],"handling_tags":[]},"classification_assertion_ref":"class-tool-manifest-known","tool_id":"fake-read","tool_descriptor_version":"1","tool_adapter_version":"test","input_ref":self.evidence}
+        self._classify("class-tool-manifest-known", "OBJECT", "tool-manifest-known")
+        self.store.put_object(command_id="put-tool-manifest-known", object_id="tool-manifest-known", payload=json.dumps(tool_manifest).encode(), object_type="run_manifest", created_by_run="run-pending", classification_assertion_ref="class-tool-manifest-known")
+        node = {"schema_id":"nexus.subtask","schema_version":1,"subtask_id":"subtask-known","task_id":"task-7","input_object_refs":[self.claim],"input_schema_id":"nexus.object@1.schema.json","output_schema_id":"nexus.object@1.schema.json","dependency_ids":[],"quality_requirement":"ROUTINE","risk_class":"LOW","validation_method":"SCHEMA","budget_amount":0,"requested_executor":"MODEL","required_modalities":[],"created_at":datetime.now(timezone.utc).isoformat()}
+        runtime.create_dag(command_id="create-known-dag", task_id="task-7", root_run_id="run-known-root", nodes=[node])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="known-closure-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        protected = set(plan["target_refs"]) | set(plan["descendant_refs"])
+        self.assertTrue({"contract-known","manifest-known","route-known","model-manifest-known","tool-manifest-known"}.issubset(protected))
+        self._approve_purge(plan["plan_hash"])
+        result = self.purge.execute(command_id="known-closure-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(result["status"], "COMPLETED")
+        with self.store._connection() as conn:
+            saved_node = json.loads(conn.execute("SELECT node_json FROM subtasks WHERE subtask_id='subtask-known'").fetchone()[0])
+            state = conn.execute("SELECT input_state FROM subtasks WHERE subtask_id='subtask-known'").fetchone()[0]
+            contract_state = conn.execute("SELECT payload_state FROM object_states WHERE object_id='contract-known'").fetchone()[0]
+            manifest_state = conn.execute("SELECT payload_state FROM object_states WHERE object_id='manifest-known'").fetchone()[0]
+            route_state = conn.execute("SELECT payload_state FROM object_states WHERE object_id='route-known'").fetchone()[0]
+        self.assertEqual(state, "PURGED_INPUT")
+        self.assertEqual(saved_node["input_object_refs"], [])
+        self.assertEqual((contract_state, manifest_state, route_state), ("PURGED","PURGED","PURGED"))
+        purged_ids = {self.claim, "contract-known", "route-known", "manifest-known", "model-manifest-known", "tool-manifest-known"}
+        control_plane = {"objects", "object_states", "purge_barrier_refs", "purge_execution_refs", "purge_plan_records", "purge_execution_records"}
+        residue = {}
+        with self.store._connection() as conn:
+            for table_row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts_%'"):
+                table = table_row[0].replace('"', '""')
+                for col_row in conn.execute(f'PRAGMA table_info("{table}")'):
+                    column = col_row[1].replace('"', '""')
+                    for object_id in purged_ids:
+                        if col_row[2].upper() == "TEXT" and column.endswith("_json"):
+                            needle = json.dumps(object_id)
+                            count = conn.execute(f'SELECT COUNT(*) FROM "{table}" WHERE instr(CAST("{column}" AS TEXT),?)>0', (needle,)).fetchone()[0]
+                        elif column in {"reason", "request_ref"}:
+                            count = conn.execute(f'SELECT COUNT(*) FROM "{table}" WHERE instr(CAST("{column}" AS TEXT),?)>0', (object_id,)).fetchone()[0]
+                        else:
+                            count = conn.execute(f'SELECT COUNT(*) FROM "{table}" WHERE CAST("{column}" AS TEXT)=?', (object_id,)).fetchone()[0]
+                        if count and table not in control_plane:
+                            residue[f"{table}.{column}:{object_id}"] = count
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        self.assertEqual(residue, {})
+        self.assertEqual(self.store.put_object(command_id="bind-contract-known-object", object_id="contract-known", payload=json.dumps(contract, sort_keys=True, separators=(",", ":")).encode(), object_type="task_contract", created_by_run="run-known-root", classification_assertion_ref="class-contract-known"), "REDACTED_PURGED")
+        with self.assertRaises(PurgedObject):
+            self.store.get_payload("route-known")
+
+    def test_known_schema_task_contract_and_route_can_be_purged_as_independent_targets(self):
+        source = self._put("known-independent-source", b"independent known-schema source")
+        contract = {
+            "schema_id":"nexus.task_contract", "schema_version":1, "task_id":"task-7",
+            "requester_id":"human-root", "goal":"independent target fixture", "constraints":[],
+            "input_object_refs":[source], "open_questions":[], "success_criteria":["complete safely"],
+            "risk_class":"LOW", "budget_account_ref":"budget-fixture",
+            "routing_constraints":{"allowed_providers":[],"forbidden_providers":[],"locality":"ANY","network_required":False,"modalities":[]},
+            "routing_preferences":{"optimize_for":"BALANCED"}, "created_at":datetime.now(timezone.utc).isoformat(),
+        }
+        self._classify("class-independent-contract", "OBJECT", "known-independent-contract")
+        self.store.put_object(command_id="put-independent-contract", object_id="known-independent-contract",
+            payload=json.dumps(contract).encode(), object_type="task_contract", created_by_run="run-7",
+            classification_assertion_ref="class-independent-contract")
+        route = self._put("known-independent-route", b"independent route artifact")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+
+        for suffix, target in (("contract", "known-independent-contract"), ("route", route)):
+            plan_id = "known-independent-plan-" + suffix
+            record_id = "known-independent-record-" + suffix
+            barrier_id = "known-independent-barrier-" + suffix
+            grant_id = "known-independent-grant-" + suffix
+            approval_id = "known-independent-approval-" + suffix
+            plan = self.purge.plan(command_id="known-independent-plan-command-" + suffix,
+                plan_id=plan_id, task_id="task-7", target_refs=[target])
+            now = datetime.now(timezone.utc)
+            self.authority.create_grant({
+                "schema_id":"nexus.delegation_grant", "schema_version":1, "grant_id":grant_id,
+                "issued_by":"human-root", "granted_to":"agent", "task_scope":["task-7"],
+                "resource_scope":[plan_id,record_id], "action_scope":["PURGE_EXECUTE"],
+                "audience_scope":["nexus-runtime"], "issued_at":now.isoformat(),
+                "expires_at":(now+timedelta(days=1)).isoformat(), "status":"ACTIVE", "policy_version":"1",
+            }, grant_id)
+            self.authority.create_approval({
+                "schema_id":"nexus.approval_decision", "schema_version":1, "approval_id":approval_id,
+                "approver_principal_id":"human-root", "target_type":"PURGE_EXECUTE", "target_ref":plan_id,
+                "effect_id":record_id, "payload_integrity_hash":plan["plan_hash"], "decision":"APPROVE",
+                "approved_scope":["PURGE_EXECUTE",plan_id], "policy_version":"1", "issued_at":now.isoformat(),
+            }, approval_id)
+            result = self.purge.execute(command_id="known-independent-execute-" + suffix,
+                record_id=record_id, barrier_id=barrier_id, plan=plan, grant_id=grant_id,
+                task_id="task-7", approval_id=approval_id)
+            self.assertEqual(result["status"], "COMPLETED")
+            with self.store._connection() as conn:
+                state = conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (target,)).fetchone()[0]
+            self.assertEqual(state, "PURGED")
+
+    def test_reason_only_classification_approval_request_and_memory_metadata_redaction(self):
+        related = self._put("unrelated-live", b"unrelated live subject")
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) VALUES('classification-reason-only','OBJECT',?,'PUBLIC','[]','1',?,'agent')", (related, f"reason includes {self.claim}"))
+        now = datetime.now(timezone.utc).isoformat()
+        classification = {"schema_id":"nexus.classification_assertion","schema_version":1,"assertion_id":"classification-purged-replay","subject_type":"OBJECT","subject_ref":self.claim,"sensitivity_level":"PUBLIC","handling_tags":[],"policy_version":"1","reason":f"assertion reason {self.claim}","actor_id":"agent","supersedes":"class-claim-7"}
+        self.authority.record_classification_assertion(classification, grant_id="grant-7", task_id="task-7", audience="nexus-runtime", command_id="classification-purged-replay-command")
+        self.authority.create_approval({"schema_id":"nexus.approval_decision","schema_version":1,"approval_id":"approval-request-only","approver_principal_id":"human-root","target_type":"UNMAPPED_ACTION","target_ref":"external-resource","effect_id":"not-an-effect","payload_integrity_hash":"0"*64,"decision":"APPROVE","approved_scope":["UNMAPPED_ACTION","external-resource"],"policy_version":"1","issued_at":now,"reason":"unrelated explanation","request_ref":"object:"+self.claim}, "approval-request-only")
+        verification = self._human_verification("verify-metadata-only")
+        with self.store._connection() as conn:
+            conn.execute("INSERT INTO memory_candidates(candidate_id,claim_ref,owner,classification_assertion_ref,verification_ref,truth_state,status,metadata_json,created_at,expires_at) VALUES('metadata-only',?,'agent','class-evidence-7',?,'VERIFIED','ADMITTED',?,?,NULL)", (self.evidence, verification["verification_id"], json.dumps({"note":self.claim}), now))
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="minimal-redact-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
+        self._approve_purge(plan["plan_hash"])
+        self.assertEqual(self.purge.execute(command_id="minimal-redact-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")["status"], "COMPLETED")
+        self.assertIsNone(self.authority.record_classification_assertion(classification, grant_id="grant-7", task_id="task-7", audience="nexus-runtime", command_id="classification-purged-replay-command"))
+        with self.assertRaises(CommandConflict):
+            self.authority.record_classification_assertion({**classification,"reason":"changed"}, grant_id="grant-7", task_id="task-7", audience="nexus-runtime", command_id="classification-purged-replay-command")
+        with self.store._connection() as conn:
+            assertion = conn.execute("SELECT subject_ref,reason FROM classification_assertions WHERE assertion_id='classification-reason-only'").fetchone()
+            approval = conn.execute("SELECT target_ref,effect_id,payload_integrity_hash,approved_scope_json,reason,request_ref FROM approval_decisions WHERE approval_id='approval-request-only'").fetchone()
+            candidate = conn.execute("SELECT claim_ref,status,metadata_json FROM memory_candidates WHERE candidate_id='metadata-only'").fetchone()
+        self.assertEqual((assertion["subject_ref"], assertion["reason"]), (related, "[redacted by purge]"))
+        self.assertEqual((approval["target_ref"], approval["effect_id"], approval["payload_integrity_hash"], approval["approved_scope_json"], approval["reason"], approval["request_ref"]), ("external-resource", "not-an-effect", "0"*64, '["UNMAPPED_ACTION","external-resource"]', "unrelated explanation", None))
+        self.assertEqual((candidate["claim_ref"], candidate["status"]), (self.evidence, "PURGED"))
+        self.assertNotIn(self.claim, candidate["metadata_json"])
+
+    def test_inconclusive_verification_exact_replay_uses_immutable_input_binding_after_purge(self):
+        missing = self._put("missing-evidence-7", b"evidence bytes intentionally removed before verification")
+        missing_meta = self.store.get_object_metadata(missing)
+        self.store._payload_path(missing_meta["payload_uri"]).unlink()
+        result = self.verifier.verify_object_integrity(verification_id="verify-inconclusive-purge", target_ref=self.evidence, evidence_refs=[missing], run_id="run-7")
+        self.assertEqual(result["verdict"], "INCONCLUSIVE")
+        self.assertEqual(result["missing_evidence"], [missing])
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        plan = self.purge.plan(command_id="inconclusive-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[missing])
+        self._approve_purge(plan["plan_hash"])
+        self.assertEqual(self.purge.execute(command_id="inconclusive-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")["status"], "COMPLETED")
+        replay = self.verifier.verify_object_integrity(verification_id="verify-inconclusive-purge", target_ref=self.evidence, evidence_refs=[missing], run_id="run-7")
+        self.assertNotIn(missing, json.dumps(replay))
+        self.assertEqual(replay["missing_evidence"], ["REDACTED_PURGED"])
+        with self.assertRaises(CommandConflict):
+            self.verifier.verify_object_integrity(verification_id="verify-inconclusive-purge", target_ref=self.evidence, evidence_refs=[self.claim], run_id="run-7")
+
     def test_inspect_denies_cross_task_purged_objects_and_unresolved_approvals(self):
         plan = self.purge.plan(command_id="inspect-purge-plan", plan_id="plan-7", task_id="task-7", target_refs=[self.claim])
         self._approve_purge(plan["plan_hash"])
         now = datetime.now(timezone.utc)
-        with self.store._connection() as conn:
-            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
-        completed = self.purge.execute(command_id="inspect-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
-        self.assertEqual(completed["status"], "COMPLETED")
+        # These grants predate the purge. New grants may not reintroduce a
+        # purged object locator into ordinary Authority state.
         self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-task-7-inspect",
             "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["task:task-7","object:"+self.claim],
             "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
@@ -509,6 +684,30 @@ class MemoryPurgeTests(unittest.TestCase):
             "resource_scope":["task:task-8","object:"+self.claim,"object:"+self.evidence,"approval:approval-7","approval:approval-unresolved"],
             "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
             "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-task-8-inspect")
+        with self.store._connection() as conn:
+            conn.execute("UPDATE runs SET status='SUCCEEDED' WHERE run_id='run-7'")
+        completed = self.purge.execute(command_id="inspect-purge-execute", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
+        self.assertEqual(completed["status"], "COMPLETED")
+        with self.assertRaises(PurgedObject):
+            self.authority.create_grant({"schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"grant-after-purge",
+                "issued_by":"human-root","granted_to":"agent","task_scope":["task-7"],"resource_scope":["object:"+self.claim],
+                "action_scope":["INSPECT"],"audience_scope":["nexus-inspect"],"issued_at":now.isoformat(),
+                "expires_at":(now+timedelta(days=1)).isoformat(),"status":"ACTIVE","policy_version":"1"}, "grant-after-purge")
+        with self.store._connection() as conn:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute("INSERT INTO delegation_grants(grant_id,parent_grant_id,issued_by,granted_to,task_scope_json,resource_scope_json,action_scope_json,audience_scope_json,issued_at,expires_at,status,policy_version,credential_ref) VALUES('raw-grant-after-purge',NULL,'human-root','agent','[\"task-7\"]',?,?,?, ?,?,'ACTIVE','1',NULL)", (json.dumps(["object:"+self.claim]), json.dumps(["INSPECT"]), json.dumps(["nexus-inspect"]), now.isoformat(), (now+timedelta(days=1)).isoformat()))
+            approval_insert = "INSERT INTO approval_decisions(approval_id,approver_principal_id,target_type,target_ref,effect_id,payload_integrity_hash,decision,approved_scope_json,policy_version,issued_at,expires_at,reason,request_ref) VALUES(?,'human-root','UNMAPPED_ACTION',?,NULL,NULL,'APPROVE','[]','1',?,NULL,NULL,?)"
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute(approval_insert, ("raw-approval-target-canonical", "object:"+self.claim, now.isoformat(), None))
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute(approval_insert, ("raw-approval-request-canonical", "external-target", now.isoformat(), "object:"+self.claim))
+        budgets = BudgetService(self.store)
+        budgets.create_account(command_id="canonical-effect-account", account_id="canonical-effect-account", task_id="task-7", amount_limit=1, unit="credits", model_call_limit=0, tool_call_limit=1, child_run_limit=1)
+        reservation = budgets.reserve(command_id="canonical-effect-reserve", account_id="canonical-effect-account", task_id="task-7", run_id="run-pending", amount=0, tool_calls=1)
+        effect_doc = {"effect_id":"raw-canonical-effect","run_id":"run-pending","idempotency_key":"raw-canonical-effect-key","execution_state":"DECLARED","effect_outcome":"UNDETERMINED","reconciliation_status":"NOT_REQUIRED"}
+        with self.store._connection() as conn:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "PURGED_OBJECT_REFERENCE_DENIED"):
+                conn.execute("INSERT INTO effects(effect_id,run_id,tool_id,tool_descriptor_version,action_type,target_ref,payload_integrity_hash,payload_object_ref,idempotency_key,grant_id,approval_ref,budget_reservation_ref,execution_state,effect_outcome,reconciliation_status,external_receipt_ref,effect_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("raw-canonical-effect","run-pending","test-tool","1","TEST_ACTION","object:"+self.claim,"0"*64,self.evidence,"raw-canonical-effect-key","grant-7",None,reservation,"DECLARED","UNDETERMINED","NOT_REQUIRED",None,json.dumps(effect_doc,sort_keys=True),now.isoformat(),now.isoformat()))
         self._classify("class-run-8", "RUN", "run-8")
         with self.store._connection() as conn:
             conn.execute("UPDATE tasks SET root_run_id='run-7',status='ACTIVE' WHERE task_id='task-7'")
@@ -906,7 +1105,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 "reconciliation_status": "NOT_REQUIRED",
             })
             self.assertNotIn(effect_id, trace_fact)
-            self.assertEqual((approval_fact["decision"], approval_fact["approver_principal_id"], approval_fact["target_ref"], approval_fact["payload_integrity_hash"], approval_fact["approved_scope_json"]), ("APPROVE", "human-root", "REDACTED_PURGED", None, '[]'))
+            self.assertEqual((approval_fact["decision"], approval_fact["approver_principal_id"], approval_fact["target_ref"], approval_fact["payload_integrity_hash"], approval_fact["approved_scope_json"]), ("APPROVE", "human-root", "REDACTED_PURGED", None, '["FAKE_ACTION","https://private.example/recipient/42"]'))
             self.assertTrue(conn.execute("SELECT 1 FROM json_each(?, '$.object_refs') WHERE value='REDACTED_PURGED'", (trace_fact,)).fetchone())
             purge_ref = conn.execute("SELECT payload_uri,integrity_hash FROM purge_execution_refs WHERE record_id='record-7' AND object_id=?", (self.claim,)).fetchone()
             self.assertEqual((purge_ref["payload_uri"], purge_ref["integrity_hash"]), (None, None))
@@ -1092,10 +1291,10 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertNotIn(self.evidence, effect_row["effect_json"])
         approval_by_id = {row["approval_id"]:row for row in approval_rows}
         self.assertEqual(approval_by_id["approval-verify-proof-human"]["target_ref"], "REDACTED_PURGED")
-        self.assertIsNone(approval_by_id["approval-verify-proof-human"]["effect_id"])
+        self.assertEqual(approval_by_id["approval-verify-proof-human"]["effect_id"], "verify-proof-human")
         self.assertEqual(approval_by_id["approval-purge-sensitive"]["target_ref"], "REDACTED_PURGED")
         self.assertEqual(approval_by_id["approval-purge-sensitive"]["payload_integrity_hash"], None)
-        self.assertEqual(approval_by_id["approval-purge-sensitive"]["approved_scope_json"], "[]")
+        self.assertEqual(approval_by_id["approval-purge-sensitive"]["approved_scope_json"], '["FAKE_ACTION","https://private.example/recipient/42"]')
         self.assertIsNone(approval_by_id["approval-purge-sensitive"]["reason"])
         self.assertIsNone(approval_by_id["approval-purge-sensitive"]["request_ref"])
         self.assertNotIn("verification_results.target_ref:claim-7", occurrences)

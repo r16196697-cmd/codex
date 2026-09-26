@@ -105,6 +105,7 @@ class AuthorityService:
                 if self.store._replay_command(conn, command_id, operation, request_hash) is not None:
                     conn.commit()
                     return
+                self.store._assert_unbarred_object_resources(conn, grant["resource_scope"])
                 for principal_id in (grant["issued_by"], grant["granted_to"]):
                     row = conn.execute("SELECT status FROM principals WHERE principal_id=?", (principal_id,)).fetchone()
                     if not row or row["status"] != "ACTIVE":
@@ -327,6 +328,10 @@ class AuthorityService:
                 if self.store._replay_command(conn, command_id, operation, request_hash) is not None:
                     conn.commit()
                     return
+                self.store._assert_unbarred_object_resources(
+                    conn,
+                    [approval.get("target_ref"), approval.get("request_ref"), *approval.get("approved_scope", [])],
+                )
                 approver = conn.execute("SELECT status,principal_type FROM principals WHERE principal_id=?", (approval["approver_principal_id"],)).fetchone()
                 if not approver or approver["status"] != "ACTIVE" or approver["principal_type"] != "HUMAN":
                     raise ApprovalDenied("APPROVER_MUST_BE_ACTIVE_HUMAN")
@@ -376,7 +381,20 @@ class AuthorityService:
                             assertion["reason"], assertion["actor_id"], assertion.get("supersedes"))
                 persisted = None if row is None else (row["subject_type"], row["subject_ref"], row["sensitivity_level"],
                             row["handling_tags_json"], row["policy_version"], row["reason"], row["actor_id"], row["supersedes"])
-                if committed != {"assertion_id": assertion["assertion_id"]} or persisted != expected:
+                redacted_projection = False
+                if row is not None and persisted != expected:
+                    stable_fields = persisted[0:1] + persisted[2:5] + persisted[6:8]
+                    expected_stable = expected[0:1] + expected[2:5] + expected[6:8]
+                    subject_redacted = (
+                        row["subject_ref"] == "REDACTED_PURGED"
+                        and assertion["subject_type"] == "OBJECT"
+                        and conn.execute("SELECT 1 FROM object_states WHERE object_id=? AND payload_state='PURGED'", (assertion["subject_ref"],)).fetchone() is not None
+                    )
+                    reason_redacted = row["reason"] == "[redacted by purge]" and conn.execute("SELECT 1 FROM object_states WHERE payload_state='PURGED'").fetchone() is not None
+                    redacted_projection = (stable_fields == expected_stable
+                        and (row["subject_ref"] == assertion["subject_ref"] or subject_redacted)
+                        and (row["reason"] == assertion["reason"] or reason_redacted))
+                if committed != {"assertion_id": assertion["assertion_id"]} or (persisted != expected and not redacted_projection):
                     raise AuthorizationDenied("CLASSIFICATION_REPLAY_PROJECTION_MISMATCH")
                 return
         chain = self.validate_delegation_chain(grant_id)

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from kernel.purge.journal import IndependentPurgeJournal
 from kernel.object.errors import CommandConflict
+from kernel.object_refs import known_object_refs
 from kernel.runtime.errors import RuntimeDenied
 
 
@@ -404,6 +405,16 @@ class PurgeService:
                 # the binding event with its governed references redacted.
                 purged_ids = [row[0] for row in conn.execute("SELECT object_id FROM object_states WHERE payload_state='PURGED'")]
                 with self.store._allow_purge_redaction(purged_ids):
+                    # Subtask JSON is a frozen graph projection, not an object
+                    # envelope. Detach exact purged inputs and make the node
+                    # permanently non-schedulable without rewriting DAG hash.
+                    for subtask in conn.execute("SELECT subtask_id,node_json,input_state FROM subtasks WHERE input_state='AVAILABLE'").fetchall():
+                        node = json.loads(subtask["node_json"])
+                        inputs = node.get("input_object_refs", [])
+                        kept = [ref for ref in inputs if ref not in purged_ids]
+                        if len(kept) != len(inputs):
+                            node["input_object_refs"] = kept
+                            conn.execute("UPDATE subtasks SET node_json=?,input_state='PURGED_INPUT' WHERE subtask_id=?", (_canon(node), subtask["subtask_id"]))
                     conn.execute(
                         "DELETE FROM run_manifest_inputs WHERE input_object_id IN "
                         "(SELECT object_id FROM object_states WHERE payload_state='PURGED') "
@@ -462,8 +473,12 @@ class PurgeService:
 
         # Classification assertions remain as non-identifying policy facts.
         for row in conn.execute("SELECT assertion_id,subject_type,subject_ref,reason FROM classification_assertions WHERE subject_type='OBJECT'").fetchall():
-            if row["subject_ref"] in purged or any(ref in (row["reason"] or "") for ref in purged):
+            subject_purged = row["subject_ref"] in purged
+            reason_contains = any(ref in (row["reason"] or "") for ref in purged)
+            if subject_purged:
                 conn.execute("UPDATE classification_assertions SET subject_ref='REDACTED_PURGED',reason='[redacted by purge]' WHERE assertion_id=?", (row["assertion_id"],))
+            elif reason_contains:
+                conn.execute("UPDATE classification_assertions SET reason='[redacted by purge]' WHERE assertion_id=?", (row["assertion_id"],))
 
         # Rebuildable projections are detached/removed, never redirected to a
         # fake live object. Terminal runs may retain their historical state.
@@ -496,8 +511,12 @@ class PurgeService:
             effect_redacted = row["effect_id"] in effect_ids
             target_redacted = row["target_ref"] in purged or effect_redacted
             scope_redacted = contains_purged(scopes)
-            direct_redacted = row["target_ref"] in purged or scope_redacted or contains_purged(row["reason"])
-            if not (effect_redacted or direct_redacted):
+            reason_redacted = any(ref in (row["reason"] or "") for ref in purged)
+            request_redacted = isinstance(row["request_ref"], str) and any(
+                row["request_ref"] in {ref, "object:" + ref} for ref in purged
+            )
+            provenance_redacted = row["target_ref"] in purged or scope_redacted or effect_redacted
+            if not (provenance_redacted or reason_redacted or request_redacted):
                 continue
             owner = conn.execute("SELECT r.task_id FROM effects e JOIN runs r ON r.run_id=e.run_id WHERE e.effect_id=?", (row["effect_id"],)).fetchone() if row["effect_id"] else None
             if owner is None:
@@ -513,12 +532,18 @@ class PurgeService:
                 owner_task = owner_rows[0]["task_id"] if len(owner_rows) == 1 else None
             else:
                 owner_task = owner["task_id"]
-            if owner_task:
+            if owner_task and provenance_redacted:
                 conn.execute("INSERT OR IGNORE INTO purge_redacted_approval_owners(approval_id,task_id,recorded_at) VALUES(?,?,?)", (row["approval_id"], owner_task, _now()))
-            narrowed_scopes = [] if effect_redacted else [value for value in scopes if not any(value in {ref, "object:" + ref} for ref in purged)]
+            narrowed_scopes = [value for value in scopes if not any(value in {ref, "object:" + ref} for ref in purged)]
             conn.execute(
-                "UPDATE approval_decisions SET target_ref=?,effect_id=?,payload_integrity_hash=NULL,approved_scope_json=?,reason=NULL,request_ref=NULL WHERE approval_id=?",
-                ("REDACTED_PURGED" if target_redacted else row["target_ref"], None if (effect_redacted or direct_redacted) else row["effect_id"], _canon(narrowed_scopes), row["approval_id"]),
+                "UPDATE approval_decisions SET target_ref=?,effect_id=?,payload_integrity_hash=?,approved_scope_json=?,reason=?,request_ref=? WHERE approval_id=?",
+                ("REDACTED_PURGED" if target_redacted else row["target_ref"],
+                 None if effect_redacted else row["effect_id"],
+                 None if effect_redacted else row["payload_integrity_hash"],
+                 _canon(narrowed_scopes),
+                 None if reason_redacted or effect_redacted else row["reason"],
+                 None if request_redacted or effect_redacted else row["request_ref"],
+                 row["approval_id"]),
             )
         # Narrow only exact object scopes; all other grant scope remains intact.
         for row in conn.execute("SELECT grant_id,resource_scope_json FROM delegation_grants").fetchall():
@@ -695,6 +720,20 @@ class PurgeService:
                 rows = conn.execute(f"SELECT from_id FROM object_relations WHERE to_id IN ({marks}) AND relation_type IN ('derived_from','generated_from','supersedes')", tuple(found)).fetchall()
                 extras = {row[0] for row in rows} - found
                 if extras: found.update(extras); changed = True
+                # Resolve historical known-schema references that predate
+                # lineage projection rows. This is intentionally schema-aware.
+                governed = conn.execute(
+                    "SELECT e.object_id,e.payload_uri FROM object_envelopes e "
+                    "WHERE e.object_type IN ('task_contract','run_manifest')"
+                ).fetchall()
+                for envelope in governed:
+                    try:
+                        document = json.loads(self.store._payload_path(envelope["payload_uri"]).read_text(encoding="utf-8"))
+                    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if found.intersection(known_object_refs(document)) and envelope["object_id"] not in found:
+                        found.add(envelope["object_id"])
+                        changed = True
                 marks = ",".join("?" for _ in found)
                 rows = conn.execute(f"SELECT c.claim_ref FROM memory_candidates c LEFT JOIN memory_candidate_evidence e USING(candidate_id) WHERE c.claim_ref IN ({marks}) OR e.evidence_object_id IN ({marks})", (*found, *found)).fetchall()
                 extras = {row[0] for row in rows} - found

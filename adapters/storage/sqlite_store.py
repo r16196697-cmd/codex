@@ -16,6 +16,7 @@ from typing import Any, Iterable
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from kernel.object_refs import known_object_refs
 from kernel.object.errors import (
     CommandConflict,
     ConcurrentModification,
@@ -607,6 +608,19 @@ class ObjectStore:
             raise PurgedObject("PURGED_OBJECT_REFERENCE_DENIED")
 
     @staticmethod
+    def _assert_unbarred_object_resources(conn: sqlite3.Connection, resources: Iterable[str | None]) -> None:
+        """Guard exact object IDs/canonical object: IDs without guessing strings."""
+        candidates = {
+            value[7:] if value.startswith("object:") else value
+            for value in resources if isinstance(value, str) and value
+        }
+        if not candidates:
+            return
+        marks = ",".join("?" for _ in candidates)
+        existing = [row[0] for row in conn.execute(f"SELECT object_id FROM objects WHERE object_id IN ({marks})", sorted(candidates))]
+        ObjectStore._assert_unbarred(conn, existing)
+
+    @staticmethod
     def _assert_readable(conn: sqlite3.Connection, object_ids: Iterable[str]) -> None:
         ids = sorted(set(object_ids))
         if not ids:
@@ -656,15 +670,23 @@ class ObjectStore:
         if not isinstance(object_id, str) or not object_id:
             raise ValueError("object_id must be a non-empty caller-generated identifier")
         digest = _sha256(payload)
-        manifest_inputs: list[str] = []
-        if object_type == "run_manifest":
+        governed_inputs: list[str] = []
+        if object_type in {"run_manifest", "task_contract"}:
             try:
-                manifest_doc = json.loads(payload.decode("utf-8"))
+                governed_doc = json.loads(payload.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise IntegrityMismatch("RUN_MANIFEST_PAYLOAD_INVALID") from exc
-            self._validate(f"nexus.run_manifest@{manifest_doc.get('schema_version')}.schema.json", manifest_doc)
-            manifest_inputs = sorted(set(manifest_doc["input_object_refs"]))
-        source_ids = sorted(set(derived_from) | set(manifest_inputs))
+                raise IntegrityMismatch("GOVERNED_OBJECT_PAYLOAD_INVALID") from exc
+            schema_id = governed_doc.get("schema_id")
+            schema_version = governed_doc.get("schema_version")
+            if object_type == "run_manifest" and schema_id == "nexus.run_manifest":
+                self._validate(f"nexus.run_manifest@{schema_version}.schema.json", governed_doc)
+            elif object_type == "task_contract" and schema_id == "nexus.task_contract":
+                self._validate(f"nexus.task_contract@{schema_version}.schema.json", governed_doc)
+            else:
+                raise IntegrityMismatch("GOVERNED_OBJECT_SCHEMA_MISMATCH")
+            governed_inputs = known_object_refs(governed_doc)
+        explicit_sources = sorted(set(derived_from))
+        source_ids = sorted(set(explicit_sources) | set(governed_inputs))
         request = {
             "payload_integrity_hash": digest,
             "object_id": object_id,
@@ -685,6 +707,21 @@ class ObjectStore:
                 if conn.execute("SELECT 1 FROM objects WHERE object_id=?", (object_id,)).fetchone():
                     raise CommandConflict("OBJECT_ID_ALREADY_EXISTS")
                 self._assert_unbarred(conn, source_ids)
+                if explicit_sources:
+                    placeholders = ",".join("?" for _ in explicit_sources)
+                    found = {row[0] for row in conn.execute(
+                        f"SELECT object_id FROM objects WHERE object_id IN ({placeholders})", explicit_sources
+                    )}
+                    if found != set(explicit_sources):
+                        raise ObjectNotFound("LINEAGE_SOURCE_NOT_FOUND")
+                # A MODEL/TOOL manifest may declare its route before the route
+                # artifact is persisted. Keep the caller request hash stable,
+                # but create the route lineage edge atomically when the object
+                # already exists; the Host must bind a later route before READY.
+                lineage_sources = [source_id for source_id in source_ids if conn.execute(
+                    "SELECT 1 FROM objects WHERE object_id=?", (source_id,)
+                ).fetchone()]
+                manifest_inputs = [ref for ref in governed_inputs if ref in lineage_sources]
                 if object_type == "run_manifest":
                     if not conn.execute("SELECT 1 FROM runs WHERE run_id=?", (created_by_run,)).fetchone():
                         raise ObjectNotFound("RUN_MANIFEST_RUN_NOT_FOUND")
@@ -738,9 +775,7 @@ class ObjectStore:
                 if classification_row["supersedes"]:
                     classification["supersedes"] = classification_row["supersedes"]
                 self._validate("nexus.classification_assertion@1.schema.json", classification)
-                for source_id in source_ids:
-                    if not conn.execute("SELECT 1 FROM objects WHERE object_id=?", (source_id,)).fetchone():
-                        raise ObjectNotFound("OBJECT_NOT_FOUND")
+                for source_id in lineage_sources:
                     source = conn.execute(
                         "SELECT c.sensitivity_level,c.handling_tags_json,c.policy_version FROM object_envelopes e "
                         "JOIN classification_assertions c ON c.assertion_id=e.classification_assertion_ref WHERE e.object_id=?",
@@ -753,9 +788,9 @@ class ObjectStore:
                         raise IntegrityMismatch("DERIVED_CLASSIFICATION_DOWNGRADE")
                 relations = [
                     {"schema_id": "nexus.object_relation", "schema_version": 1, "from_id": object_id, "relation_type": "derived_from", "to_id": source_id}
-                    for source_id in source_ids
+                    for source_id in lineage_sources
                 ]
-                for source_id, relation in zip(source_ids, relations):
+                for source_id, relation in zip(lineage_sources, relations):
                     self._validate("nexus.object_relation@1.schema.json", relation)
                     if not conn.execute("SELECT 1 FROM objects WHERE object_id=?", (source_id,)).fetchone():
                         raise ObjectNotFound("OBJECT_NOT_FOUND")
@@ -771,10 +806,10 @@ class ObjectStore:
                     "INSERT INTO object_states(object_id,revision,lifecycle,validity,payload_state) VALUES(?,NULL,'ACTIVE','VALID','AVAILABLE')",
                     (object_id,),
                 )
-                for source_id in source_ids:
+                for source_id in lineage_sources:
                     conn.execute("INSERT INTO object_relations(from_id,relation_type,to_id) VALUES(?,?,?)", (object_id, "derived_from", source_id))
                 if object_type == "run_manifest":
-                    conn.executemany("INSERT INTO run_manifest_inputs(run_id,manifest_object_id,input_object_id) VALUES(?,?,?)", ((created_by_run, object_id, input_id) for input_id in manifest_inputs))
+                    conn.executemany("INSERT OR IGNORE INTO run_manifest_inputs(run_id,manifest_object_id,input_object_id) VALUES(?,?,?)", ((created_by_run, object_id, input_id) for input_id in manifest_inputs))
                 result = {"object_id": object_id}
                 self._record_command(conn, command_id, operation, request_hash, result)
                 conn.commit()

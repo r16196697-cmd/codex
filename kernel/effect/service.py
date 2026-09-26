@@ -137,7 +137,8 @@ class DeterministicEffectService:
                 active_reservation = conn.execute("SELECT state FROM budget_reservations WHERE reservation_id=?", (run["budget_reservation_ref"],)).fetchone()
                 if not active_run or active_run["status"] != "RUNNING" or active_run["grant_id"] != effect["grant_id"] or not active_reservation or active_reservation["state"] != "RESERVED":
                     raise RuntimeDenied("EFFECT_RUN_OR_BUDGET_CHANGED_DURING_PREPARATION")
-                self.store._assert_unbarred(conn, [payload_object_ref, effect["target_ref"]])
+                self.store._assert_unbarred(conn, [payload_object_ref])
+                self.store._assert_unbarred_object_resources(conn, [effect["target_ref"]])
                 if conn.execute("SELECT 1 FROM effects WHERE effect_id=? OR idempotency_key=?", (effect["effect_id"], effect["idempotency_key"])).fetchone():
                     raise RuntimeDenied("EFFECT_IDEMPOTENCY_CONFLICT")
                 if compensates_effect_id:
@@ -206,7 +207,8 @@ class DeterministicEffectService:
                 run = conn.execute("SELECT task_id,grant_id,status FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
                 if not run or run["status"] != "RUNNING" or run["grant_id"] != row["grant_id"]:
                     raise RuntimeDenied("EFFECT_TOOL_RUN_NOT_ACTIVE_AT_COMMIT")
-                self.store._assert_unbarred(conn, [row["payload_object_ref"], row["target_ref"]])
+                self.store._assert_unbarred(conn, [row["payload_object_ref"]])
+                self.store._assert_unbarred_object_resources(conn, [row["target_ref"]])
                 descriptor = json.loads(conn.execute("SELECT descriptor_json FROM tool_descriptors WHERE tool_id=? AND version=?", (row["tool_id"], row["tool_descriptor_version"])).fetchone()[0])
                 approval_id = row["approval_ref"]
                 request_gate = {"task": run["task_id"], "resource": row["target_ref"], "action": "EFFECT_COMMIT", "audience": "nexus-runtime"}

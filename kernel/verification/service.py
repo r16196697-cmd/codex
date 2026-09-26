@@ -18,6 +18,21 @@ class VerificationService:
     def __init__(self, store, authority):
         self.store, self.authority = store, authority
 
+    @staticmethod
+    def _input_commitment(document: dict) -> str:
+        encoded = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _contains_redacted(value) -> bool:
+        if isinstance(value, str):
+            return value == "REDACTED_PURGED"
+        if isinstance(value, list):
+            return any(VerificationService._contains_redacted(item) for item in value)
+        if isinstance(value, dict):
+            return any(VerificationService._contains_redacted(item) for item in value.values())
+        return False
+
     def verify_object_integrity(self, *, verification_id: str, target_ref: str, evidence_refs: list[str], run_id: str, independence: dict[str, str] | None = None) -> dict:
         self.store._require_mode("core_write")
         evidence = sorted(set(evidence_refs))
@@ -30,6 +45,15 @@ class VerificationService:
             prior = conn.execute("SELECT target_ref,evidence_used_json,independence_json,run_id,result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
         if prior:
             original = json.loads(prior["result_json"])
+            if self._contains_redacted(original):
+                with self.store._connection() as conn:
+                    binding = conn.execute("SELECT input_commitment FROM verification_request_bindings WHERE verification_id=?", (verification_id,)).fetchone()
+                supplied = self._input_commitment({"kind":"T1","target_ref":target_ref,"evidence_refs":evidence,"run_id":run_id,"independence":axes})
+                if not binding:
+                    raise RuntimeDenied("PURGED_REPLAY_RESULT")
+                if binding["input_commitment"] != supplied:
+                    raise CommandConflict("COMMAND_CONFLICT")
+                return original
             # The public result may have been purge-redacted. Reconstruct only
             # caller-controlled input positions before checking the immutable
             # historical command hash; never reconstruct/return the result.
@@ -71,6 +95,8 @@ class VerificationService:
                 if prior is not None:
                     conn.commit(); return result
                 conn.execute("INSERT INTO verification_results(verification_id,target_ref,verdict,verifier_kind,evidence_used_json,independence_json,result_json,attester_principal_id,approval_ref,run_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (verification_id, target_ref, result["verdict"], result["verifier_kind"], json.dumps(evidence), json.dumps(axes, sort_keys=True), json.dumps(result, sort_keys=True), None, None, run_id, _now()))
+                binding = self._input_commitment({"kind":"T1","target_ref":target_ref,"evidence_refs":evidence,"run_id":run_id,"independence":axes})
+                conn.execute("INSERT INTO verification_request_bindings(verification_id,input_commitment,created_at) VALUES(?,?,?)", (verification_id, binding, _now()))
                 self.store._record_command(conn, "verify-" + verification_id, operation, digest, {"verification_id": verification_id, "verdict": result["verdict"]})
                 conn.commit(); return result
             except Exception:
@@ -87,6 +113,15 @@ class VerificationService:
             prior = conn.execute("SELECT result_json FROM verification_results WHERE verification_id=?", (verification_id,)).fetchone()
         if prior:
             original = json.loads(prior["result_json"])
+            if self._contains_redacted(original):
+                with self.store._connection() as conn:
+                    binding = conn.execute("SELECT input_commitment FROM verification_request_bindings WHERE verification_id=?", (verification_id,)).fetchone()
+                supplied = self._input_commitment({"kind":"T3","target_ref":target_ref,"evidence_refs":evidence,"run_id":run_id,"approval_id":approval_id,"attester_principal_id":attester_principal_id,"independence":independence})
+                if not binding:
+                    raise RuntimeDenied("PURGED_REPLAY_RESULT")
+                if binding["input_commitment"] != supplied:
+                    raise CommandConflict("COMMAND_CONFLICT")
+                return original
             candidate = dict(original)
             candidate.update({"target_ref": target_ref, "evidence_used": evidence, "run_id": run_id,
                 "approval_ref": approval_id, "attester_principal_id": attester_principal_id,
@@ -123,6 +158,8 @@ class VerificationService:
                 if self.store._replay_command(conn, "verify-" + verification_id, operation, digest) is not None:
                     conn.commit(); return result
                 conn.execute("INSERT INTO verification_results(verification_id,target_ref,verdict,verifier_kind,evidence_used_json,independence_json,result_json,attester_principal_id,approval_ref,run_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (verification_id, target_ref, "PASS", "T3_HUMAN_OR_DOMAIN", json.dumps(evidence), json.dumps(independence, sort_keys=True), json.dumps(result, sort_keys=True), attester_principal_id, approval_id, run_id, _now()))
+                binding = self._input_commitment({"kind":"T3","target_ref":target_ref,"evidence_refs":evidence,"run_id":run_id,"approval_id":approval_id,"attester_principal_id":attester_principal_id,"independence":independence})
+                conn.execute("INSERT INTO verification_request_bindings(verification_id,input_commitment,created_at) VALUES(?,?,?)", (verification_id, binding, _now()))
                 self.store._record_command(conn, "verify-" + verification_id, operation, digest, {"verification_id": verification_id, "verdict": "PASS"})
                 conn.commit(); return result
             except Exception:
