@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.context_pack@1",
+  "title": "Nexus production Context Pack v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "task_id", "run_id", "selection_basis", "entries", "content_hash", "model_visible_exposure"],
+  "properties": {
+    "schema_id": {"const": "nexus.context_pack"},
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "selection_basis": {"type": "object"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source_ref", "source_type", "classification_assertion_ref", "source_integrity_sha256", "content"],
+        "properties": {
+          "source_ref": {"type": "string", "minLength": 1},
+          "source_type": {"enum": ["user_input", "task_contract", "artifact", "evidence", "claim", "verification", "admitted_memory"]},
+          "classification_assertion_ref": {"type": "string", "minLength": 1},
+          "source_integrity_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "content": {"type": "string"}
+        }
+      }
+    },
+    "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "model_visible_exposure": {"const": "UNKNOWN"}
+  }
+}

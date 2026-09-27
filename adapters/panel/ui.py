@@ -97,6 +97,19 @@ def launch_panel(view_model) -> None:
                 child.destroy()
             ttk.Label(pages[tab], text=content["status"], font=("Segoe UI", 14, "bold")).pack(anchor="w")
             ttk.Label(pages[tab], text=content["detail"], wraplength=650).pack(anchor="w", pady=8)
+            if tab == "CONTEXT" and content.get("pack_id"):
+                counts = ", ".join(f"{key}: {value}" for key, value in sorted(content.get("selected_source_counts", {}).items())) or "none"
+                summary = (
+                    f"Pack: {content['pack_id']}\nTask: {content.get('task_id', 'UNAVAILABLE')}  |  Run: {content.get('run_id', 'UNAVAILABLE')}\n"
+                    f"Sources: {counts} ({content.get('selected_ref_count', 0)} refs)\n"
+                    f"Exact serialized size: {content.get('serialized_byte_size', 'UNAVAILABLE')} bytes\n"
+                    f"Content hash: {content.get('content_hash', 'UNAVAILABLE')}\n"
+                    f"Compilation: {content.get('status')} at {content.get('compiled_at', 'UNAVAILABLE')}\n"
+                    f"Host delivery: {content.get('host_delivery_status', 'UNAVAILABLE')}\n"
+                    f"Model-visible exposure: {content.get('model_visible_exposure', 'UNKNOWN')}\n"
+                    f"Provenance: {content.get('provenance', 'UNAVAILABLE')}"
+                )
+                ttk.Label(pages[tab], text=summary, justify="left", wraplength=700).pack(anchor="w", pady=8)
 
         for child in pages["VALUE"].winfo_children():
             child.destroy()

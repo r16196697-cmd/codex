@@ -149,7 +149,7 @@ class ParticipationPanelTests(unittest.TestCase):
             snapshot = application.view_model.snapshot()
             self.assertEqual(snapshot["participation_mode"], "ACTIVE")
             self.assertEqual(snapshot["runtime_mode"], "NORMAL")
-            self.assertEqual(snapshot["context_status"]["status"], "NOT IMPLEMENTED")
+            self.assertEqual(snapshot["context_status"]["status"], "NOT COMPILED")
             self.assertEqual(snapshot["skill_status"]["status"], "NOT IMPLEMENTED")
             for name in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens",
                          "latency", "context_pack_size", "skill_instructions_selected",
@@ -159,7 +159,7 @@ class ParticipationPanelTests(unittest.TestCase):
                 self.assertIsNone(metric["value"])
                 self.assertEqual(metric["provenance"], "UNAVAILABLE")
             self.assertEqual(set(snapshot["metric_provenance_values"]),
-                             {"OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"})
+                             {"OBSERVED", "HOST_DECLARED", "DERIVED", "ESTIMATED", "UNAVAILABLE"})
             self.assertFalse(snapshot["memory"]["payloads_included"])
             serialized = json.dumps(snapshot, sort_keys=True)
             self.assertNotIn(str(self.root), serialized)
@@ -180,6 +180,7 @@ class ParticipationPanelTests(unittest.TestCase):
             snapshot = application.view_model.snapshot()
             self.assertEqual(snapshot["runtime_mode"], "RECOVERY")
             self.assertEqual(snapshot["query_status"], "RUNTIME_RECOVERY_CORE_BYPASS")
+            self.assertEqual(snapshot["context_status"]["status"], "UNAVAILABLE")
             for key in ("task_count", "recorded_run_count", "unfinished_task_count", "blocked_task_count",
                         "active_run_count", "pending_effect_count"):
                 self.assertIsNone(snapshot["overview"][key])

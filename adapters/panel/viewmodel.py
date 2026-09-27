@@ -6,7 +6,7 @@ from uuid import uuid4
 
 
 UNAVAILABLE = "UNAVAILABLE"
-METRIC_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", UNAVAILABLE})
+METRIC_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", "ESTIMATED", UNAVAILABLE})
 
 
 def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observation_source=None):
@@ -22,11 +22,13 @@ def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observ
 class PanelViewModel:
     """Compose narrow Core projections; the presentation layer sees no store."""
 
-    def __init__(self, *, runtime, participation, panel_queries, memory):
+    def __init__(self, *, runtime, participation, panel_queries, memory, context_packs=None, metering=None):
         self._runtime = runtime
         self._participation = participation
         self._panel_queries = panel_queries
         self._memory = memory
+        self._context_packs = context_packs
+        self._metering = metering
 
     def snapshot(self) -> dict:
         try:
@@ -84,6 +86,40 @@ class PanelViewModel:
             "duplicate_work_avoided_count": _metric(unit="runs", observation_source="NEXUS_CORE_RECORDS"),
             "estimated_cost_or_savings": _metric(unit="provider currency", observation_source="PROVIDER_BILLING"),
         }
+        context_status = {"status": "NOT IMPLEMENTED", "detail": "Production Context Pack runtime is not available."}
+        if self._context_packs is not None:
+            try:
+                context_status = self._context_packs.latest()
+                refs = context_status.get("selected_refs", [])
+                context_status["selected_ref_count"] = len(refs)
+                context_status["selected_refs"] = refs
+                context_status["provenance"] = "NEXUS_CANONICAL_GOVERNED_SOURCES"
+                context_status["detail"] = "Payload bodies are hidden; model-visible exposure remains UNKNOWN."
+            except Exception as exc:
+                context_status = {"status": "UNAVAILABLE", "detail": _reason(exc),
+                                  "host_delivery_status": "UNAVAILABLE", "model_visible_exposure": "UNKNOWN"}
+        if self._metering is not None:
+            try:
+                value_snapshot = self._metering.snapshot()
+                latest = value_snapshot["latest_record"]
+                if latest:
+                    for key, item in latest["metrics"].items():
+                        value_metrics[key] = {
+                            "value": item["value"], "provenance": item["provenance"],
+                            "unit": item["unit"], "basis": item["basis"],
+                            "estimation_basis": item["estimation_basis"],
+                            "observation_source": latest["record_source"],
+                        }
+                value_metrics["metering_status"] = _metric(
+                    value_snapshot["status"], provenance="OBSERVED", observation_source="NEXUS_METERING_SERVICE"
+                )
+                value_metrics["metering_record_count"] = _metric(
+                    value_snapshot["record_count"], provenance="DERIVED", unit="records",
+                    basis="Total persisted metering record count.",
+                )
+            except Exception as exc:
+                value_metrics["metering_status"] = _metric(_reason(exc), provenance="OBSERVED",
+                                                             observation_source="NEXUS_METERING_SERVICE")
         return {
             "participation_mode": participation_mode,
             "participation_state": participation,
@@ -92,7 +128,7 @@ class PanelViewModel:
             "query_status": query_status,
             "tasks": core["tasks"],
             "memory": memory,
-            "context_status": {"status": "NOT IMPLEMENTED", "detail": "Production Context Pack runtime is not available."},
+            "context_status": context_status,
             "skill_status": {"status": "NOT IMPLEMENTED", "detail": "Production Skill Registry/selection is not available."},
             "value_metrics": value_metrics,
             "metric_provenance_values": sorted(METRIC_PROVENANCE),

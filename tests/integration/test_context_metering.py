@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+from adapters.panel.application import open_panel_application
+from adapters.storage import ObjectStore
+from kernel.authority import AuthorityService
+from kernel.authority.errors import AuthorizationDenied
+from kernel.budget import BudgetService
+from kernel.context import ContextPackService
+from kernel.memory.service import MemoryService
+from kernel.metering import MeteringService
+from kernel.metering.service import metric, unavailable_metrics
+from kernel.participation import ParticipationModeService
+from kernel.run import TraceRuntime
+from kernel.runtime import DeterministicRuntime
+from kernel.runtime.errors import RuntimeDenied
+
+
+class ContextMeteringTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="nexus-context-metering-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "data"
+        self.policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
+        self.policy["trust_anchors"] = ["human-root"]
+        self.store = ObjectStore(self.root, policy=self.policy)
+        self.addCleanup(self.store.close)
+        self.authority = AuthorityService(self.store, self.policy)
+        self.budget = BudgetService(self.store)
+        self.trace = TraceRuntime(self.store, self.authority)
+        self.runtime = DeterministicRuntime(self.store, self.authority, self.budget, self.trace)
+        self.participation = ParticipationModeService(self.store)
+        self.memory = MemoryService(self.store, self.authority, verifier=None)
+        self.metering = MeteringService(self.store, self.authority, self.participation)
+        self.context = ContextPackService(store=self.store, authority=self.authority,
+                                          participation=self.participation,
+                                          memory=self.memory, metering=self.metering)
+        self._create_task_run_and_sources()
+
+    def _class(self, ident, subject_type, subject_ref):
+        return {"schema_id": "nexus.classification_assertion", "schema_version": 1,
+                "assertion_id": ident, "subject_type": subject_type, "subject_ref": subject_ref,
+                "sensitivity_level": "PUBLIC", "handling_tags": [], "policy_version": "1",
+                "reason": "isolated Context Pack integration test", "actor_id": "context-agent"}
+
+    def _create_task_run_and_sources(self):
+        now = datetime.now(timezone.utc)
+        self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1,
+                                           "principal_id": "human-root", "principal_type": "HUMAN", "status": "ACTIVE"}, "ctx-human")
+        self.authority.register_principal({"schema_id": "nexus.principal", "schema_version": 1,
+                                           "principal_id": "context-agent", "principal_type": "SERVICE", "status": "ACTIVE"}, "ctx-agent")
+        self.authority.register_trust_anchor({"schema_id": "nexus.trust_anchor", "schema_version": 1,
+                                              "anchor_id": "ctx-anchor", "principal_id": "human-root", "policy_ref": "1"}, "ctx-anchor")
+        self.task_id, self.run_id = "ctx-task", "ctx-run"
+        self.source_ids = ("ctx-source-z", "ctx-source-a")
+        self.memory_id = "ctx-admitted-memory"
+        self.pack_ids = ("ctx-pack-one", "ctx-pack-two", "ctx-pack-observe", "ctx-pack-bypass")
+        all_sources = self.source_ids + (self.memory_id, "ctx-not-eligible-skill")
+        resources = ["task:" + self.task_id, self.run_id, *all_sources,
+                     *("object:" + object_id for object_id in all_sources), *self.pack_ids,
+                     "evt-ctx-run-create"]
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "ctx-grant",
+            "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [self.task_id],
+            "resource_scope": resources,
+            "action_scope": ["RUN_CREATE", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY", "INSPECT", "MEMORY_SEARCH"],
+            "audience_scope": ["nexus-runtime", "nexus-inspect"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "ctx-grant-create")
+        self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": self.task_id,
+                                "requester_id": "human-root", "status": "CREATED", "created_at": now.isoformat(),
+                                "command_id": "ctx-task-create"})
+        assertions = [self._class("ctx-run-class", "RUN", self.run_id),
+                      self._class("ctx-run-event-class", "TRACE_EVENT", "evt-ctx-run-create")]
+        for object_id in self.source_ids + (self.memory_id, "ctx-not-eligible-skill") + self.pack_ids:
+            assertions.append(self._class("class-" + object_id, "OBJECT", object_id))
+        for assertion in assertions:
+            self.authority.record_classification_assertion(assertion, grant_id="ctx-grant", task_id=self.task_id,
+                                                           audience="nexus-runtime", command_id="record-" + assertion["assertion_id"])
+        self.trace.create_run({"schema_id": "nexus.run", "schema_version": 1, "run_id": self.run_id,
+                               "task_id": self.task_id, "executor_kind": "ORCHESTRATOR", "status": "CREATED",
+                               "grant_id": "ctx-grant", "data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": []},
+                               "classification_assertion_ref": "ctx-run-class", "created_at": now.isoformat()},
+                              command_id="ctx-run-create", event_classification_assertion_ref="ctx-run-event-class")
+        for object_id, text in zip(self.source_ids, ("source z", "source a")):
+            self.store.put_object(command_id="put-" + object_id, object_id=object_id, payload=text.encode(),
+                                  object_type="user_input", created_by_run=self.run_id,
+                                  classification_assertion_ref="class-" + object_id)
+        self.store.put_object(command_id="put-admitted-memory", object_id=self.memory_id,
+                              payload=b"verified memory", object_type="memory", created_by_run=self.run_id,
+                              classification_assertion_ref="class-" + self.memory_id)
+        self.store.put_object(command_id="put-skill", object_id="ctx-not-eligible-skill",
+                              payload=b"synthetic skill marker", object_type="skill", created_by_run=self.run_id,
+                              classification_assertion_ref="class-ctx-not-eligible-skill")
+
+    def _compile(self, pack_id, command_id, refs=None, memory_query=None):
+        return self.context.compile(task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+                                    pack_object_id=pack_id, classification_assertion_ref="class-" + pack_id,
+                                    command_id=command_id, source_refs=self.source_ids if refs is None else refs,
+                                    memory_query=memory_query)
+
+    def test_selection_order_content_and_hash_are_deterministic_and_exact_bytes(self):
+        first = self._compile(self.pack_ids[0], "compile-one", refs=list(reversed(self.source_ids)))
+        second = self._compile(self.pack_ids[0], "compile-one", refs=self.source_ids)
+        self.assertEqual(first["content_hash"], second["content_hash"])
+        self.assertEqual(first["selected_refs"], ["ctx-source-a", "ctx-source-z"])
+        first_payload = self.store.get_payload(self.pack_ids[0])
+        document = json.loads(first_payload)
+        self.assertEqual(first["serialized_byte_size"], len(first_payload))
+        self.assertEqual(first["integrity_hash"], hashlib.sha256(first_payload).hexdigest())
+        self.assertEqual([entry["source_ref"] for entry in document["entries"]], first["selected_refs"])
+        self.assertEqual(first["host_delivery_status"], "NOT_DECLARED")
+        self.assertEqual(first["model_visible_exposure"], "UNKNOWN")
+        with self.store._connection() as conn:
+            metric_record = conn.execute("SELECT metrics_json FROM value_metering_records WHERE context_pack_ref=?", (self.pack_ids[0],)).fetchone()
+        self.assertEqual(json.loads(metric_record[0])["context_pack_bytes"]["value"], len(first_payload))
+
+    def test_ineligible_and_unavailable_sources_fail_closed(self):
+        with self.assertRaisesRegex(AuthorizationDenied, "SCOPE_DENIED"):
+            self._compile(self.pack_ids[0], "unauthorized-source", refs=["outside-task-object"])
+        skill_id = "ctx-not-eligible-skill"
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_TYPE_INELIGIBLE"):
+            self._compile(self.pack_ids[0], "ineligible-source", refs=[skill_id])
+        external = sqlite3.connect(self.store.database_path)
+        try:
+            external.execute("UPDATE object_states SET validity='INVALIDATED' WHERE object_id=?", (self.source_ids[0],))
+            external.commit()
+        finally:
+            external.close()
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_UNAVAILABLE"):
+            self._compile(self.pack_ids[0], "invalidated-source", refs=[self.source_ids[0]])
+        external = sqlite3.connect(self.store.database_path)
+        try:
+            external.execute("UPDATE object_states SET payload_state='PURGED' WHERE object_id=?", (self.source_ids[1],))
+            external.commit()
+        finally:
+            external.close()
+        with self.assertRaises(RuntimeDenied):
+            self._compile(self.pack_ids[0], "purged-source", refs=[self.source_ids[1]])
+
+    def test_admitted_memory_only_is_queried_and_raw_history_is_never_consulted(self):
+        admitted = {"object_id": self.memory_id, "body": "verified memory"}
+        with mock.patch.object(self.memory, "search_admitted", return_value=[admitted]) as admitted_search, \
+             mock.patch.object(self.memory, "search_raw", side_effect=AssertionError("raw history must not be queried")):
+            result = self._compile(self.pack_ids[0], "admitted-only", refs=[], memory_query="verified")
+        admitted_search.assert_called_once_with(query="verified", run_id=self.run_id, limit=20)
+        self.assertEqual(result["selected_source_counts"], {"admitted_memory": 1})
+        self.assertEqual(self.store.get_object_metadata(self.pack_ids[0])["object_type"], "artifact")
+
+    def test_observe_and_bypass_cannot_compile_context_but_keep_state(self):
+        self._compile(self.pack_ids[0], "active-pack")
+        for mode, pack_id, command_id in (("OBSERVE", self.pack_ids[2], "observe-pack"),
+                                          ("BYPASS", self.pack_ids[3], "bypass-pack")):
+            with mock.patch.object(self.participation, "current", return_value={"mode": mode}):
+                with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_REQUIRES_ACTIVE_PARTICIPATION"):
+                    self._compile(pack_id, command_id)
+        self.assertEqual(self.context.latest()["pack_id"], self.pack_ids[0])
+        self.assertEqual(self.store.get_payload(self.pack_ids[0])[:1], b"{")
+
+    def test_missing_and_host_declared_telemetry_preserve_provenance(self):
+        empty = unavailable_metrics()
+        self.assertIsNone(empty["model_visible_input_tokens"]["value"])
+        self.assertEqual(empty["model_visible_input_tokens"]["provenance"], "UNAVAILABLE")
+        self._compile(self.pack_ids[0], "meter-pack")
+        record = self.metering.record_host_declared(
+            record_id="host-meter", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+            host_usage={"input_tokens": 100, "cached_input_tokens": 25, "cache_write_input_tokens": 2,
+                        "output_tokens": 4, "reasoning_output_tokens": 1},
+            context_pack_ref=self.pack_ids[0],
+            estimated_cost={"value": 0.01, "currency": "USD", "basis": {
+                "pricing_id": "synthetic-price", "pricing_version": "1", "formula": "explicit test basis"}},
+        )
+        metrics = record["metrics"]
+        self.assertEqual(metrics["host_total_turn_input_tokens"]["provenance"], "HOST_DECLARED")
+        self.assertIsNone(metrics["model_visible_input_tokens"]["value"])
+        self.assertEqual(metrics["cached_input_tokens"]["value"], 25)
+        self.assertEqual(metrics["uncached_input_tokens"]["value"], 75)
+        self.assertEqual(metrics["uncached_input_tokens"]["provenance"], "DERIVED")
+        self.assertEqual(metrics["cache_write_input_tokens"]["value"], 2)
+        self.assertEqual(metrics["reasoning_tokens"]["value"], 1)
+        self.assertIsNone(metrics["token_savings"]["value"])
+        self.assertEqual(metrics["token_savings"]["provenance"], "UNAVAILABLE")
+        self.assertIsNone(metrics["actual_cost"]["value"])
+        self.assertEqual(metrics["actual_cost"]["provenance"], "UNAVAILABLE")
+        self.assertEqual(metrics["estimated_cost"]["provenance"], "ESTIMATED")
+        self.assertEqual(metrics["estimated_cost"]["estimation_basis"]["pricing_version"], "1")
+        total_only = self.metering.record_host_declared(
+            record_id="host-total-only", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+            host_usage={"input_tokens": 33},
+        )["metrics"]
+        self.assertIsNone(total_only["uncached_input_tokens"]["value"])
+        self.assertEqual(total_only["uncached_input_tokens"]["provenance"], "UNAVAILABLE")
+        with self.assertRaisesRegex(ValueError, "ESTIMATED_METRIC_BASIS_REQUIRED"):
+            metric(1.0, "ESTIMATED", unit="USD")
+        estimated = metric(1.0, "ESTIMATED", unit="USD", estimation_basis={
+            "pricing_id": "test-price", "pricing_version": "1", "formula": "explicit test formula"})
+        self.assertEqual(estimated["provenance"], "ESTIMATED")
+
+    def test_panel_reads_context_and_metering_services_without_payload_or_storage_handles(self):
+        self._compile(self.pack_ids[0], "panel-pack")
+        self.metering.record_host_declared(
+            record_id="panel-host-meter", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+            host_usage={"input_tokens": 100, "cached_input_tokens": 30},
+            context_pack_ref=self.pack_ids[0],
+        )
+        self.store.close()
+        app = open_panel_application(self.root, policy_path=Path(__file__).resolve().parents[2] / "policies" / "default-policy.json")
+        try:
+            snapshot = app.view_model.snapshot()
+            context = snapshot["context_status"]
+            self.assertEqual(context["status"], "PACK_COMPILED")
+            self.assertEqual(context["pack_id"], self.pack_ids[0])
+            self.assertEqual(context["model_visible_exposure"], "UNKNOWN")
+            self.assertEqual(snapshot["skill_status"]["status"], "NOT IMPLEMENTED")
+            self.assertEqual(snapshot["value_metrics"]["context_pack_bytes"]["provenance"], "DERIVED")
+            self.assertEqual(snapshot["value_metrics"]["host_total_turn_input_tokens"]["value"], 100)
+            self.assertEqual(snapshot["value_metrics"]["host_total_turn_input_tokens"]["provenance"], "HOST_DECLARED")
+            self.assertIsNone(snapshot["value_metrics"]["skill_instruction_tokens"]["value"])
+            self.assertEqual(snapshot["value_metrics"]["skill_instruction_tokens"]["provenance"], "UNAVAILABLE")
+            serialized = json.dumps(snapshot, sort_keys=True)
+            self.assertNotIn("source z", serialized)
+            self.assertNotIn(str(self.root), serialized)
+            self.assertFalse(hasattr(app.view_model, "store"))
+            ui_source = (Path(__file__).resolve().parents[2] / "adapters" / "panel" / "ui.py").read_text(encoding="utf-8")
+            self.assertNotIn("sqlite3", ui_source)
+            self.assertNotIn("ObjectStore", ui_source)
+        finally:
+            app.close()
+
+    def test_reopen_keeps_pack_and_metering_projection(self):
+        self._compile(self.pack_ids[0], "reopen-pack")
+        self.store.close()
+        reopened = ObjectStore(self.root, policy=self.policy)
+        try:
+            service = ContextPackService(store=reopened, authority=AuthorityService(reopened, self.policy),
+                                         participation=ParticipationModeService(reopened),
+                                         memory=MemoryService(reopened, AuthorityService(reopened, self.policy), verifier=None))
+            self.assertEqual(service.latest()["pack_id"], self.pack_ids[0])
+            with reopened._connection() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM value_metering_records").fetchone()[0], 1)
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        finally:
+            reopened.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

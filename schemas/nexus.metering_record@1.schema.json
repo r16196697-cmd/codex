@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.metering_record@1",
+  "title": "Nexus value metering record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_id", "schema_version", "task_id", "run_id", "record_source", "participation_mode", "context_pack_ref", "metrics", "metrics_sha256", "recorded_at"],
+  "properties": {
+    "schema_id": {"const": "nexus.metering_record"},
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "record_source": {"enum": ["NEXUS_CONTEXT_COMPILER", "HOST_DECLARED", "HOST_OBSERVED"]},
+    "participation_mode": {"enum": ["ACTIVE", "OBSERVE"]},
+    "context_pack_ref": {"type": ["string", "null"]},
+    "metrics": {"type": "object", "additionalProperties": {"$ref": "#/$defs/metric"}},
+    "metrics_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "recorded_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "provenance", "unit", "basis", "estimation_basis"],
+      "properties": {
+        "value": {},
+        "provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE", "ESTIMATED"]},
+        "unit": {"type": ["string", "null"]},
+        "basis": {"type": ["string", "null"]},
+        "estimation_basis": {"type": ["object", "null"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"provenance": {"const": "UNAVAILABLE"}}}, "then": {"properties": {"value": {"type": "null"}}}},
+        {"if": {"properties": {"provenance": {"const": "ESTIMATED"}}}, "then": {"properties": {"estimation_basis": {"type": "object", "minProperties": 1}}}}
+      ]
+    }
+  }
+}

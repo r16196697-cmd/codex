@@ -450,6 +450,23 @@ class PurgeService:
                 return any(contains_purged(item) for item in value.values())
             return False
 
+        # Context packs are canonical artifacts. Keep their minimal index row,
+        # but detach the exact object and content metadata after governed purge.
+        for row in conn.execute("SELECT record_id,pack_ref FROM context_pack_records").fetchall():
+            if row["pack_ref"] in purged:
+                conn.execute(
+                    "UPDATE context_pack_records SET pack_ref='REDACTED_PURGED:'||record_id,content_hash=?,"
+                    "serialized_byte_size=0,selection_basis_json='{}',source_counts_json='{}',state='PURGED' "
+                    "WHERE record_id=?",
+                    ("0" * 64, row["record_id"]),
+                )
+        for row in conn.execute("SELECT record_id,context_pack_ref FROM value_metering_records").fetchall():
+            if row["context_pack_ref"] in purged:
+                conn.execute(
+                    "UPDATE value_metering_records SET context_pack_ref='REDACTED_PURGED' WHERE record_id=?",
+                    (row["record_id"],),
+                )
+
         # Immutable audit records retain their non-identifying verdict/state,
         # while every exact object-ID value is replaced before any read/replay.
         for row in conn.execute("SELECT verification_id,target_ref,evidence_used_json,result_json FROM verification_results").fetchall():
