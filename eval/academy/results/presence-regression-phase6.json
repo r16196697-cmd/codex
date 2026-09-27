@@ -1,7 +1,14 @@
 {
   "artifact_kind": "PHASE6_PRESENCE_REGRESSION_PREREGISTRATION",
-  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V1",
+  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V2",
   "status": "IN PROGRESS / PREREGISTRATION — EXTERNAL REVIEW PENDING",
+  "protocol_history": {
+    "PHASE6_PRESENCE_REGRESSION_PREREG_V1": "REPLACED BEFORE ANY PHASE 6 HOST TRIAL; REGRESSION CLASSIFICATION AND SCREENING AUDITABILITY CORRECTED",
+    "PHASE6_PRESENCE_REGRESSION_PREREG_V2": "FROZEN BEFORE FIRST PHASE 6 HOST TRIAL"
+  },
+  "instruction_scope": "TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS",
+  "research_question": "Can task-scoped capability instructions provide relevant utility while preserving unrelated-task behavior?",
+  "interpretation_boundary": "A clean result qualifies only the tested task-scoped synthetic instruction design; it does not establish that arbitrary or unscoped capability instructions are safe.",
   "formal_trial_count": 0,
   "execution_count": 0,
   "nexus_model_receipt_count": 0,
@@ -10,9 +17,11 @@
   "packet_count": 24,
   "synthetic_capability_family_count": 4,
   "relevant_control_pair_count": 12,
-  "packet_fixture_sha256": "b91173582b6d68ccbb1c329d9dec753f0e129c9f6343f6bd320615683f3262b0",
-  "evaluator_sha256": "fa67f7f99cb649ac2b36bc92b17783b5cf530d4ade8f0de5a55e596c8824356a",
+  "packet_fixture_sha256": "744a59be844e89c83a9cbc565d9f2ce5a3bb66d0b70205c5aeb68a6a1fe55fc3",
+  "evaluator_sha256": "bfb4ce22e873173ee5a3839d6d64056d6c4c90445c6c2de84b49d5b1f0f9607e",
   "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
+  "model_visible_packet_digest_rule": "Sort by trial_id; encode trial_id + NUL + model_visible_text as UTF-8; LF-join records and append one final LF; SHA-256.",
+  "model_visible_packet_digest": "f3215d9bc71b6ceae170719d1f5a038ce464733a5e4a6ac8363b371db6a2cd7d",
   "frozen_packet_text_sha256_by_trial": {
     "VC-REL-P0": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460",
     "OP-CTRL-P0": "ff21e5c15bf8042af412e8b19bf1d84a470321a9f297b2f6ca2cc5950d1692d3",
@@ -87,16 +96,19 @@
     }
   },
   "real_skill_screening": {
+    "status": "READ_ONLY_STATIC_INSTRUCTION_ARTIFACT_SCREEN",
+    "evidence_artifact": "eval/academy/results/phase6-real-skill-static-screen.json",
+    "evidence_sha256": "b0efa85367d10e6d72a21c9a5e071cb0ca7df6b97cd5e3ce6565f684d243caee",
     "screened_instruction_artifacts": 136,
     "source_counts": {
       "CODEX_SKILLS": 110,
       "BUNDLED_PLUGIN_SKILLS": 2,
       "CURATED_PLUGIN_SKILLS": 24
     },
-    "method": "Read-only static inspection of SKILL.md instruction artifacts and metadata for auth/secret, network, filesystem mutation, shell/system mutation, determinism, trigger narrowness, and unrelated-control feasibility. No Skill executed.",
+    "method": "Reproducible read-only inventory and SHA-256 fingerprinting of 136 SKILL.md artifacts. Criteria not established by static review are UNKNOWN and block eligibility. No Skill executed; this is not runtime safety verification, Skill evaluation, or native loaded-state evidence.",
     "selected_candidate_count": 0,
     "selected_candidates": [],
-    "selection_status": "NO_CANDIDATE_MET_ALL_REQUIRED_CRITERIA",
+    "selection_status": "ZERO_ELIGIBLE; UNKNOWN_CRITERIA_BLOCK_SELECTION",
     "project_experience_curator": "EXCLUDED; may write project instructions; remains DISCOVERED / UNEVALUATED"
   },
   "real_skill_evaluated_count": 0,

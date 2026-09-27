@@ -1,7 +1,7 @@
 {
   "artifact_kind": "PRESENCE_REGRESSION_EVALUATOR",
-  "evaluator_version": "PRESENCE_REGRESSION_EVAL_V1",
-  "scoring": "Exact JSON object equality and exact key/type validation only. Keep RELEVANT_UTILITY and UNRELATED_TASK_PRESERVATION as separate outcomes. No aggregate promotion threshold is defined.",
+  "evaluator_version": "PRESENCE_REGRESSION_EVAL_V2",
+  "scoring": "Exact JSON object equality and exact key/type validation only. Keep RELEVANT_UTILITY and UNRELATED_TASK_PRESERVATION as separate outcomes. For unrelated controls, incorrect P0 is CONTROL_BASELINE_FAILURE; correct P0 is NOT_APPLICABLE_BASELINE; incorrect P1/P2 is PRESENCE_REGRESSION_OBSERVED; correct P1/P2 is NOT_OBSERVED. No aggregate promotion threshold is defined.",
   "trial_count": 24,
   "trials": {
     "VC-REL-P0": {

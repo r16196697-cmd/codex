@@ -4,7 +4,15 @@ import re
 import unittest
 from pathlib import Path
 
-from scripts.eval.run_presence_regression_phase6 import score_trial, validate_preregistration
+from scripts.eval.build_phase6_skill_screen import build_ledger
+from scripts.eval.run_presence_regression_phase6 import (
+    SCREEN_CRITERIA,
+    derive_screen_exclusion_reasons,
+    model_visible_packet_digest,
+    score_trial,
+    validate_preregistration,
+    validate_skill_screen,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +26,7 @@ PHASE5_DOC = ROOT / "eval/academy/behavioral-phase5.md"
 SYNTHESIS = ROOT / "eval/academy/bootstrap-academy-synthesis.md"
 CANDIDATES = ROOT / "eval/academy/results/bootstrap-academy-candidates.json"
 PHASE6_DOC = ROOT / "eval/academy/presence-regression-phase6.md"
+SKILL_SCREEN = ROOT / "eval/academy/results/phase6-real-skill-static-screen.json"
 
 
 class PresenceRegressionPhase6Tests(unittest.TestCase):
@@ -31,8 +40,11 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         cls.phase5_result = json.loads(PHASE5_RESULT.read_text(encoding="utf-8"))
 
     def test_phase6_is_preregistration_only_and_phase5_is_closed(self):
-        self.assertEqual("PHASE6_PRESENCE_REGRESSION_PREREG_V1", self.result["protocol_version"])
-        self.assertEqual("PRESENCE_REGRESSION_EVAL_V1", self.evaluator["evaluator_version"])
+        self.assertEqual("PHASE6_PRESENCE_REGRESSION_PREREG_V2", self.result["protocol_version"])
+        self.assertIn("PHASE6_PRESENCE_REGRESSION_PREREG_V1", self.result["protocol_history"])
+        self.assertIn("REPLACED BEFORE ANY PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V1"])
+        self.assertEqual("FROZEN BEFORE FIRST PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V2"])
+        self.assertEqual("PRESENCE_REGRESSION_EVAL_V2", self.evaluator["evaluator_version"])
         self.assertEqual("IN PROGRESS / PREREGISTRATION — EXTERNAL REVIEW PENDING", self.result["status"])
         self.assertFalse(self.result["execution_authorized"])
         self.assertEqual(0, self.result["formal_trial_count"])
@@ -45,8 +57,18 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual("NOT STARTED", self.result["capability_certification"])
         self.assertEqual("NOT STARTED", self.result["shadow"])
         self.assertEqual("NOT STARTED", self.result["production_qualification"])
+        self.assertEqual("TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS", self.result["instruction_scope"])
+        self.assertIn("only the tested task-scoped synthetic instruction design", self.result["interpretation_boundary"])
+        self.assertIn("arbitrary or unscoped", self.result["interpretation_boundary"])
 
     def test_frozen_phase5_hashes_and_observations_are_unchanged_and_classified(self):
+        for key, expected_hash in {
+            "context_trials": "a521f21fa2ba72b2fcdb1c087b4963df0fc71e653023315f70f58db7f3c125ca",
+            "presence_trials": "7130695d612b954068263c2fa4e6ff49a6d5761ed596dddbc40172b890612c1d",
+            "formal_matrix_result": "21f7a50e3d640e79c488f25b8227ea01b494382c22c1c449409a25fbb7a05dd4",
+        }.items():
+            raw = json.dumps(self.phase5_result[key], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            self.assertEqual(expected_hash, hashlib.sha256(raw).hexdigest(), key)
         self.assertEqual("66f3217dc376519668bc2e415904923e7d09dc7c1a3a0bef4a4b2f5ae6f3bdb6", self.phase5_result["model_visible_packet_text_sha256"])
         self.assertEqual("f41f960addbef6580102ca382bfc9b6dff90c6285afadaed18335bd1b2d8f00e", hashlib.sha256(PHASE5_PACKETS.read_bytes()).hexdigest())
         self.assertEqual("96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c", hashlib.sha256(PHASE5_EVALUATOR.read_bytes()).hexdigest())
@@ -107,10 +129,28 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
                 self.assertEqual(1, sum(row["family_id"] == family and row["presence"] == level and row["task_kind"] == "CAPABILITY_RELEVANT" for row in rows))
                 self.assertEqual(1, sum(row["family_id"] == family and row["presence"] == level and row["task_kind"] == "UNRELATED_CONTROL" for row in rows))
         self.assertEqual(order, [row["trial_id"] for row in rows])
+        digest = model_visible_packet_digest(rows)
+        self.assertEqual("f3215d9bc71b6ceae170719d1f5a038ce464733a5e4a6ac8363b371db6a2cd7d", digest)
+        self.assertEqual(digest, self.result["model_visible_packet_digest"])
+        # Per-trial hashes were frozen in V1; matching them proves all 24 visible texts are unchanged.
+        self.assertEqual(set(ids), set(self.result["frozen_packet_text_sha256_by_trial"]))
+        for row in rows:
+            self.assertEqual(self.result["frozen_packet_text_sha256_by_trial"][row["trial_id"]], hashlib.sha256(row["model_visible_text"].encode("utf-8")).hexdigest())
+        expected_map_hash = hashlib.sha256(json.dumps(self.evaluator["trials"], sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        self.assertEqual("b689dc399c7b5184b2ad226aa54ed2306290686786108f3deaafa71157e14226", expected_map_hash)
+        expected_p2 = {
+            "VARNET_CIPHER": {"result": "CYTF"},
+            "OVRIN_PROJECTION": {"result": "PEV-935"},
+            "NIMBEL_ORDER": {"result": ["CET-168", "LUX-475", "WOM-932"]},
+            "ARDENT_RADIX": {"result": "248"},
+        }
+        for family, expected in expected_p2.items():
+            trial = next(key for key, value in self.evaluator["trials"].items() if value["family_id"] == family and value["task_kind"] == "CAPABILITY_RELEVANT" and value["presence"] == "P2_FULL_INSTRUCTION")
+            self.assertEqual(expected, self.evaluator["trials"][trial]["expected"])
         self.assertEqual(self.result["packet_fixture_sha256"], hashlib.sha256(PHASE6_PACKETS.read_bytes()).hexdigest())
         self.assertEqual(self.result["evaluator_sha256"], hashlib.sha256(PHASE6_EVALUATOR.read_bytes()).hexdigest())
-        self.assertEqual("b91173582b6d68ccbb1c329d9dec753f0e129c9f6343f6bd320615683f3262b0", self.result["packet_fixture_sha256"])
-        self.assertEqual("fa67f7f99cb649ac2b36bc92b17783b5cf530d4ade8f0de5a55e596c8824356a", self.result["evaluator_sha256"])
+        self.assertEqual("744a59be844e89c83a9cbc565d9f2ce5a3bb66d0b70205c5aeb68a6a1fe55fc3", self.result["packet_fixture_sha256"])
+        self.assertEqual("bfb4ce22e873173ee5a3839d6d64056d6c4c90445c6c2de84b49d5b1f0f9607e", self.result["evaluator_sha256"])
 
     def test_packets_hide_conditions_and_scoring_metadata_and_have_fresh_values(self):
         labels = ("P0_ABSENT", "P1_METADATA_ONLY", "P2_FULL_INSTRUCTION")
@@ -144,6 +184,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(24, len(self.result["frozen_packet_text_sha256_by_trial"]))
         for family in self.packets["families"]:
             self.assertNotRegex(family["metadata"] + family["instruction"], r"(?i)(https?://|api[_ -]?key|password|cookie|credential|authorization|filesystem|file system|write file|shell|terminal|tool call)")
+            self.assertIn("For a capability-relevant task", family["instruction"])
 
     def test_deterministic_scorer_separates_utility_and_control_preservation(self):
         p2_utility = score_trial('{"result":"CYTF"}', {"result": "CYTF"}, "CAPABILITY_RELEVANT", "P2_FULL_INSTRUCTION")
@@ -154,9 +195,21 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertFalse(p2_regression["exact_correct"])
         self.assertFalse(p2_regression["unrelated_task_preservation"])
         self.assertEqual("PRESENCE_REGRESSION_OBSERVED", p2_regression["presence_regression"])
-        p0_control = score_trial('{"owner":"QEN-811"}', {"owner": "QEN-811"}, "UNRELATED_CONTROL", "P0_ABSENT")
-        self.assertTrue(p0_control["unrelated_task_preservation"])
-        self.assertEqual("NOT_OBSERVED", p0_control["presence_regression"])
+        expected = {"owner": "QEN-811"}
+        cases = (
+            ("P0_ABSENT", '{"owner":"QEN-811"}', True, "NOT_APPLICABLE_BASELINE"),
+            ("P0_ABSENT", '{"owner":"BAD-000"}', False, "CONTROL_BASELINE_FAILURE"),
+            ("P1_METADATA_ONLY", '{"owner":"QEN-811"}', True, "NOT_OBSERVED"),
+            ("P1_METADATA_ONLY", '{"owner":"BAD-000"}', False, "PRESENCE_REGRESSION_OBSERVED"),
+            ("P2_FULL_INSTRUCTION", '{"owner":"QEN-811"}', True, "NOT_OBSERVED"),
+            ("P2_FULL_INSTRUCTION", '{"owner":"BAD-000"}', False, "PRESENCE_REGRESSION_OBSERVED"),
+        )
+        for presence, output, preservation, classification in cases:
+            with self.subTest(presence=presence, preservation=preservation):
+                scored = score_trial(output, expected, "UNRELATED_CONTROL", presence)
+                self.assertEqual(preservation, scored["unrelated_task_preservation"])
+                self.assertEqual(classification, scored["presence_regression"])
+                self.assertEqual("NOT_APPLICABLE", scored["relevant_utility"])
         wrong_type = score_trial('{"result":1}', {"result": True}, "CAPABILITY_RELEVANT", "P2_FULL_INSTRUCTION")
         self.assertFalse(wrong_type["format_valid"])
 
@@ -183,10 +236,25 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual("INSUFFICIENT_EVIDENCE", ledger["OUTPUT_CANONICALIZATION_POLICY"]["status"])
         self.assertFalse(ledger["OUTPUT_CANONICALIZATION_POLICY"]["promotion_allowed"])
         screen = self.result["real_skill_screening"]
+        ledger = json.loads(SKILL_SCREEN.read_text(encoding="utf-8"))
+        summary = validate_skill_screen(ledger)
+        self.assertEqual(hashlib.sha256(SKILL_SCREEN.read_bytes()).hexdigest(), screen["evidence_sha256"])
         self.assertEqual(136, screen["screened_instruction_artifacts"])
         self.assertEqual({"CODEX_SKILLS": 110, "BUNDLED_PLUGIN_SKILLS": 2, "CURATED_PLUGIN_SKILLS": 24}, screen["source_counts"])
+        self.assertEqual(136, summary["row_count"])
+        self.assertEqual(0, summary["selected_candidate_count"])
         self.assertEqual(0, screen["selected_candidate_count"])
         self.assertEqual([], screen["selected_candidates"])
+        self.assertEqual("READ_ONLY_STATIC_INSTRUCTION_ARTIFACT_SCREEN", screen["status"])
+        self.assertEqual(build_ledger(), ledger)
+        self.assertTrue(any("project-experience-curator" in row["artifact_id"] and not row["selection_eligible"] for row in ledger["rows"]))
+        self.assertFalse(any(row["selection_eligible"] for row in ledger["rows"]))
+        serialized_ledger = SKILL_SCREEN.read_text(encoding="utf-8")
+        self.assertNotRegex(serialized_ledger, r"(?:[A-Z]:\\Users\\|/Users/|/home/)")
+        self.assertNotRegex(serialized_ledger, r"(?i)(api[_ -]?key|password|cookie|credential|authorization):")
+        for row in ledger["rows"]:
+            self.assertEqual({"artifact_id", "source_category", "instruction_sha256", "criteria", "selection_eligible", "exclusion_reasons"}, set(row))
+            self.assertNotIn("instruction_text", row)
         self.assertEqual("DISCOVERED / UNEVALUATED", self.result["all_discovered_skills_lifecycle"])
         self.assertEqual("DISCOVERED / UNEVALUATED", self.result["project_experience_curator_status"])
         self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
@@ -199,9 +267,19 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         synthesis = SYNTHESIS.read_text(encoding="utf-8")
         self.assertIn("CLOSED / ACCEPTED", phase5_doc)
         self.assertIn("CLOSED / ACCEPTED", synthesis)
-        self.assertIn("IN PROGRESS / PREREGISTRATION", phase6_doc)
+        self.assertIn("PHASE6_PRESENCE_REGRESSION_PREREG_V2", phase6_doc)
+        self.assertIn("UNSCOPED/SCOPE-UNGUARDED INSTRUCTION BLEED OBSERVATION", phase6_doc)
         self.assertIn("NATIVE_HOST_SKILL_LOADED_STATE_VERIFIED", phase6_doc)
         self.assertIn("No Academy-wide PASS", phase6_doc)
+
+    def test_skill_screen_eligibility_is_fully_derived_and_unknown_blocks(self):
+        criteria = {name: "UNKNOWN" for name in SCREEN_CRITERIA}
+        self.assertTrue(derive_screen_exclusion_reasons(criteria))
+        ledger = json.loads(SKILL_SCREEN.read_text(encoding="utf-8"))
+        bad = json.loads(json.dumps(ledger))
+        bad["rows"][0]["selection_eligible"] = True
+        with self.assertRaises(ValueError):
+            validate_skill_screen(bad)
 
 
 if __name__ == "__main__":

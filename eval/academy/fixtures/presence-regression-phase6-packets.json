@@ -1,6 +1,6 @@
 {
   "artifact_kind": "PHASE6_PRESENCE_REGRESSION_PACKETS",
-  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V1",
+  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V2",
   "execution_authorized": false,
   "formal_trial_count": 0,
   "nexus_model_receipt_count": 0,

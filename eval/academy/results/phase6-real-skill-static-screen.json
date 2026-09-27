@@ -1,0 +1,3553 @@
+{
+  "artifact_kind": "READ_ONLY_STATIC_INSTRUCTION_ARTIFACT_SCREEN",
+  "screening_status": "REPRODUCIBLE_STATIC_SCREEN_WITH_UNKNOWN_CRITERIA",
+  "claims_boundary": [
+    "This is not runtime safety verification.",
+    "This does not mean a Skill is safe, evaluated, or natively loaded.",
+    "UNKNOWN criteria block selection."
+  ],
+  "criteria_values": [
+    "TRUE",
+    "FALSE",
+    "UNKNOWN"
+  ],
+  "selected_candidate_count": 0,
+  "rows": [
+    {
+      "artifact_id": "BUNDLED_PLUGIN_SKILLS:computer-use/26.924.22138/skills/computer-use",
+      "source_category": "BUNDLED_PLUGIN_SKILLS",
+      "instruction_sha256": "8211e4b11a19a0dc4f0ace91096c74c5b36037ca4cb2c8988f0f535bb209e951",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "BUNDLED_PLUGIN_SKILLS:visualize/1.0.41/skills/visualize",
+      "source_category": "BUNDLED_PLUGIN_SKILLS",
+      "instruction_sha256": "08c2799e8c4315f086a728043e9d629e39568c26e9068427f59466ff74fe3955",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:0-autoresearch-skill",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "b7ca0d7a6e905da85a8b494d3fe398ac78eaa278854f67b50a34f2b37a9a2b78",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:a-evolve",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6477f6efbbf3541ce3dfccf6665f5cdf6f241e47dcc3b32787e3e49b90223dbc",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:academic-paper",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ec4a10ef0a1fd236474e6f6270d2fbb0a194e3c3c785619b34a71ab8fe8d73c5",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:academic-paper-reviewer",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "771a784f2606b8dd4a0e6c01383fd9e76d10effce3b0aed5cd18f746f63a7530",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:academic-pipeline",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "dcb91d5b73eab40aa6a66f77ab2e130a23061c6bcae049c14dca56300b093589",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:academic-plotting",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6613653d8109dcae36596b37d7414d5ae394a18f81543365222286d04485fd83",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:accelerate",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "e94cea7a174f395df02d935065fe05db8ecb637c52e443b6380c703963758d7a",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:audiocraft",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "3f9efaebd7331bea86022a101329074c6eab8af2d33591e691c565fcba641a5f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:autogpt",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "4b16c070da9966e3e71a8f5324d7b1b2d4ddd68a3df8b27305b1a19b841f62b3",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:awq",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9a875e53113c11b00ab417fc393eb504f8be97d50c2e6901c762b991388bf717",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:axolotl",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9273d534cd6a06612b18418f2cd98f63d1ac9bb780eda511a91800dee48f1dda",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:bigcode-evaluation-harness",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "7c46e8eb3ca8d4f51769162d16d87a7dff5ec0c4609131fd3c62fcb463522874",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:bitsandbytes",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "0a68e96c760b0ba561437328211a8405b4db422e9bad92415219abf91f87f849",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:blip-2",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "38227abdcb742add1284ba117881e899c020b7ebb5c39b5202a97d60c3ad8d3e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:brainstorming-research-ideas",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "8422a1a6dc0a88d05f02b9fbe0f8c2ae06a77024856d18125efa13d19d855d46",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:chroma",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "834733e201d4f7d6c20089c93d13c945d7a62b6581d55631546a5ad74b9ec164",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:clip",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9fcacf1c041d71ef1e61c7cac2bb7a2c42c3d19d6c2a0fc2e5f5a3c9641b7a3e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:compiler",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "747c2f17125ce136e8f75baf8803eb3b21ccc01246498a7f0bc4c01ec6d01d9a",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:constitutional-ai",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "186267074ebdae7d3f9a5c8fb1505536c31bbe7ffba5fd18a052f8258d2005c0",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:cosmos-policy",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "31d6b4701fae46b0b9e9b281378eefbe0f4c37b5973dae56ee25a3b67f63d0b6",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:creative-thinking-for-research",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ec111f9236d7f9d72c895cebbf0f534ac93f4249172607559ad4bf92aefc5310",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:crewai",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "8760f968af1118e3dde5bc8443613be5ef7046a5639d26079d596fcf6d2483ff",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:deep-research",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "f2a0c03180f7bdd2a2b0db6fec0c1647528e7960c0d5135c9c23266b345df18d",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:deepspeed",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "8c2221b797e650a933800cfa45282a70caca20aaa85cbcece6e16acf1020dc39",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:dspy",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "cd01cee93a2228c199c23e77047e4444b0a6eeddd12dcf14104ca2a5de3fa8e2",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:faiss",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "79a494b9212c73810d53527800c69f80acd6aa1907fca8c614c69583cac76e89",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:flash-attention",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "e0c1da83766332e0f3db4bcca954c3a70be399632758dcec2680aa82e236438d",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:gguf",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "11016e03b2b53c9a981f1ef7df96b078daf9bc929126ccf36377b86bb7025224",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:gptq",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ce19de416afa03a0e6a764c9cb8b8ba9a0b94812b9de1ad5a0c2cb2932009f28",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:grpo-rl-training",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "c9b771c280840f12d0e98749250c35df4a83a21f95465c41e8ae13f0229ecb40",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:guidance",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "2c7028001bf36a8a6bc1020d646a1fbad29c93f92f7706c437bde858e9616c71",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:hatch-pet",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ac22ec3cbabc95ba03ee3d7cf43a1209fcd139d56c69d35b10c57b9b5f794da0",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:hqq",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "4feba64227f6db505044663cd5432bf9c0599c5c8984d94d3b2d1598711a1f80",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:huggingface-tokenizers",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d2ff3f9eed2cb8e15cb98e8e2398ca359325a32fd5d16ebfe0d115d7624583af",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:instructor",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "7be950beb848b05aa4f41e61cfe27b162cad4a4d029d0abe13401aa743bab794",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:knowledge-distillation",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "bc27086dc02840cebef4db34db4b8406b37ff349d6e2a52848646c8daf24ff3e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:lambda-labs",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9d1dc3fcb83bf0de14717e58c13f49989b2bc307b12febcf040ef9d28fedc0a7",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:langchain",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d47635059ac1a1a369ee6169f68f1d02e95ca201f2394a902fe66a30b1e35e65",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:langsmith",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "3611688a297b95bd8695cdaa9e9f12db4c7cda6c94a4ae82e55f99fa6cbf7f53",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:litgpt",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "523f0b786c915af20a7980857e174b838e4440afe851bd16917ef69f8042adb2",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:llama-cpp",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d74caa45483f5b3c6bd6267e39b444627989ff90fdb84b6c2e7c3da4ddf143ef",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:llama-factory",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6adfd1babfbfe2f85e0fcbde518f24a804ebe06afeb8682ce1df395284d6f5cb",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:llamaguard",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "80c5afb39cb153d82e08dca44fbd3ea75a5e950b8bef65c2c1af8bbbe9ef3992",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:llamaindex",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "a603d319831beb1e46efd9299532b2462ee0d0cf01d7aa8928bd21763a3d9760",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:llava",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "e2c915ece2f3e50ea110320b7a364dd36361d3010e102e800416dfa3b4299745",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:lm-evaluation-harness",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "891b77bc09118393f9bd1235404ee3f0cf412f56e57dc4b454e2fbd8fd507bc3",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:long-context",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6426eb21a38b8a314078292b8172d889b7f2b1a226901fcda78ac4d28a98a5e7",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:mamba",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "51ddf99c12a472a78c258bddf7e66e72cf45d9e04969f3300cc8d68aaaef9b0e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:megatron-core",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6e69257341b9ee01b22a46905e93f6fe2339b9f8147c7f77da46be7b366b6556",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:miles",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "cbf610faa37bfb97fc06a7d6a4c748867c29e4b4c79f1ae109662af5245a106e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:ml-paper-writing",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "96733e6d758642d792ed15b7c08eb90548d4775099368cd72a8312127f2fe911",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:ml-training-recipes",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "1cb661b0d3bac57ffed65075707a9079ac23123a5a597700e85c05e03e166a57",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:mlflow",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "36d2581f7d8beb8b27f66bbef5c94df7e9604b917c3aa15e4183a48a2b1f3f96",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:modal",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "219757503f84684534b3efe5616822ad17e6dc5c6cad127e6b46033a429d38ba",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:model-merging",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "dfbcc6d6dfef57489ac69cb6f3a858783f16dff2ecfc72eb2fac168fd2ecc87d",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:model-pruning",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "aca913d834bc1e3d39bbfb75d0658d5a1b9acabf6511744719c5bab91bf306a8",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:moe-training",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "f13f184fe031c84700d72c15dd90161a96f3b48ab6b50b250e6b86cfc4c87354",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:nanogpt",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "8893d8dd5b7ba4ae3219497e26d33fc9565e6bbf0d6aa4d6c1c3ee05003468c3",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:nemo-curator",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d8586e21ecd4df1a32371f8d86746f8fbd88358f5dc8957e5dd91a473d2ab484",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:nemo-evaluator",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "97bc3483974c2b930acf3f46e21c865e1b27e92359e19bdb465515d9e86ff10f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:nemo-guardrails",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d0d91892eaba80cf829ef6bb1b37f3b5fa8cc31ba1fa89d162ab380b90ca2762",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:nnsight",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "f79dc9daf99c4ffbcb82072b4f162c296e4365dbb2fe6985e77be215ba0c814c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:openpi",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "60af709a253bd745330e43067b22667b932a393e65a3cde6660a25d0ffbe4742",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:openrlhf",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "eb9da6a1a81c492fb143cde0714f355ab042fcfe967b31bdb1fc78a5cb0e761f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:openvla-oft",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "07492556c7479f18d353c80a4f92450fbe301811e664fc45d0070fcdd9587c9e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:outlines",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "1a797a1bb4d7fae753e4fbf1895beb36f63b8e75c7fba50e940cd1ef1a372574",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:peft",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "acdb318f94624517c8cdb3c925c7a2e8b34c65e8ca02b301777c51eea9f0f73c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:phoenix",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "111bd54f145ca57360f7e6f08f95202e937ac134e3dbf486a51cbaa008546e2b",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:pinecone",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "69b0566e8d749acdad2a805ed6980947e5458c96b41bd405e520f2006ff0e7fb",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:presenting-conference-talks",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "5fb6b8f9e5b7690dcb0d783ff1e07c6d3f6b950b8f1238e0672e1f3c53bad57f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:project-experience-curator",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "351748a259365dc561af6c6865b86c5a2ba3388c6a5c7bb350c0801c61e80c10",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "TRUE",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "REQUIRES_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:prompt-guard",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "0291e30b5549f0398f4bbe72f8918f16eced4c75d45dfd7c87648f72dc97ecce",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:pytorch-fsdp2",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "b540043bd17d741840843df2f76d556d41be29c82a2acd85565ce2b1ce088a50",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:pytorch-lightning",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "7788f93b6324f8d62d0d579a572164d303704b59fc7fefe12497afb75856c453",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:pyvene",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "cc26be84bdf23355f63cf103847a13618122157d17448be6ea16f94f3338f4d1",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:qdrant",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "3a45489baf49c375883694ec78d6a9b283533a352e8d47cf630332faff83a231",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:ray-data",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "bcc73b3341dca18c59cad092cb6dedb7ac0bf0bde80467a039921ac0c02256c3",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:ray-train",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "7f88c141557e3f0cc5b456571d1ae99bef4161a9c1765bc725847cfbd0fb1170",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:research-manager",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "f78da7627ac09a4be398ea4363fc7b8753b2dcb22bc961c5059395e33ef3ef2c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:rigor-reviewer",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "5a8169a5d069caf36a30e0106e523503ffba685215c3cd0067a72aa64a7e2dbb",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:rwkv",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "17fc974b3f3b67b1648c5cb93b3bdc557fbd64df8463d8fbc8f71bdf88575a7c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:saelens",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "3af1fa0e513a96c953f4fbd28b1a6cd764fa9c27e512c6f0cfd2b80c2a1706ae",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:segment-anything",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "6ac5c2f96cf7d0ae5f787164678701266930129aa06cc21818f20f77dacb6a71",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:sentence-transformers",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "fca19457be4e78f0e3689284d4fbde649ddf9af0d3bba52d2ac1fb470a4c1bd8",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:sentencepiece",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "47b1d10f419a51a400010bcd80d99a8bdb5c4510fc3e57fe9bc9be7efa6a48f8",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:sglang",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "05e664a43bb82df2363ef22ceba81a41394a2b819c3367b2413f661485085c8f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:simpo",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "2a74bd2378857c520066fbe84fc0c6c556d0fa0b8c4afde1eab1c0abfb51ed8a",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:skypilot",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "de1be4556d8a8f7929003ca4b672e5fbb755588b1e95068973896b63d3034965",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:slime",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "117c8fd2d57d878e45c698f9f0485326ed4630aeaec761aa1222d7a36458cc07",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:speculative-decoding",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d818b841ffe3e338569ab7caa0d54516f51c649e52fd1af2d5de5d0435b39f99",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:stable-diffusion",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "816dce0d04b2e2ddc1510a5aaf3e545778f4c59f7329af689dc9941bbbebca37",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:swanlab",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "14b0f74e6383e4e43cc78785706b43f0343801ba96c14b56284142203be48eff",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/imagegen",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "706d4d96e1d5c9e6023fe3ccabba1bb34b364024d344fd25b8515ec7d28fe3c4",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/openai-docs",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "8ce8021101bcea594ff92ee6cfd8ca7641a49ee66d7bc6070555f1a33fc239d9",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/plugin-creator",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9dba03c079abfbc680e8fca146069f054c1b0c5e9bcb5e5a9effcf86a95f67c6",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/review-agent",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "bb46315f6bc4b7051c05f807d19b1689b20418ac6c42590406d805c10fa2fd1a",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/skill-creator",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "cccd291077ec57c6f50ca6529f0f3fb93212da09473effb2fcec808e81b21288",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:system/skill-installer",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "2892d8b2fb11631132118f340aed80ae17e59d5a571fc2c4f4a4a7e73f139d52",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:systems-paper-writing",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ee31b50b25192efcfcbe3252d7e15d88ec27bbd94817640b0357090f94c0e297",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:tensorboard",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "717c4b05f88bbc888d54cc51fa390ae225d687b3b86fb616e36cc7fc26108020",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:tensorrt-llm",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "13f8e09b3e05b2167919011dfa8a44e067c7e0563a1e7dc01c26752cf85da11f",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:torchforge",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "809da22c47d5caadbcca9d3db7e82e227c174dbaa98f4a01cf2a678ffaffcbf0",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:torchtitan",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "530b85ddadfc69e2cfd3bbdd7cdb03c89f7ddd00ba0e84fed8ac43e98a25a4d8",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:transformer-lens",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "9ac5a790a59f46e430a9015a1e8c52338666f3426e36085c4ef38665b10b4e24",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:trl-fine-tuning",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "d68f78ad741627ce7dcdf2ce78c73c8cf31d23db7d89555e0bdd0cd35c413811",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:unsloth",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "ac7f1d1f87d08d7f8713f07c1f6522268b814acea850f97bc986e00f8b461bc3",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:verl",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "1167e2b2994c9b0780edc44d5bc3a3eef69dc816af08af8f28ef9c19163d1285",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:vllm",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "57eaf97e982fe758b6fd0ef2281b6961940e4a1c8258f303b0ce02d55d0636c6",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:weights-and-biases",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "3cd5daa7cad70d97c96b2d6fdf8d0fc1ed8a97b1750c4e013e2405389baed3b6",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CODEX_SKILLS:whisper",
+      "source_category": "CODEX_SKILLS",
+      "instruction_sha256": "acce14621ec8060db480fade27896a1fba0c99ba037c07684b876cc31027276c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-analytics-dashboard",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "cf5360fd8b197673bb237c52c603c97fa319c875c3dfa2cd8efff52d4422f513",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-business-review",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "27721fc1d67d1b41949caa75ac8f94f81952ff124406878af6524047929e60d2",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-design-report",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "563722f53854e606f8a9f87e37e72d7ef70a22d46d5836b8e4d6abfb1b79e9e0",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-experiment-analysis",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "0b05effc47df0a14f8e0c3e3597e6722224747435546385d38a2cae279bd20b9",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-financial-budget",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "c0b6b7a62a15597aaf2b1ec679e21da48f533b756127f0aef957cdfe9f3da738",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-investment-committee-memo",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "68abd08cfe5e073e3c446a3f675f44c5bf98f57434dba679e8acd8a763379a8b",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-legal-memorandum",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "51fb9d21baf6119c4ccb1903638a6bac0e859210de63460fffa7025d52e997e0",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-market-trends-report",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "d58d019b89cb6f292ac3ab991d561489eef477ff53ce05fb024a0c936f5af26a",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-minimal-letterhead",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "880ef094d4d0c89a7bde5ce9bbe4086625c186651e9e6efc8ba8bdd7cc77f9d5",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-operating-calendar",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "33bb660791a0b9a21628a42c34934932220203b6aabd84e98cb1b45327d0384c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-operating-review",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "6d63c5cd025ffe936e7bab5db3023672bbaec26af55c2bb8b057d38c202c9c32",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-project-kickoff",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "aa893ebd89e7c8d1db4261d01cc2b1add35d78d00785871ccaaa5fc8db783ec9",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-project-tracker",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "d97d5be20189b7f53dd269b6e1c5f694eaf53e5a72f6559fcb1578911b7cda82",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-sales-pipeline",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "15cfeeedf440021f16ed3f3ad8c7c1ef6d48898b9447741e223d2fb41cfc9800",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-simple-dark-mode",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "b7c8d0c05f75878b9bc21e56a57c41ec1aa29700aca0a24822be0f9f1bd53207",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-simple-light-mode",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "7c68430c6cf57b55b457d4735dbd1a46b889bef135a32222902dd0848b6e1752",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-strategy-memorandum",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "51d7882ac94e8e57b323394825728c33925af878806e37277217c2dc12a912e5",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-system-design",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "87f7b7ed1b0d8410f5e5971cd7f7db9a4165e2f37069e97e52dbfb469b75a57c",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-team-alignment",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "26d7cafdcd1899a937b325c5d02ac57c162d45002153be33a934d35f81eb6110",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:openai-templates/0.1.1/skills/artifact-template-three-statement-forecast",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "74f4a5cccec0107b861548b157e04c51d9b58ec13a990c86394b4c529b8ecf41",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:plugin-management/0.1.0/skills/plugin-management",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "653841cc21205269f08b0ce135891e1518dac616a766bcfb0b57d788d3f68b10",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:sites/0.1.71/skills/sites-building",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "a8f913497a846825f2011a8e49dd9250f821cd99fad21fcbfbd94be823595a30",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:sites/0.1.71/skills/sites-hosting",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "26318ee23cf1927a8687ae4f74cd6d11ca2c7eb8e52b2c4801c3059a479d5721",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    },
+    {
+      "artifact_id": "CURATED_PLUGIN_SKILLS:sites/0.1.71/skills/sites-preview-troubleshooting",
+      "source_category": "CURATED_PLUGIN_SKILLS",
+      "instruction_sha256": "b8d2cb0731ed0c46888f2e455b23a7114b209c66ac3708e6502b0f280065938e",
+      "criteria": {
+        "requires_secret_or_auth": "UNKNOWN",
+        "requires_network": "UNKNOWN",
+        "requires_filesystem_mutation": "UNKNOWN",
+        "requires_shell_or_system_mutation": "UNKNOWN",
+        "deterministic_task_available": "UNKNOWN",
+        "narrow_trigger": "UNKNOWN",
+        "instruction_boundary_clear": "UNKNOWN",
+        "safe_unrelated_control_constructible": "UNKNOWN"
+      },
+      "selection_eligible": false,
+      "exclusion_reasons": [
+        "UNKNOWN_SECRET_OR_AUTH",
+        "UNKNOWN_NETWORK",
+        "UNKNOWN_FILESYSTEM_MUTATION",
+        "UNKNOWN_SHELL_OR_SYSTEM_MUTATION",
+        "UNKNOWN_DETERMINISTIC_TASK_AVAILABLE",
+        "UNKNOWN_NARROW_TRIGGER",
+        "UNKNOWN_INSTRUCTION_BOUNDARY_CLEAR",
+        "UNKNOWN_SAFE_UNRELATED_CONTROL_CONSTRUCTIBLE"
+      ]
+    }
+  ]
+}
