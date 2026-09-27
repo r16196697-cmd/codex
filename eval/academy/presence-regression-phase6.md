@@ -1,6 +1,6 @@
 # Phase 6 — Presence Regression Qualification + Capability Certification Gate
 
-- Status: `IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING`
+- Status: `IN PROGRESS / FORMAL EXECUTION STOPPED — EXTERNAL REVIEW PENDING`
 - Protocol: `PHASE6_PRESENCE_REGRESSION_PREREG_V2`
 - Evaluator: `PRESENCE_REGRESSION_EVAL_V2`
 - Formal trial count: `0`
@@ -11,7 +11,7 @@
 - Shadow: `NOT STARTED`
 - Production qualification: `NOT STARTED`
 
-V1 was replaced before any Phase 6 Host trial because control-regression classification and screening auditability needed correction. External review accepted V2 and froze it for the synthetic 24-trial experiment. This commit adds the authorized external execution adapter and static-screen semantics repair only; it runs no Host subprocess, no liveness check, and no real Skill.
+V1 was replaced before any Phase 6 Host trial because control-regression classification and screening auditability needed correction. External review accepted V2 and froze it for the synthetic 24-trial experiment. The one authorized ordinary Windows PowerShell execution attempt stopped on its first trial because the Host emitted three command-execution tool calls. No retry or remaining-trial execution is permitted. This audit runs no Host subprocess, no liveness check, and no real Skill.
 
 `instruction_scope = TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS`. Research question: **Can task-scoped capability instructions provide relevant utility while preserving unrelated-task behavior?** A clean result would qualify only the tested task-scoped synthetic instruction design; it would not establish that arbitrary or unscoped capability instructions are safe.
 
@@ -81,9 +81,25 @@ Operator runbook:
 4. Change to the authorized `nexus-academy-bootstrap` worktree. Confirm HEAD is the external-review authorization commit and `git status --short` is empty.
 5. Run exactly once: `python scripts/eval/run_presence_regression_phase6.py --execute-host --timeout 180`.
 
+**Historical command only:** the single authorized execution has occurred and its one-shot authorization is consumed. Do not run this command again, retry the first packet, or execute any of the remaining packets.
+
 The runner refuses a missing controller marker, invalid authorization, nonzero prior execution count, or prior attempted trials. It persists `execution_count=1` before the first child and each trial's sanitized argv before its process result. A trial is eligible only with exit code 0, `thread.started`, `turn.completed`, agent output, a unique fresh thread ID, zero tool calls, and no timeout. The first pre-model failure, incomplete execution, tool contamination, reused thread ID, or timeout stops the matrix. No retry, restart, reorder, or backfill is permitted. The runner writes no Nexus MODEL receipt; `nexus_model_receipt_count` remains zero.
 
 Only `PRESENCE_REGRESSION_EVAL_V2` scores eligible trial outputs. Host total-turn token telemetry is retained as reported (`input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`, `reasoning_output_tokens`); exposure attribution, ambient decomposition, provider dollar cost, and Host model identity remain unavailable.
+
+## Formal execution incident audit
+
+The preserved result is `STOPPED_ON_PROTOCOL_CONDITION`: `execution_count=1`, `attempted_trial_count=1`, `formal_trial_count=0`, `completed_trial_count=0`, blocking trial `VC-REL-P0`, `tool_call_count=3`, one unique thread, and zero Nexus MODEL receipts. The other 23 trials were not executed. The first trial remains ineligible; no behavioral metric was scored.
+
+The sanitized audit is `eval/academy/results/presence-regression-phase6-incident.json`. Its referenced raw capture remains outside Git. It records stdout SHA-256 `c75df92e573870735a34214f906e79bafcaa25eec26375d19c21740646d11978` (10,310 bytes) and empty stderr SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` (0 bytes), without storing the raw content or local capture path.
+
+The JSONL contains 10 events. Six `item.started`/`item.completed` lifecycle events correspond to three distinct `command_execution` item IDs, so the detector's unique-ID count of three is consistent and does not double-count start/completion. The calls were shell operations classified as filesystem enumeration/text search, location/enumeration, and enumeration/path check. Two have completion events (exit codes 1 and 0); one has only a start event, so its completion/effect is unconfirmed. The observed command classes indicate read-only inspection; no network or mutation operation was identified. Reasoning and agent-message events were not counted. The final `{"result":null}` came after the tool calls; temporal order is established, causal influence is not.
+
+`VC-REL-P0` is byte-for-byte bound to frozen packet SHA-256 `ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460`. The packet asks for a capability transform and permits `null` when the rule cannot be determined; it contains no VARNET metadata/full instruction, expected answer, condition label, or evaluator data. It does not request tools. Its wording could still prompt Host-side capability inspection, but the capture cannot establish that the packet caused the calls.
+
+`AMBIENT_HOST_TOOL_POLICY_CONFOUND = POSSIBLE`: the persisted cwd observation is a fresh empty temporary directory outside the repository, so repository project `AGENTS.md` is not inherited through that cwd. Global instructions, Custom Instructions, Host-native policies, and Skill visibility are not observable in this capture. Command-execution tools were available. The read-only sandbox restricted effects but did not prevent tool invocation. No ambient source is established as root cause. The CLI version supplied for this run is `codex-cli 0.158.0-alpha.2.1`; there is no evidence here of version drift.
+
+The incident classification is `TRUE_HOST_TOOL_CONTAMINATION`; detector/schema bug found: no. This does not establish a Presence Regression, relevant-utility failure, VARNET capability failure, P0 unsafety, or Skill-presence effect. The evidence supports external reviewer consideration of `PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE`; external review retains the closure decision. The Presence Regression Gate is `NOT QUALIFIED BY PHASE6 FORMAL MATRIX`; Output Canonicalization remains `INSUFFICIENT_EVIDENCE`.
 
 ## Read-only Skill candidate screen
 
@@ -111,4 +127,4 @@ If a real Skill instruction artifact is evaluated in a later phase, the evidence
 - Phase 5 evaluator SHA-256: `96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c`
 - Phase 5 execution-order SHA-256: `579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6`
 
-Run `python scripts/eval/run_presence_regression_phase6.py --validate` for offline consistency validation; it makes no Host call. `--execute-host` is authorized only from ordinary external Windows PowerShell under the runbook above. This Codex session did not start the matrix; formal trial and MODEL receipt counts remain zero. Phase 6 remains `IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING`.
+Run `python scripts/eval/run_presence_regression_phase6.py --validate` for offline artifact consistency validation; it makes no Host call and accepts the preserved stopped-execution record. The one-shot external authorization is consumed. Phase 6 remains `IN PROGRESS / FORMAL EXECUTION STOPPED — EXTERNAL REVIEW PENDING`; no retry or closure decision is made here.

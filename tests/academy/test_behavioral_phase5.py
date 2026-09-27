@@ -15,6 +15,7 @@ from scripts.eval.run_behavioral_phase5 import (
     PRIVATE_CAPTURE_LOCATION,
     _external_capture_dir,
     _argv_sha256,
+    _extract_events,
     _host_command,
     _run_one,
     _serialize_persisted_result,
@@ -515,6 +516,28 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual(1, bad["unsupported_assertion_count"])
         self.assertEqual(1, bad["distractor_adoption_count"])
         self.assertFalse(malformed["format_valid"])
+
+
+    def test_parser_counts_unique_command_execution_items_not_lifecycle_events(self):
+        events = [
+            {"type": "thread.started", "thread_id": "sanitized-thread"},
+            {"type": "item.started", "item": {"id": "call-1", "type": "command_execution", "status": "in_progress"}},
+            {"type": "item.completed", "item": {"id": "call-1", "type": "command_execution", "status": "failed", "exit_code": 1}},
+            {"type": "item.started", "item": {"id": "call-2", "type": "command_execution", "status": "in_progress"}},
+            {"type": "item.started", "item": {"id": "call-3", "type": "command_execution", "status": "in_progress"}},
+            {"type": "item.completed", "item": {"id": "call-3", "type": "command_execution", "status": "completed", "exit_code": 0}},
+            {"type": "item.completed", "item": {"id": "reason-1", "type": "reasoning", "text": "sanitized"}},
+            {"type": "item.completed", "item": {"id": "plan-1", "type": "plan_update", "plan": []}},
+            {"type": "item.completed", "item": {"id": "message-1", "type": "agent_message", "text": '{"result":null}'}},
+            {"type": "turn.completed", "usage": {"input_tokens": 1}},
+        ]
+        output = "\n".join(json.dumps(event) for event in events)
+        message, usage, tool_count, thread_id, turn_completed = _extract_events(output)
+        self.assertEqual('{"result":null}', message)
+        self.assertEqual({"input_tokens": 1}, usage)
+        self.assertEqual(3, tool_count)
+        self.assertEqual("sanitized-thread", thread_id)
+        self.assertTrue(turn_completed)
 
 
 if __name__ == "__main__":

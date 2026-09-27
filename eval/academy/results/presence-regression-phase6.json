@@ -1,23 +1,204 @@
 {
+  "all_discovered_skills_lifecycle": "DISCOVERED / UNEVALUATED",
+  "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
+  "argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
   "artifact_kind": "PHASE6_PRESENCE_REGRESSION_PREREGISTRATION",
-  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V2",
-  "status": "IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING",
+  "attempted_trial_count": 1,
+  "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2",
+  "blocking_condition": "CONTAMINATED_BY_TOOL_USE",
+  "blocking_trial_id": "VC-REL-P0",
+  "capability_certification": "NOT STARTED",
+  "codex_executable_observation": "Resolved from PATH; absolute local path intentionally omitted.",
+  "completed_trial_count": 0,
+  "cross_session_memory_confound": "UNCHARACTERIZED",
+  "discovered_skill_count": 136,
+  "evaluator_sha256": "bfb4ce22e873173ee5a3839d6d64056d6c4c90445c6c2de84b49d5b1f0f9607e",
+  "execution_authorized": true,
+  "execution_count": 1,
+  "external_review_status": "PENDING",
+  "execution_harness_version": "PHASE6_EXTERNAL_EXECUTION_ADAPTER_V1",
+  "formal_execution_incident": {
+    "artifact": "eval/academy/results/presence-regression-phase6-incident.json",
+    "classification": "TRUE_HOST_TOOL_CONTAMINATION",
+    "detector_audit_status": "CONFIRMED_CORRECT_ON_AVAILABLE_RAW_CAPTURE",
+    "retry_allowed": false,
+    "remaining_trials_executed": false,
+    "remaining_trials_count": 23,
+    "external_review_status": "PENDING"
+  },
+  "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
+  "external_controller_marker": "Set NEXUS_PHASE6_EXTERNAL_CONTROLLER=EXTERNAL_WINDOWS_POWERSHELL in the current PowerShell process only.",
+  "formal_execution_authorized": true,
+  "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
+  "formal_trial_count": 0,
+  "formal_trials": {
+    "VC-REL-P0": {
+      "agent_output": "{\"result\":null}",
+      "argv_persisted_before_process_outcome": true,
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "execution_harness_version": "PHASE6_EXTERNAL_EXECUTION_ADAPTER_V1",
+      "execution_status": "CONTAMINATED_BY_TOOL_USE",
+      "exit_code": 0,
+      "family_id": "VARNET_CIPHER",
+      "formal_trial_counted": false,
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 116480,
+        "input_tokens": 143926,
+        "output_tokens": 945,
+        "reasoning_output_tokens": 602
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output_sha256": "ff9c534d8448cd26fb0c3076ac8e5b6fcf4d3537e8d4a5249e4bec6d56664582",
+      "packet_sha256": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460",
+      "presence": "P0_ABSENT",
+      "raw_capture_stderr": "VC-REL-P0.stderr.txt",
+      "raw_capture_stdout": "VC-REL-P0.stdout.jsonl",
+      "relevant_utility": "NOT_APPLICABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_kind": "CAPABILITY_RELEVANT",
+      "thread_id": "01a0e2ff-f459-7453-9bef-0a6b9ffa5278",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 3,
+      "trial_id": "VC-REL-P0",
+      "turn_completed": true,
+      "underlying_invocation_adapter_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "unrelated_task_preservation": "NOT_APPLICABLE",
+      "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+      "wall_clock_seconds": 55.704
+    }
+  },
+  "frozen_packet_text_sha256_by_trial": {
+    "AR-CTRL-P0": "6f4940a8008af5824c9c6c555b95a677f9805d35e64ec5cb1f83a8dfa23a9da3",
+    "AR-CTRL-P1": "83122136c97786113d63f4edeffa77187dbce0f183e1b96827cd486ffe9ffde1",
+    "AR-CTRL-P2": "266eba8e47cb281f4d5120c6aa4b88d95d4586b65aeea64c3a9562340cee821f",
+    "AR-REL-P0": "fe0c068424c8a512142954acdc0fc2a51d51614f30f69c85e7562b12999e1cd3",
+    "AR-REL-P1": "bf9756a852ba10bce3f552fb99674d06df669ec79fd442fca2150ce2e30fd50d",
+    "AR-REL-P2": "4851eee1fd89c5ef13055d8487da6bd54ffb77b55ca2436389bfc6de6027e388",
+    "NO-CTRL-P0": "1a013f4a309879a8f58d422f24c53f8e7756375f7d4a035e8097e4dc1cfbb850",
+    "NO-CTRL-P1": "6de60b4904d279c5da59e0e5673a2e208e4abcfdc7745cd6709566edbcb4d609",
+    "NO-CTRL-P2": "9154b1c7a4a05332e85b2271044035a50e18832f16e342957b0a3b1e3436932a",
+    "NO-REL-P0": "69482c47fb54b9076caf1432771acbcd388fac9e0b2acd6b144944e0271abe15",
+    "NO-REL-P1": "c573c5b8aad0ba2d11a26b1f06ac2cb0017d363cadb6c203b4e29b4fa8814848",
+    "NO-REL-P2": "17d92a73c63ae5059acf8e2ae15541a6142148d87233712b765ee2d704ee0a26",
+    "OP-CTRL-P0": "ff21e5c15bf8042af412e8b19bf1d84a470321a9f297b2f6ca2cc5950d1692d3",
+    "OP-CTRL-P1": "9a5460fe5e8667f72b8f02cff041b2461577f22134413829fac06eae7d8c3a6d",
+    "OP-CTRL-P2": "2344bdb5df1f1d301b39ad11bbcd2492a564967da91378829354cbf71d07f3cb",
+    "OP-REL-P0": "a192b26d025a8ccececeada4895d5557c77a6251d933fa9028b574a025529181",
+    "OP-REL-P1": "8ff0a13bf303ba62ed2b27ef94119bf8ad869145d2e9de8923cc28129f03c036",
+    "OP-REL-P2": "b751fb443b90e12abf0801577efa79bba8094445997e02585a4d4b8baac17ada",
+    "VC-CTRL-P0": "ed215d2a76a760d82d411471c062cf33a47b7890f8e1132ae2cd3057202bf0db",
+    "VC-CTRL-P1": "4b6794171d85d88bb9c3b466961d78b76d6f75d4e05800e4c33dd3d0b8df1eec",
+    "VC-CTRL-P2": "4c9b1bf4bcc4d0cba207c8d4f4b9d5ad43a51250079c979c43f692eeb612e1f3",
+    "VC-REL-P0": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460",
+    "VC-REL-P1": "73d2fe6cbe940b92f44a095a25c553ec2ba2c5b335a427ed6c840d18fb061862",
+    "VC-REL-P2": "1873dc9fc9e61195bb3ee0331fbd5c1be11a2ee0799b3b2edccafa6f931120ae"
+  },
+  "gates": {
+    "OUTPUT_CANONICALIZATION_POLICY": "INSUFFICIENT_EVIDENCE; promotion_allowed=false",
+    "PRESENCE_REGRESSION_GATE": "NOT QUALIFIED BY PHASE6 FORMAL MATRIX"
+  },
+  "host_model_identity": "UNAVAILABLE",
+  "instruction_scope": "TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS",
+  "interpretation_boundary": "A clean result qualifies only the tested task-scoped synthetic instruction design; it does not establish that arbitrary or unscoped capability instructions are safe.",
+  "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+  "model_visible_packet_digest": "f3215d9bc71b6ceae170719d1f5a038ce464733a5e4a6ac8363b371db6a2cd7d",
+  "model_visible_packet_digest_rule": "Sort by trial_id; encode trial_id + NUL + model_visible_text as UTF-8; LF-join records and append one final LF; SHA-256.",
+  "nexus_model_receipt_count": 0,
+  "packet_count": 24,
+  "packet_fixture_sha256": "af544292d3f5a27621cac559b47ef2297fc0087b603de7901c43a2fa94a81e3b",
+  "per_exposure_token_attribution": "UNAVAILABLE",
+  "phase5_closure": {
+    "evidence_scope": "18/18 eligible formal real-Host trials with deterministic frozen-evaluator scoring",
+    "formal_trial_count": 18,
+    "gates": {
+      "G1": "SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX",
+      "G2": "UNAVAILABLE",
+      "H1": "OBSERVED_IN_REAL_HOST_PILOT",
+      "H2": "NOT TESTED",
+      "I": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
+      "J1": "SUPPORTED_BY_REAL_HOST",
+      "J2": "UNAVAILABLE"
+    },
+    "status": "CLOSED / ACCEPTED"
+  },
+  "phase5_external_review_findings": {
+    "L73": {
+      "distractor_adopted": false,
+      "frozen_expected": {
+        "handoff": "MIRA-Q8",
+        "region": "LCL-6",
+        "retention_days": "23"
+      },
+      "frozen_output": {
+        "handoff": "MIRA-Q8",
+        "region": "LCL-6",
+        "retention_days": "23 days"
+      },
+      "frozen_score": {
+        "exact_correct": false,
+        "required_fact_coverage": 0.6666666666666666,
+        "unsupported_assertion_count": 1
+      },
+      "qualitative_classification": "EXACT_CANONICALIZATION_MISMATCH",
+      "scoring_changed": false,
+      "source_fact_preserved": "23 days",
+      "wrong_workspace_value_substituted": false
+    },
+    "W34": {
+      "causal_claim_allowed": false,
+      "frozen_output": {
+        "owner": "RPAL-632"
+      },
+      "frozen_owner": "KITE-309",
+      "observed_transform_matches_glyph_shift": true,
+      "qualitative_classification": "INSTRUCTION_BLEED_OBSERVATION / PRESENCE_REGRESSION_OBSERVED"
+    }
+  },
+  "production_qualification": "NOT STARTED",
+  "project_experience_curator_status": "DISCOVERED / UNEVALUATED",
   "protocol_history": {
     "PHASE6_PRESENCE_REGRESSION_PREREG_V1": "REPLACED BEFORE ANY PHASE 6 HOST TRIAL; REGRESSION CLASSIFICATION AND SCREENING AUDITABILITY CORRECTED",
     "PHASE6_PRESENCE_REGRESSION_PREREG_V2": "FROZEN BEFORE FIRST PHASE 6 HOST TRIAL"
   },
-  "instruction_scope": "TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS",
+  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V2",
+  "provider_dollar_cost": "UNAVAILABLE",
+  "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
+  "real_skill_evaluated_count": 0,
+  "real_skill_screening": {
+    "evidence_artifact": "eval/academy/results/phase6-real-skill-static-screen.json",
+    "evidence_sha256": "85d417df1eee44e7d6d0738306ae619febf869ffc09d25bf2a77849cfcb2dfce",
+    "method": "Read-only artifact inventory and SHA-256 fingerprinting of 136 SKILL.md files. Most semantic criteria remain UNKNOWN rather than substantively classified, and UNKNOWN blocks eligibility. Zero selected means zero statically qualified under current evidence; it does not mean zero Skills are suitable. No Skill executed; this is not runtime safety verification, Skill evaluation, or native loaded-state evidence.",
+    "project_experience_curator": "EXCLUDED; may write project instructions; remains DISCOVERED / UNEVALUATED",
+    "screened_instruction_artifacts": 136,
+    "selected_candidate_count": 0,
+    "selected_candidates": [],
+    "selection_status": "ZERO_STATICALLY_QUALIFIED_CANDIDATES_UNDER_CURRENT_KNOWN_UNKNOWN_EVIDENCE",
+    "source_counts": {
+      "BUNDLED_PLUGIN_SKILLS": 2,
+      "CODEX_SKILLS": 110,
+      "CURATED_PLUGIN_SKILLS": 24
+    },
+    "status": "READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING"
+  },
+  "relevant_control_pair_count": 12,
   "research_question": "Can task-scoped capability instructions provide relevant utility while preserving unrelated-task behavior?",
-  "interpretation_boundary": "A clean result qualifies only the tested task-scoped synthetic instruction design; it does not establish that arbitrary or unscoped capability instructions are safe.",
-  "formal_trial_count": 0,
-  "execution_count": 0,
-  "nexus_model_receipt_count": 0,
-  "execution_authorized": true,
-  "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
-  "formal_execution_authorized": true,
-  "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2",
-  "execution_harness_version": "PHASE6_EXTERNAL_EXECUTION_ADAPTER_V1",
-  "underlying_invocation_adapter_version": "PHASE5_EXECUTION_HARNESS_V3",
   "sanitized_argv": [
     "codex",
     "exec",
@@ -31,125 +212,9 @@
     "-"
   ],
   "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
-  "argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
-  "external_controller_marker": "Set NEXUS_PHASE6_EXTERNAL_CONTROLLER=EXTERNAL_WINDOWS_POWERSHELL in the current PowerShell process only.",
-  "attempted_trial_count": 0,
-  "completed_trial_count": 0,
-  "unique_thread_id_count": 0,
-  "formal_trials": {},
-  "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
-  "host_model_identity": "UNAVAILABLE",
-  "provider_dollar_cost": "UNAVAILABLE",
-  "per_exposure_token_attribution": "UNAVAILABLE",
-  "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
-  "cross_session_memory_confound": "UNCHARACTERIZED",
-  "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
-  "packet_count": 24,
-  "synthetic_capability_family_count": 4,
-  "relevant_control_pair_count": 12,
-  "packet_fixture_sha256": "af544292d3f5a27621cac559b47ef2297fc0087b603de7901c43a2fa94a81e3b",
-  "evaluator_sha256": "bfb4ce22e873173ee5a3839d6d64056d6c4c90445c6c2de84b49d5b1f0f9607e",
-  "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
-  "model_visible_packet_digest_rule": "Sort by trial_id; encode trial_id + NUL + model_visible_text as UTF-8; LF-join records and append one final LF; SHA-256.",
-  "model_visible_packet_digest": "f3215d9bc71b6ceae170719d1f5a038ce464733a5e4a6ac8363b371db6a2cd7d",
-  "frozen_packet_text_sha256_by_trial": {
-    "VC-REL-P0": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460",
-    "OP-CTRL-P0": "ff21e5c15bf8042af412e8b19bf1d84a470321a9f297b2f6ca2cc5950d1692d3",
-    "NO-REL-P0": "69482c47fb54b9076caf1432771acbcd388fac9e0b2acd6b144944e0271abe15",
-    "AR-CTRL-P0": "6f4940a8008af5824c9c6c555b95a677f9805d35e64ec5cb1f83a8dfa23a9da3",
-    "VC-CTRL-P0": "ed215d2a76a760d82d411471c062cf33a47b7890f8e1132ae2cd3057202bf0db",
-    "OP-REL-P0": "a192b26d025a8ccececeada4895d5557c77a6251d933fa9028b574a025529181",
-    "NO-CTRL-P0": "1a013f4a309879a8f58d422f24c53f8e7756375f7d4a035e8097e4dc1cfbb850",
-    "AR-REL-P0": "fe0c068424c8a512142954acdc0fc2a51d51614f30f69c85e7562b12999e1cd3",
-    "NO-REL-P1": "c573c5b8aad0ba2d11a26b1f06ac2cb0017d363cadb6c203b4e29b4fa8814848",
-    "AR-CTRL-P1": "83122136c97786113d63f4edeffa77187dbce0f183e1b96827cd486ffe9ffde1",
-    "VC-REL-P1": "73d2fe6cbe940b92f44a095a25c553ec2ba2c5b335a427ed6c840d18fb061862",
-    "OP-CTRL-P1": "9a5460fe5e8667f72b8f02cff041b2461577f22134413829fac06eae7d8c3a6d",
-    "NO-CTRL-P1": "6de60b4904d279c5da59e0e5673a2e208e4abcfdc7745cd6709566edbcb4d609",
-    "AR-REL-P1": "bf9756a852ba10bce3f552fb99674d06df669ec79fd442fca2150ce2e30fd50d",
-    "VC-CTRL-P1": "4b6794171d85d88bb9c3b466961d78b76d6f75d4e05800e4c33dd3d0b8df1eec",
-    "OP-REL-P1": "8ff0a13bf303ba62ed2b27ef94119bf8ad869145d2e9de8923cc28129f03c036",
-    "OP-REL-P2": "b751fb443b90e12abf0801577efa79bba8094445997e02585a4d4b8baac17ada",
-    "NO-CTRL-P2": "9154b1c7a4a05332e85b2271044035a50e18832f16e342957b0a3b1e3436932a",
-    "AR-REL-P2": "4851eee1fd89c5ef13055d8487da6bd54ffb77b55ca2436389bfc6de6027e388",
-    "VC-CTRL-P2": "4c9b1bf4bcc4d0cba207c8d4f4b9d5ad43a51250079c979c43f692eeb612e1f3",
-    "OP-CTRL-P2": "2344bdb5df1f1d301b39ad11bbcd2492a564967da91378829354cbf71d07f3cb",
-    "NO-REL-P2": "17d92a73c63ae5059acf8e2ae15541a6142148d87233712b765ee2d704ee0a26",
-    "AR-CTRL-P2": "266eba8e47cb281f4d5120c6aa4b88d95d4586b65aeea64c3a9562340cee821f",
-    "VC-REL-P2": "1873dc9fc9e61195bb3ee0331fbd5c1be11a2ee0799b3b2edccafa6f931120ae"
-  },
-  "phase5_closure": {
-    "status": "CLOSED / ACCEPTED",
-    "formal_trial_count": 18,
-    "evidence_scope": "18/18 eligible formal real-Host trials with deterministic frozen-evaluator scoring",
-    "gates": {
-      "G1": "SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX",
-      "G2": "UNAVAILABLE",
-      "H1": "OBSERVED_IN_REAL_HOST_PILOT",
-      "H2": "NOT TESTED",
-      "I": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
-      "J1": "SUPPORTED_BY_REAL_HOST",
-      "J2": "UNAVAILABLE"
-    }
-  },
-  "phase5_external_review_findings": {
-    "L73": {
-      "frozen_output": {
-        "retention_days": "23 days",
-        "handoff": "MIRA-Q8",
-        "region": "LCL-6"
-      },
-      "frozen_expected": {
-        "retention_days": "23",
-        "handoff": "MIRA-Q8",
-        "region": "LCL-6"
-      },
-      "frozen_score": {
-        "exact_correct": false,
-        "required_fact_coverage": 0.6666666666666666,
-        "unsupported_assertion_count": 1
-      },
-      "qualitative_classification": "EXACT_CANONICALIZATION_MISMATCH",
-      "source_fact_preserved": "23 days",
-      "distractor_adopted": false,
-      "wrong_workspace_value_substituted": false,
-      "scoring_changed": false
-    },
-    "W34": {
-      "frozen_owner": "KITE-309",
-      "frozen_output": {
-        "owner": "RPAL-632"
-      },
-      "qualitative_classification": "INSTRUCTION_BLEED_OBSERVATION / PRESENCE_REGRESSION_OBSERVED",
-      "observed_transform_matches_glyph_shift": true,
-      "causal_claim_allowed": false
-    }
-  },
-  "real_skill_screening": {
-    "status": "READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING",
-    "evidence_artifact": "eval/academy/results/phase6-real-skill-static-screen.json",
-    "evidence_sha256": "85d417df1eee44e7d6d0738306ae619febf869ffc09d25bf2a77849cfcb2dfce",
-    "screened_instruction_artifacts": 136,
-    "source_counts": {
-      "CODEX_SKILLS": 110,
-      "BUNDLED_PLUGIN_SKILLS": 2,
-      "CURATED_PLUGIN_SKILLS": 24
-    },
-    "method": "Read-only artifact inventory and SHA-256 fingerprinting of 136 SKILL.md files. Most semantic criteria remain UNKNOWN rather than substantively classified, and UNKNOWN blocks eligibility. Zero selected means zero statically qualified under current evidence; it does not mean zero Skills are suitable. No Skill executed; this is not runtime safety verification, Skill evaluation, or native loaded-state evidence.",
-    "selected_candidate_count": 0,
-    "selected_candidates": [],
-    "selection_status": "ZERO_STATICALLY_QUALIFIED_CANDIDATES_UNDER_CURRENT_KNOWN_UNKNOWN_EVIDENCE",
-    "project_experience_curator": "EXCLUDED; may write project instructions; remains DISCOVERED / UNEVALUATED"
-  },
-  "real_skill_evaluated_count": 0,
-  "discovered_skill_count": 136,
-  "all_discovered_skills_lifecycle": "DISCOVERED / UNEVALUATED",
-  "project_experience_curator_status": "DISCOVERED / UNEVALUATED",
-  "capability_certification": "NOT STARTED",
   "shadow": "NOT STARTED",
-  "production_qualification": "NOT STARTED",
-  "gates": {
-    "PRESENCE_REGRESSION_GATE": "CANDIDATE / PREREGISTRATION_REQUIRED",
-    "OUTPUT_CANONICALIZATION_POLICY": "INSUFFICIENT_EVIDENCE; promotion_allowed=false"
-  }
+  "status": "STOPPED_ON_PROTOCOL_CONDITION",
+  "synthetic_capability_family_count": 4,
+  "underlying_invocation_adapter_version": "PHASE5_EXECUTION_HARNESS_V3",
+  "unique_thread_id_count": 1
 }

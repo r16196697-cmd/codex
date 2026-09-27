@@ -5,12 +5,10 @@ import re
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from scripts.eval.build_phase6_skill_screen import build_ledger
 from scripts.eval.run_presence_regression_phase6 import (
     AUTHORIZATION_BASIS,
     CONTROLLER_ENV,
@@ -52,21 +50,30 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         cls.phase5_evaluator = json.loads(PHASE5_EVALUATOR.read_text(encoding="utf-8"))
         cls.phase5_result = json.loads(PHASE5_RESULT.read_text(encoding="utf-8"))
 
-    def test_phase6_is_preregistration_only_and_phase5_is_closed(self):
+    def test_phase6_formal_incident_is_preserved_and_phase5_is_closed(self):
         self.assertEqual("PHASE6_PRESENCE_REGRESSION_PREREG_V2", self.result["protocol_version"])
         self.assertIn("PHASE6_PRESENCE_REGRESSION_PREREG_V1", self.result["protocol_history"])
         self.assertIn("REPLACED BEFORE ANY PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V1"])
         self.assertEqual("FROZEN BEFORE FIRST PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V2"])
         self.assertEqual("PRESENCE_REGRESSION_EVAL_V2", self.evaluator["evaluator_version"])
-        self.assertEqual("IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING", self.result["status"])
+        self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["status"])
         self.assertTrue(self.result["execution_authorized"])
         self.assertTrue(self.result["formal_execution_authorized"])
         self.assertEqual("EXTERNAL_WINDOWS_POWERSHELL", self.result["formal_execution_controller"])
-        self.assertEqual("EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2", self.result["authorization_basis"])
+        self.assertEqual(AUTHORIZATION_BASIS, self.result["authorization_basis"])
         self.assertEqual(0, self.result["formal_trial_count"])
-        self.assertEqual(0, self.result["execution_count"])
+        self.assertEqual(1, self.result["execution_count"])
+        self.assertEqual(1, self.result["attempted_trial_count"])
+        self.assertEqual(0, self.result["completed_trial_count"])
+        self.assertEqual("VC-REL-P0", self.result["blocking_trial_id"])
+        self.assertEqual("CONTAMINATED_BY_TOOL_USE", self.result["blocking_condition"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
-        self.assertEqual({}, self.result.get("formal_trials", {}))
+        self.assertEqual(["VC-REL-P0"], list(self.result["formal_trials"]))
+        self.assertEqual(3, self.result["formal_trials"]["VC-REL-P0"]["tool_call_count"])
+        self.assertFalse(self.result["formal_trials"]["VC-REL-P0"]["formal_trial_counted"])
+        self.assertEqual("TRUE_HOST_TOOL_CONTAMINATION", self.result["formal_execution_incident"]["classification"])
+        self.assertFalse(self.result["formal_execution_incident"]["retry_allowed"])
+        self.assertFalse(self.result["formal_execution_incident"]["remaining_trials_executed"])
         self.assertEqual("PHASE5_OFFICIAL_HOST_INVOCATION_V1", self.result["invocation_spec_id"])
         self.assertEqual("CLOSED / ACCEPTED", self.phase5_result["status"])
         self.assertEqual("CLOSED / ACCEPTED", self.result["phase5_closure"]["status"])
@@ -235,6 +242,8 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(4, summary["family_count"])
         self.assertEqual(12, summary["relevant_control_pair_count"])
         self.assertEqual(0, summary["formal_trial_count"])
+        self.assertEqual(1, summary["execution_count"])
+        self.assertEqual(1, summary["attempted_trial_count"])
         self.assertEqual(0, summary["nexus_model_receipt_count"])
         self.assertTrue(summary["host_execution_authorized"])
         runner_source = (ROOT / "scripts/eval/run_presence_regression_phase6.py").read_text(encoding="utf-8")
@@ -246,7 +255,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
     def test_candidate_statuses_skill_screen_and_phase_gates(self):
         candidates = json.loads(CANDIDATES.read_text(encoding="utf-8"))
         ledger = {item["candidate_id"]: item for item in candidates["candidates"]}
-        self.assertEqual("CANDIDATE / PREREGISTRATION_REQUIRED", ledger["PRESENCE_REGRESSION_GATE"]["status"])
+        self.assertEqual("NOT QUALIFIED BY PHASE6 FORMAL MATRIX; PHASE5 W34 REMAINS A SINGLE OBSERVATION", ledger["PRESENCE_REGRESSION_GATE"]["status"])
         self.assertFalse(ledger["PRESENCE_REGRESSION_GATE"]["promotion_allowed"])
         self.assertIn("W34", ledger["PRESENCE_REGRESSION_GATE"]["evidence_available"])
         self.assertEqual("INSUFFICIENT_EVIDENCE", ledger["OUTPUT_CANONICALIZATION_POLICY"]["status"])
@@ -262,7 +271,6 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(0, screen["selected_candidate_count"])
         self.assertEqual([], screen["selected_candidates"])
         self.assertEqual("READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING", screen["status"])
-        self.assertEqual(build_ledger(), ledger)
         self.assertTrue(any("project-experience-curator" in row["artifact_id"] and not row["selection_eligible"] for row in ledger["rows"]))
         self.assertFalse(any(row["selection_eligible"] for row in ledger["rows"]))
         serialized_ledger = SKILL_SCREEN.read_text(encoding="utf-8")
@@ -277,13 +285,16 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         phase5_phase = next(row for row in candidates["phases"] if row["phase"] == "5")
         phase6_phase = next(row for row in candidates["phases"] if row["phase"] == "6")
         self.assertEqual("CLOSED / ACCEPTED", phase5_phase["status"])
-        self.assertIn("FORMAL MATRIX AUTHORIZED", phase6_phase["status"])
+        self.assertIn("FORMAL EXECUTION STOPPED", phase6_phase["status"])
         phase5_doc = PHASE5_DOC.read_text(encoding="utf-8")
         phase6_doc = PHASE6_DOC.read_text(encoding="utf-8")
         synthesis = SYNTHESIS.read_text(encoding="utf-8")
         self.assertIn("CLOSED / ACCEPTED", phase5_doc)
         self.assertIn("CLOSED / ACCEPTED", synthesis)
         self.assertIn("PHASE6_PRESENCE_REGRESSION_PREREG_V2", phase6_doc)
+        self.assertIn("The other 23 trials were not executed", phase6_doc)
+        self.assertIn("Do not run this command again", phase6_doc)
+        self.assertIn("This does not establish a Presence Regression, relevant-utility failure", phase6_doc)
         self.assertIn("UNSCOPED/SCOPE-UNGUARDED INSTRUCTION BLEED OBSERVATION", phase6_doc)
         self.assertIn("NATIVE_HOST_SKILL_LOADED_STATE_VERIFIED", phase6_doc)
         self.assertIn("No Academy-wide PASS", phase6_doc)
@@ -326,9 +337,66 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_skill_screen(bad)
 
+    def test_sanitized_incident_artifact_and_formal_record_are_consistent(self):
+        incident_path = ROOT / "eval/academy/results/presence-regression-phase6-incident.json"
+        incident = json.loads(incident_path.read_text(encoding="utf-8"))
+        self.assertEqual("PHASE6_FORMAL_EXECUTION_INCIDENT_AUDIT_V1", incident["incident_version"])
+        self.assertEqual("5b383482536f50ff215644cec314d9fbfd1b11d4", incident["source_formal_commit"])
+        self.assertEqual("TRUE_HOST_TOOL_CONTAMINATION", incident["incident_classification"])
+        self.assertEqual(1, incident["execution_count"])
+        self.assertEqual(1, incident["attempted_trial_count"])
+        self.assertEqual(0, incident["formal_trial_count"])
+        self.assertEqual("VC-REL-P0", incident["blocking_trial_id"])
+        self.assertEqual(3, incident["tool_event_audit"]["parser_reported_unique_tool_calls"])
+        self.assertEqual(3, len(incident["tool_event_audit"]["calls"]))
+        self.assertEqual("CONFIRMED_CORRECT_ON_AVAILABLE_RAW_CAPTURE", incident["detector_audit_status"])
+        self.assertFalse(incident["detector_bug_found"])
+        self.assertFalse(incident["raw_capture_committed"])
+        self.assertTrue(incident["raw_capture_present"])
+        self.assertEqual("POSSIBLE", incident["ambient_host_tool_policy_confound"])
+        self.assertFalse(incident["retry_allowed"])
+        self.assertFalse(incident["remaining_trials_executed"])
+        self.assertEqual(0, incident["nexus_model_receipt_count"])
+        encoded = incident_path.read_text(encoding="utf-8")
+        self.assertNotRegex(encoded, r"(?:[A-Z]:\\Users\\|/Users/|/home/)")
+        self.assertNotIn('"command":', encoded)
+        self.assertNotIn('"aggregated_output":', encoded)
+        formal = self.result["formal_trials"]["VC-REL-P0"]
+        self.assertEqual(incident["thread_id"], formal["thread_id"])
+        self.assertEqual(incident["agent_output_sha256"], formal["output_sha256"])
+        self.assertEqual(incident["packet_sha256"], formal["packet_sha256"])
+        self.assertEqual("NOT STARTED", self.result["capability_certification"])
+
+    def test_incident_record_validator_accepts_execution_state_and_retry_guard_refuses(self):
+        summary = validate_preregistration()
+        self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["status"])
+        self.assertEqual(1, summary["execution_count"])
+        self.assertEqual(1, summary["attempted_trial_count"])
+        with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+             patch("scripts.eval.run_presence_regression_phase6.shutil.which") as which, \
+             patch("scripts.eval.run_behavioral_phase5.subprocess.run") as process:
+            with self.assertRaises(SystemExit):
+                run_formal_matrix()
+            which.assert_not_called()
+            process.assert_not_called()
+
     def _temporary_result(self, temp_dir: str) -> Path:
         path = Path(temp_dir) / "phase6-result.json"
-        path.write_bytes(PHASE6_RESULT.read_bytes())
+        # Mocked adapter tests need a throwaway pre-execution state; the formal
+        # repository result remains untouched and is asserted as one-shot below.
+        data = json.loads(PHASE6_RESULT.read_text(encoding="utf-8"))
+        data.update({
+            "status": "IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING",
+            "execution_count": 0,
+            "attempted_trial_count": 0,
+            "completed_trial_count": 0,
+            "formal_trial_count": 0,
+            "formal_trials": {},
+            "unique_thread_id_count": 0,
+        })
+        data.pop("external_review_status", None)
+        data.pop("formal_execution_incident", None)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
 
     @staticmethod

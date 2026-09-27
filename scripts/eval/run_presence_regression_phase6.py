@@ -422,10 +422,23 @@ def validate_preregistration(
         ordered_levels = [next(row["presence"] for row in rows if positions[row["trial_id"]] == index) for index in indices]
         if ordered_levels != list(LEVELS):
             raise ValueError(f"Presence order is not monotonic for {key}.")
-    if result["formal_trial_count"] != 0 or result["execution_count"] != 0 or result["nexus_model_receipt_count"] != 0:
-        raise ValueError("Authorized-but-unexecuted result must have zero trials, invocations, and MODEL receipts.")
-    if result.get("attempted_trial_count", 0) != 0 or result.get("formal_trials", []):
-        raise ValueError("Pre-execution validation requires no attempted formal trials.")
+    counters = ("execution_count", "attempted_trial_count", "formal_trial_count", "nexus_model_receipt_count")
+    if any(type(result.get(key, 0)) is not int or result.get(key, 0) < 0 for key in counters):
+        raise ValueError("Phase 6 execution counters must be nonnegative integers.")
+    if result["nexus_model_receipt_count"] != 0:
+        raise ValueError("External Academy CLI execution must not fabricate Nexus MODEL receipts.")
+    formal_trials = result.get("formal_trials", {})
+    if not isinstance(formal_trials, dict) or result["formal_trial_count"] > result["attempted_trial_count"]:
+        raise ValueError("Phase 6 execution record counters or formal trial map are inconsistent.")
+    if result.get("status") == "IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING":
+        if result["execution_count"] != 0 or result["attempted_trial_count"] != 0 or result["formal_trial_count"] != 0 or formal_trials:
+            raise ValueError("Pre-execution authorization state must have zero attempts and formal trials.")
+    elif result.get("status") == "STOPPED_ON_PROTOCOL_CONDITION":
+        if result["execution_count"] != 1 or len(formal_trials) != result["attempted_trial_count"]:
+            raise ValueError("Stopped execution record must preserve its one-shot attempt count and trial records.")
+        counted = sum(row.get("formal_trial_counted") is True for row in formal_trials.values())
+        if counted != result["formal_trial_count"]:
+            raise ValueError("Stopped execution formal count does not match preserved trial records.")
     if result.get("execution_authorized") is not True or packets.get("execution_authorized") is not True:
         raise ValueError("Phase 6 external execution authorization metadata is missing.")
     if result.get("formal_execution_authorized") is not True or result.get("formal_execution_controller") != FORMAL_CONTROLLER:
@@ -449,8 +462,10 @@ def validate_preregistration(
         "skill_screen_row_count": len(screen["rows"]),
         "skill_screen_selected_candidate_count": screen["selected_candidate_count"],
         "skill_screen_source_counts": screen_summary["source_counts"],
-        "formal_trial_count": 0,
-        "nexus_model_receipt_count": 0,
+        "execution_count": result["execution_count"],
+        "attempted_trial_count": result["attempted_trial_count"],
+        "formal_trial_count": result["formal_trial_count"],
+        "nexus_model_receipt_count": result["nexus_model_receipt_count"],
         "host_execution_authorized": True,
         "formal_execution_controller": FORMAL_CONTROLLER,
     }
