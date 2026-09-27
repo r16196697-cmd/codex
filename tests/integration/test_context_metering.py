@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -22,6 +23,8 @@ from kernel.participation import ParticipationModeService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
+from kernel.runtime.panel import PanelQueryService
+from kernel.object.errors import WriterAlreadyRunning
 
 
 class ContextMeteringTests(unittest.TestCase):
@@ -190,7 +193,8 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertEqual(metrics["token_savings"]["provenance"], "UNAVAILABLE")
         self.assertIsNone(metrics["actual_cost"]["value"])
         self.assertEqual(metrics["actual_cost"]["provenance"], "UNAVAILABLE")
-        self.assertEqual(metrics["estimated_cost"]["provenance"], "ESTIMATED")
+        self.assertEqual(metrics["estimated_cost"]["provenance"], "HOST_DECLARED")
+        self.assertEqual(metrics["estimated_cost"]["estimate_status"], "ESTIMATED")
         self.assertEqual(metrics["estimated_cost"]["estimation_basis"]["pricing_version"], "1")
         total_only = self.metering.record_host_declared(
             record_id="host-total-only", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
@@ -199,10 +203,231 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertIsNone(total_only["uncached_input_tokens"]["value"])
         self.assertEqual(total_only["uncached_input_tokens"]["provenance"], "UNAVAILABLE")
         with self.assertRaisesRegex(ValueError, "ESTIMATED_METRIC_BASIS_REQUIRED"):
-            metric(1.0, "ESTIMATED", unit="USD")
-        estimated = metric(1.0, "ESTIMATED", unit="USD", estimation_basis={
+            metric(1.0, "HOST_DECLARED", unit="USD", estimate_status="ESTIMATED")
+        estimated = metric(1.0, "DERIVED", unit="USD", estimate_status="ESTIMATED", estimation_basis={
             "pricing_id": "test-price", "pricing_version": "1", "formula": "explicit test formula"})
-        self.assertEqual(estimated["provenance"], "ESTIMATED")
+        self.assertEqual(estimated["provenance"], "DERIVED")
+        self.assertEqual(estimated["estimate_status"], "ESTIMATED")
+
+    def test_metering_exact_retry_replays_and_conflicting_retry_fails_closed(self):
+        kwargs = dict(record_id="idempotent-host-event", task_id=self.task_id, run_id=self.run_id,
+                      grant_id="ctx-grant", host_usage={"input_tokens": 17, "cached_input_tokens": 4})
+        first = self.metering.record_host_declared(**kwargs)
+        with self.store._connection() as conn:
+            before = conn.execute("SELECT COUNT(*) FROM value_metering_records").fetchone()[0]
+        replay = self.metering.record_host_declared(**kwargs)
+        self.assertEqual(replay, first)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM value_metering_records").fetchone()[0], before)
+        with self.assertRaisesRegex(RuntimeDenied, "METERING_RECORD_ID_CONFLICT"):
+            self.metering.record_host_declared(**{**kwargs, "host_usage": {"input_tokens": 18}})
+
+    def test_observe_host_metering_fails_without_observation_identity(self):
+        with mock.patch.object(self.participation, "current", return_value={"mode": "OBSERVE"}):
+            with self.assertRaisesRegex(RuntimeDenied, "OBSERVE_METERING_UNSUPPORTED_WITHOUT_OBSERVATION_ID"):
+                self.metering.record_host_declared(
+                    record_id="ambiguous-observe", task_id=self.task_id, run_id=self.run_id,
+                    grant_id="ctx-grant", host_usage={"input_tokens": 10},
+                )
+
+    def test_migration_25_preserves_estimated_source_provenance(self):
+        old_metrics = unavailable_metrics()
+        old_metrics = {key: {name: value for name, value in item.items() if name != "estimate_status"}
+                       for key, item in old_metrics.items()}
+        old_metrics["estimated_cost"] = {
+            "value": 0.25, "provenance": "ESTIMATED", "unit": "USD", "basis": "legacy persisted pricing",
+            "estimation_basis": {"pricing_id": "legacy-price", "pricing_version": "v1", "formula": "test"},
+        }
+        metrics_json = json.dumps(old_metrics, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self.store._connection() as conn:
+            conn.execute(
+                "INSERT INTO value_metering_records(record_id,task_id,run_id,record_source,participation_mode,context_pack_ref,metrics_json,metrics_sha256,recorded_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                ("legacy-estimated-meter", self.task_id, self.run_id, "HOST_DECLARED", "ACTIVE", None,
+                 metrics_json, hashlib.sha256(metrics_json.encode("utf-8")).hexdigest(), "2026-09-28T00:00:00Z"),
+            )
+            conn.execute("DELETE FROM schema_migrations WHERE version=25")
+            conn.execute("PRAGMA user_version=24")
+        self.store.close()
+        reopened = ObjectStore(self.root, policy=self.policy)
+        self.store = reopened
+        self.addCleanup(reopened.close)
+        with reopened._connection() as conn:
+            migrated = json.loads(conn.execute(
+                "SELECT metrics_json FROM value_metering_records WHERE record_id='legacy-estimated-meter'").fetchone()[0])
+            self.assertEqual(migrated["estimated_cost"]["provenance"], "HOST_DECLARED")
+            self.assertEqual(migrated["estimated_cost"]["estimate_status"], "ESTIMATED")
+            self.assertEqual(migrated["estimated_cost"]["estimation_basis"]["pricing_id"], "legacy-price")
+            self.assertEqual(migrated["model_visible_input_tokens"]["estimate_status"], "UNAVAILABLE")
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 25)
+            self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+    def test_run_bound_context_rejects_mismatched_broader_caller_grant(self):
+        now = datetime.now(timezone.utc)
+        broad_resources = ["task:" + self.task_id, "ctx-child-run", "ctx-source-a",
+                           "object:ctx-source-a", "ctx-child-pack", "object:ctx-child-pack",
+                           "ctx-child-run-class", "ctx-child-event-class", "evt-ctx-child-run-create"]
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "ctx-broad-grant",
+            "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [self.task_id],
+            "resource_scope": broad_resources,
+            "action_scope": ["RUN_CREATE", "OBJECT_WRITE", "INSPECT", "CLASSIFY"],
+            "audience_scope": ["nexus-runtime", "nexus-inspect"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "ctx-broad-grant-create")
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "ctx-target-grant",
+            "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [self.task_id],
+            "resource_scope": ["ctx-child-run", "ctx-child-pack", "object:ctx-child-pack",
+                               "ctx-child-run-class", "ctx-child-event-class", "evt-ctx-child-run-create"],
+            "action_scope": ["RUN_CREATE", "OBJECT_WRITE", "CLASSIFY"],
+            "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "ctx-target-grant-create")
+        self._class_child_run("ctx-child-run-class", "RUN", "ctx-child-run", "ctx-broad-grant")
+        self._class_child_run("ctx-child-event-class", "TRACE_EVENT", "evt-ctx-child-run-create", "ctx-broad-grant")
+        self.budget.create_account(command_id="ctx-child-budget-create", account_id="ctx-child-budget",
+                                   task_id=self.task_id, amount_limit=1, unit="calls", model_call_limit=1,
+                                   tool_call_limit=0, child_run_limit=1)
+        reservation = self.budget.reserve(command_id="ctx-child-reserve", account_id="ctx-child-budget",
+                                          task_id=self.task_id, run_id="ctx-child-run", amount=0,
+                                          model_calls=1, child_runs=1)
+        self.trace.create_run({
+            "schema_id": "nexus.run", "schema_version": 1, "run_id": "ctx-child-run",
+            "task_id": self.task_id, "parent_run_id": self.run_id, "executor_kind": "MODEL",
+            "status": "CREATED", "grant_id": "ctx-target-grant", "budget_reservation_ref": reservation,
+            "data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": []},
+            "classification_assertion_ref": "ctx-child-run-class", "created_at": now.isoformat(),
+        }, command_id="ctx-child-run-create", event_classification_assertion_ref="ctx-child-event-class")
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_RUN_GRANT_MISMATCH"):
+            self.context.compile(task_id=self.task_id, run_id="ctx-child-run", grant_id="ctx-broad-grant",
+                                 pack_object_id="ctx-child-pack", classification_assertion_ref="class-ctx-child-pack",
+                                 command_id="ctx-child-broad-grant", source_refs=[self.source_ids[1]])
+
+    def _class_child_run(self, ident, subject_type, subject_ref, grant_id="ctx-grant"):
+        assertion = self._class(ident, subject_type, subject_ref)
+        self.authority.record_classification_assertion(assertion, grant_id=grant_id, task_id=self.task_id,
+                                                       audience="nexus-runtime", command_id="record-" + ident)
+
+    def test_target_run_boundary_rejects_source_not_allowed_by_child(self):
+        now = datetime.now(timezone.utc)
+        task_id, root_id, child_id = "ctx-boundary-task", "ctx-boundary-root", "ctx-boundary-child"
+        source_id, pack_id = "ctx-internal-source", "ctx-boundary-pack"
+        event_root, event_child = "evt-ctx-boundary-root-create", "evt-ctx-boundary-child-create"
+        root_class, child_class = "ctx-boundary-root-class", "ctx-boundary-child-class"
+        root_event_class, child_event_class = "ctx-boundary-root-event", "ctx-boundary-child-event"
+        internal_class = "ctx-internal-class"
+        root_grant = "ctx-boundary-root-grant"
+        child_grant = "ctx-boundary-child-grant"
+        root_resources = ["task:" + task_id, root_id, child_id, event_root, event_child,
+                          root_class, root_event_class, child_class, child_event_class,
+                          source_id, "object:" + source_id, pack_id, "object:" + pack_id]
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": root_grant,
+            "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [task_id],
+            "resource_scope": root_resources,
+            "action_scope": ["RUN_CREATE", "OBJECT_WRITE", "INSPECT", "CLASSIFY"],
+            "audience_scope": ["nexus-runtime", "nexus-inspect"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "ctx-boundary-root-grant-create")
+        self.trace.create_task({"schema_id": "nexus.task", "schema_version": 1, "task_id": task_id,
+                                "requester_id": "human-root", "status": "CREATED", "created_at": now.isoformat(),
+                                "command_id": "ctx-boundary-task-create"})
+        for assertion in (self._class(root_class, "RUN", root_id), self._class(root_event_class, "TRACE_EVENT", event_root)):
+            self.authority.record_classification_assertion(assertion, grant_id=root_grant, task_id=task_id,
+                                                           audience="nexus-runtime", command_id="record-" + assertion["assertion_id"])
+        self.trace.create_run({"schema_id": "nexus.run", "schema_version": 1, "run_id": root_id,
+                               "task_id": task_id, "executor_kind": "ORCHESTRATOR", "status": "CREATED",
+                               "grant_id": root_grant,
+                               "data_boundary": {"allowed_classifications": ["PUBLIC", "SECRET"], "handling_tags": []},
+                               "classification_assertion_ref": root_class, "created_at": now.isoformat()},
+                              command_id="ctx-boundary-root-create", event_classification_assertion_ref=root_event_class)
+        internal_assertion = {**self._class(internal_class, "OBJECT", source_id), "sensitivity_level": "SECRET"}
+        self.authority.record_classification_assertion(internal_assertion, grant_id=root_grant, task_id=task_id,
+                                                       audience="nexus-runtime", command_id="record-internal-class")
+        self.store.put_object(command_id="put-internal-source", object_id=source_id,
+                              payload=b"internal source", object_type="user_input", created_by_run=root_id,
+                              classification_assertion_ref=internal_class)
+        child_resources = [child_id, event_child, child_class, child_event_class, source_id,
+                           "object:" + source_id, pack_id, "object:" + pack_id]
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": child_grant,
+            "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [task_id],
+            "resource_scope": child_resources,
+            "action_scope": ["RUN_CREATE", "OBJECT_WRITE", "INSPECT"],
+            "audience_scope": ["nexus-runtime", "nexus-inspect"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "ctx-boundary-child-grant-create")
+        for assertion in (self._class(child_class, "RUN", child_id), self._class(child_event_class, "TRACE_EVENT", event_child)):
+            self.authority.record_classification_assertion(assertion, grant_id=root_grant, task_id=task_id,
+                                                           audience="nexus-runtime", command_id="record-" + assertion["assertion_id"])
+        self.budget.create_account(command_id="ctx-boundary-budget-create", account_id="ctx-boundary-budget",
+                                   task_id=task_id, amount_limit=1, unit="calls", model_call_limit=1,
+                                   tool_call_limit=0, child_run_limit=1)
+        reservation = self.budget.reserve(command_id="ctx-boundary-reserve", account_id="ctx-boundary-budget",
+                                          task_id=task_id, run_id=child_id, amount=0,
+                                          model_calls=1, child_runs=1)
+        self.trace.create_run({
+            "schema_id": "nexus.run", "schema_version": 1, "run_id": child_id,
+            "task_id": task_id, "parent_run_id": root_id, "executor_kind": "MODEL",
+            "status": "CREATED", "grant_id": child_grant, "budget_reservation_ref": reservation,
+            "data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": []},
+            "classification_assertion_ref": child_class, "created_at": now.isoformat(),
+        }, command_id="ctx-boundary-child-create", event_classification_assertion_ref=child_event_class)
+        child_context = ContextPackService(store=self.store, authority=self.authority, participation=self.participation,
+                                           memory=self.memory, metering=self.metering)
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_OUTSIDE_RUN_BOUNDARY"):
+            child_context.compile(task_id=task_id, run_id=child_id, grant_id=child_grant,
+                                  pack_object_id=pack_id, classification_assertion_ref="class-ctx-boundary-pack",
+                                  command_id="ctx-child-source-boundary", source_refs=[source_id])
+
+    def test_target_run_handling_tags_are_enforced_for_explicit_source(self):
+        tagged_id = self.source_ids[0]
+        tagged = {**self._class("ctx-tagged-class", "OBJECT", tagged_id),
+                  "supersedes": "class-" + tagged_id,
+                  "handling_tags": ["NO_EXTERNAL_EGRESS"]}
+        self.authority.record_classification_assertion(tagged, grant_id="ctx-grant", task_id=self.task_id,
+                                                       audience="nexus-runtime", command_id="record-tagged-class")
+        metadata = self.store.get_object_metadata(tagged_id)
+        metadata["classification_assertion_ref"] = "ctx-tagged-class"
+        with mock.patch.object(self.context.inspect, "object_metadata", return_value={
+            "object_type": "user_input", "lifecycle": "ACTIVE", "validity": "VALID", "payload_state": "AVAILABLE",
+        }), mock.patch.object(self.store, "get_object_metadata", return_value=metadata):
+            with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_OUTSIDE_RUN_BOUNDARY"):
+                self.context._read_explicit_source(tagged_id, self.task_id, "ctx-grant",
+                                                    json.dumps({"allowed_classifications": ["PUBLIC"], "handling_tags": []}))
+
+    def test_host_delivery_declaration_is_not_observed_and_other_run_is_not_attributed(self):
+        self._compile(self.pack_ids[0], "delivery-pack", refs=[])
+        manifest = json.dumps({"execution_source": "CODEX_HOST_DECLARED", "context_object_refs": [self.pack_ids[0]]})
+        conn = mock.Mock()
+        conn.execute.side_effect = [
+            mock.Mock(fetchone=mock.Mock(return_value={"task_id": self.task_id, "run_id": self.run_id})),
+            mock.Mock(fetchall=mock.Mock(return_value=[{"manifest_object_id": "other-run-manifest",
+                "created_by_run": "other-run", "payload_state": "AVAILABLE", "task_id": self.task_id,
+                "run_id": "other-run"}])),
+        ]
+        with mock.patch.object(self.store, "_connection", return_value=nullcontext(conn)), \
+             mock.patch.object(self.store, "get_payload", return_value=manifest.encode("utf-8")):
+            self.assertEqual(self.context._delivery_status(self.pack_ids[0]), "NOT_DECLARED")
+
+        conn.execute.side_effect = [
+            mock.Mock(fetchone=mock.Mock(return_value={"task_id": self.task_id, "run_id": self.run_id})),
+            mock.Mock(fetchall=mock.Mock(return_value=[{"manifest_object_id": "bound-run-manifest",
+                "created_by_run": self.run_id, "payload_state": "AVAILABLE", "task_id": self.task_id,
+                "run_id": self.run_id}])),
+        ]
+        with mock.patch.object(self.store, "_connection", return_value=nullcontext(conn)), \
+             mock.patch.object(self.store, "get_payload", return_value=manifest.encode("utf-8")):
+            self.assertEqual(self.context._delivery_status(self.pack_ids[0]), "HOST_DECLARED_DELIVERY")
+        status = self.context.pack_status(self.pack_ids[0])
+        self.assertEqual(status["host_delivery_evidence"], "NOT_DECLARED")
+        self.assertEqual(status["actual_host_delivery"], "UNKNOWN")
+        self.assertFalse(status["delivery_observed"])
+        with mock.patch.object(self.context, "_delivery_status", return_value="HOST_DECLARED_DELIVERY"):
+            declared_status = self.context.pack_status(self.pack_ids[0])
+        self.assertEqual(declared_status["host_delivery_evidence"], "HOST_DECLARED_DELIVERY")
+        self.assertEqual(declared_status["actual_host_delivery"], "UNKNOWN")
+        self.assertFalse(declared_status["delivery_observed"])
 
     def test_panel_reads_context_and_metering_services_without_payload_or_storage_handles(self):
         self._compile(self.pack_ids[0], "panel-pack")
@@ -211,9 +436,15 @@ class ContextMeteringTests(unittest.TestCase):
             host_usage={"input_tokens": 100, "cached_input_tokens": 30},
             context_pack_ref=self.pack_ids[0],
         )
-        self.store.close()
-        app = open_panel_application(self.root, policy_path=Path(__file__).resolve().parents[2] / "policies" / "default-policy.json")
+        writer_services = {
+            "store": self.store, "runtime": self.runtime, "participation": self.participation,
+            "panel_queries": PanelQueryService(self.store), "memory": self.memory,
+            "context_packs": self.context, "metering": self.metering,
+        }
+        app = open_panel_application(self.root, writer_services=writer_services)
         try:
+            with self.assertRaises(WriterAlreadyRunning):
+                ObjectStore(self.root, policy=self.policy)
             snapshot = app.view_model.snapshot()
             context = snapshot["context_status"]
             self.assertEqual(context["status"], "PACK_COMPILED")
@@ -229,6 +460,10 @@ class ContextMeteringTests(unittest.TestCase):
             self.assertNotIn("source z", serialized)
             self.assertNotIn(str(self.root), serialized)
             self.assertFalse(hasattr(app.view_model, "store"))
+            with self.assertRaisesRegex(RuntimeDenied, "PARTICIPATION_CHANGE_BLOCKED_ACTIVE_TASKS"):
+                app.view_model.set_participation_mode("BYPASS", expected_mode="ACTIVE")
+            app.close()
+            self.assertEqual(self.participation.current()["mode"], "ACTIVE")
             ui_source = (Path(__file__).resolve().parents[2] / "adapters" / "panel" / "ui.py").read_text(encoding="utf-8")
             self.assertNotIn("sqlite3", ui_source)
             self.assertNotIn("ObjectStore", ui_source)

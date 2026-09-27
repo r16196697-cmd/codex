@@ -60,12 +60,15 @@ class ContextPackService:
 
         with self.store._lock:
             run = self._task_run(task_id, run_id)
+            if grant_id != run["grant_id"]:
+                raise RuntimeDenied("CONTEXT_PACK_RUN_GRANT_MISMATCH")
             self.authority.evaluate_authorization(
-                grant_id,
+                run["grant_id"],
                 {"task": task_id, "resource": pack_object_id, "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
                 command_id + "-authorize-pack",
             )
-            entries = [self._read_explicit_source(ref, task_id, grant_id) for ref in refs]
+            entries = [self._read_explicit_source(ref, task_id, run["grant_id"], run["data_boundary_json"])
+                       for ref in refs]
             memory_query_sha256 = None
             if memory_query is not None:
                 memory_query_sha256 = hashlib.sha256(memory_query.encode("utf-8")).hexdigest()
@@ -74,7 +77,9 @@ class ContextPackService:
                     ref = match["object_id"]
                     if ref in refs:
                         raise RuntimeDenied("CONTEXT_PACK_DUPLICATE_MEMORY_SOURCE")
-                    entry = self._read_explicit_source(ref, task_id, grant_id, expected_type="memory")
+                    entry = self._read_explicit_source(
+                        ref, task_id, run["grant_id"], run["data_boundary_json"], expected_type="memory"
+                    )
                     entry["source_type"] = "admitted_memory"
                     entries.append(entry)
             entries.sort(key=lambda item: (_SOURCE_ORDER[item["source_type"]], item["source_ref"].encode("utf-8")))
@@ -157,7 +162,7 @@ class ContextPackService:
         return dict(row)
 
     def _read_explicit_source(self, object_ref: str, task_id: str, grant_id: str,
-                              expected_type: str | None = None) -> dict:
+                              run_boundary_json: str, expected_type: str | None = None) -> dict:
         visible = self.inspect.object_metadata(
             grant_id=grant_id, task_id=task_id, object_id=object_ref,
         )
@@ -183,11 +188,16 @@ class ContextPackService:
             raise RuntimeDenied("CONTEXT_PACK_NESTING_NOT_ALLOWED")
         with self.store._connection() as conn:
             classification = conn.execute(
-                "SELECT sensitivity_level FROM classification_assertions WHERE assertion_id=?",
+                "SELECT sensitivity_level,handling_tags_json FROM classification_assertions WHERE assertion_id=?",
                 (metadata["classification_assertion_ref"],),
             ).fetchone()
         if not classification:
             raise RuntimeDenied("CONTEXT_PACK_SOURCE_CLASSIFICATION_UNAVAILABLE")
+        boundary = json.loads(run_boundary_json)
+        source_tags = set(json.loads(classification["handling_tags_json"]))
+        if (classification["sensitivity_level"] not in set(boundary["allowed_classifications"])
+                or not source_tags.issubset(set(boundary["handling_tags"]))):
+            raise RuntimeDenied("CONTEXT_PACK_SOURCE_OUTSIDE_RUN_BOUNDARY")
         source_type = "admitted_memory" if object_type == "memory" else object_type
         return {
             "source_ref": object_ref, "source_type": source_type,
@@ -214,7 +224,10 @@ class ContextPackService:
             "integrity_hash": self.store.get_object_metadata(pack_ref)["integrity_hash"],
             "compiled_at": row["compiled_at"],
             "host_delivery_status": delivery,
-            "host_delivery_known": delivery == "HOST_DECLARED_DELIVERY",
+            "host_delivery_evidence": delivery,
+            "actual_host_delivery": "UNKNOWN",
+            "delivery_observed": False,
+            "delivery_run_id": row["run_id"] if delivery != "NOT_DECLARED" else None,
             "model_visible_exposure": "UNKNOWN",
             "model_visible_exposure_proven": False,
         }
@@ -254,9 +267,9 @@ class ContextPackService:
 
     def _delivery_status(self, pack_ref: str) -> str:
         with self.store._connection() as conn:
-            pack = conn.execute("SELECT task_id FROM context_pack_records WHERE pack_ref=? AND state='COMPILED'", (pack_ref,)).fetchone()
+            pack = conn.execute("SELECT task_id,run_id FROM context_pack_records WHERE pack_ref=? AND state='COMPILED'", (pack_ref,)).fetchone()
             rows = conn.execute(
-                "SELECT i.manifest_object_id,e.created_by_run,s.payload_state,r.task_id "
+                "SELECT i.manifest_object_id,e.created_by_run,s.payload_state,r.task_id,r.run_id "
                 "FROM run_manifest_inputs i JOIN object_envelopes e ON e.object_id=i.manifest_object_id "
                 "JOIN object_states s ON s.object_id=e.object_id "
                 "JOIN runs r ON r.run_id=e.created_by_run "
@@ -264,7 +277,8 @@ class ContextPackService:
                 (pack_ref,),
             ).fetchall()
         for row in rows:
-            if not pack or row["task_id"] != pack["task_id"] or row["payload_state"] != "AVAILABLE":
+            if (not pack or row["task_id"] != pack["task_id"] or row["run_id"] != pack["run_id"]
+                    or row["payload_state"] != "AVAILABLE"):
                 continue
             try:
                 manifest = json.loads(self.store.get_payload(row["manifest_object_id"]).decode("utf-8"))

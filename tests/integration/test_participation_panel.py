@@ -159,7 +159,7 @@ class ParticipationPanelTests(unittest.TestCase):
                 self.assertIsNone(metric["value"])
                 self.assertEqual(metric["provenance"], "UNAVAILABLE")
             self.assertEqual(set(snapshot["metric_provenance_values"]),
-                             {"OBSERVED", "HOST_DECLARED", "DERIVED", "ESTIMATED", "UNAVAILABLE"})
+                             {"OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"})
             self.assertFalse(snapshot["memory"]["payloads_included"])
             serialized = json.dumps(snapshot, sort_keys=True)
             self.assertNotIn(str(self.root), serialized)

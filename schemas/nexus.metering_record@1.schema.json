@@ -21,17 +21,19 @@
     "metric": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["value", "provenance", "unit", "basis", "estimation_basis"],
+      "required": ["value", "provenance", "unit", "basis", "estimate_status", "estimation_basis"],
       "properties": {
         "value": {},
-        "provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE", "ESTIMATED"]},
+        "provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"]},
         "unit": {"type": ["string", "null"]},
         "basis": {"type": ["string", "null"]},
+        "estimate_status": {"enum": ["NOT_ESTIMATED", "ESTIMATED", "UNAVAILABLE"]},
         "estimation_basis": {"type": ["object", "null"]}
       },
       "allOf": [
-        {"if": {"properties": {"provenance": {"const": "UNAVAILABLE"}}}, "then": {"properties": {"value": {"type": "null"}}}},
-        {"if": {"properties": {"provenance": {"const": "ESTIMATED"}}}, "then": {"properties": {"estimation_basis": {"type": "object", "minProperties": 1}}}}
+        {"if": {"properties": {"provenance": {"const": "UNAVAILABLE"}}}, "then": {"properties": {"value": {"type": "null"}, "estimate_status": {"const": "UNAVAILABLE"}, "estimation_basis": {"type": "null"}}}},
+        {"if": {"properties": {"estimate_status": {"const": "ESTIMATED"}}}, "then": {"properties": {"provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED"]}, "estimation_basis": {"type": "object", "minProperties": 1}}}},
+        {"if": {"properties": {"estimate_status": {"const": "NOT_ESTIMATED"}}}, "then": {"properties": {"estimation_basis": {"type": "null"}}}}
       ]
     }
   }

@@ -28,7 +28,8 @@ _METRIC_UNITS = {
     "token_savings": "tokens",
     "nexus_influenced_execution": "boolean",
 }
-_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE", "ESTIMATED"})
+_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"})
+_ESTIMATE_STATUS = frozenset({"NOT_ESTIMATED", "ESTIMATED", "UNAVAILABLE"})
 
 
 def _canonical(value) -> bytes:
@@ -41,18 +42,27 @@ def _now() -> str:
 
 def unavailable_metrics() -> dict:
     return {name: {"value": None, "provenance": "UNAVAILABLE", "unit": unit,
-                   "basis": None, "estimation_basis": None}
+                   "basis": None, "estimate_status": "UNAVAILABLE", "estimation_basis": None}
             for name, unit in _METRIC_UNITS.items()}
 
 
-def metric(value, provenance, *, unit=None, basis=None, estimation_basis=None) -> dict:
+def metric(value, provenance, *, unit=None, basis=None, estimate_status=None,
+           estimation_basis=None) -> dict:
     if provenance not in _PROVENANCE:
         raise ValueError("METERING_PROVENANCE_INVALID")
+    if estimate_status is None:
+        estimate_status = "UNAVAILABLE" if provenance == "UNAVAILABLE" else "NOT_ESTIMATED"
+    if estimate_status not in _ESTIMATE_STATUS:
+        raise ValueError("METERING_ESTIMATE_STATUS_INVALID")
     if provenance == "UNAVAILABLE" and value is not None:
         raise ValueError("UNAVAILABLE_METRIC_MUST_BE_NULL")
     if provenance != "UNAVAILABLE" and value is None:
         raise ValueError("AVAILABLE_METRIC_REQUIRES_VALUE")
-    if provenance == "ESTIMATED":
+    if provenance == "UNAVAILABLE" and estimate_status != "UNAVAILABLE":
+        raise ValueError("UNAVAILABLE_METRIC_ESTIMATE_STATUS_INVALID")
+    if provenance != "UNAVAILABLE" and estimate_status == "UNAVAILABLE":
+        raise ValueError("AVAILABLE_METRIC_ESTIMATE_STATUS_INVALID")
+    if estimate_status == "ESTIMATED":
         if not isinstance(estimation_basis, dict) or not all(
             isinstance(estimation_basis.get(key), str) and estimation_basis[key]
             for key in ("pricing_id", "pricing_version", "formula")
@@ -61,6 +71,7 @@ def metric(value, provenance, *, unit=None, basis=None, estimation_basis=None) -
     elif estimation_basis is not None:
         raise ValueError("NON_ESTIMATED_METRIC_HAS_ESTIMATION_BASIS")
     return {"value": value, "provenance": provenance, "unit": unit, "basis": basis,
+            "estimate_status": estimate_status,
             "estimation_basis": estimation_basis}
 
 
@@ -88,6 +99,8 @@ class MeteringService:
         mode = self.participation.current()["mode"]
         if mode == "BYPASS":
             raise RuntimeDenied("BYPASS_DISALLOWS_AUTOMATIC_METERING_INGESTION")
+        if mode == "OBSERVE":
+            raise RuntimeDenied("OBSERVE_METERING_UNSUPPORTED_WITHOUT_OBSERVATION_ID")
         self.store._require_mode("core_write")
         if not isinstance(host_usage, dict):
             raise RuntimeDenied("HOST_USAGE_INVALID")
@@ -154,9 +167,9 @@ class MeteringService:
                 basis="Exact UTF-8 serialized size persisted by ContextPackService",
             )
         if actual_cost is not None:
-            metrics["actual_cost"] = _cost_metric(actual_cost, "HOST_DECLARED")
+            metrics["actual_cost"] = _cost_metric(actual_cost, source_provenance="HOST_DECLARED")
         if estimated_cost is not None:
-            metrics["estimated_cost"] = _cost_metric(estimated_cost, "ESTIMATED")
+            metrics["estimated_cost"] = _cost_metric(estimated_cost, source_provenance="HOST_DECLARED", estimated=True)
         return self._insert_record(
             record_id=record_id, task_id=task_id, run_id=run_id, source="HOST_DECLARED",
             mode=mode, context_pack_ref=context_pack_ref, metrics=metrics,
@@ -198,10 +211,12 @@ class MeteringService:
                     metrics=metrics, recorded_at=created, conn=connection)
         prior = conn.execute("SELECT * FROM value_metering_records WHERE record_id=?", (record_id,)).fetchone()
         if prior:
-            expected = (task_id, run_id, source, mode, context_pack_ref, metrics_json, digest, created)
+            # record_id is the logical event identity. recorded_at is assigned
+            # only on first insert and is intentionally excluded from replay.
+            expected = (task_id, run_id, source, mode, context_pack_ref, metrics_json, digest)
             actual = tuple(prior[key] for key in (
                 "task_id", "run_id", "record_source", "participation_mode", "context_pack_ref",
-                "metrics_json", "metrics_sha256", "recorded_at"))
+                "metrics_json", "metrics_sha256"))
             if actual != expected:
                 raise RuntimeDenied("METERING_RECORD_ID_CONFLICT")
             return self._public_record(dict(prior))
@@ -253,18 +268,20 @@ def _nonnegative_int(value, error: str) -> None:
         raise RuntimeDenied(error)
 
 
-def _cost_metric(value: dict, provenance: str) -> dict:
+def _cost_metric(value: dict, *, source_provenance: str, estimated: bool = False) -> dict:
     if not isinstance(value, dict) or isinstance(value.get("value"), bool) or not isinstance(value.get("value"), (int, float)) or value["value"] < 0:
         raise RuntimeDenied("COST_VALUE_INVALID")
     currency = value.get("currency")
     if not isinstance(currency, str) or not currency:
         raise RuntimeDenied("COST_CURRENCY_REQUIRED")
     basis = value.get("basis")
-    if provenance == "ESTIMATED":
+    if estimated:
         required = ("pricing_id", "pricing_version", "formula")
         if not isinstance(basis, dict) or not all(isinstance(basis.get(key), str) and basis[key] for key in required):
             raise RuntimeDenied("ESTIMATED_COST_BASIS_REQUIRED")
-        return metric(value["value"], "ESTIMATED", unit=currency, basis="Persisted pricing basis",
+        return metric(value["value"], source_provenance, unit=currency,
+                      basis="Host-declared estimate with persisted pricing basis",
+                      estimate_status="ESTIMATED",
                       estimation_basis={key: basis[key] for key in required})
-    return metric(value["value"], provenance, unit=currency,
+    return metric(value["value"], source_provenance, unit=currency,
                   basis=basis if isinstance(basis, str) else "Host-declared provider cost")

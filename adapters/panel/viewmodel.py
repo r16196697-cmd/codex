@@ -6,7 +6,7 @@ from uuid import uuid4
 
 
 UNAVAILABLE = "UNAVAILABLE"
-METRIC_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", "ESTIMATED", UNAVAILABLE})
+METRIC_PROVENANCE = frozenset({"OBSERVED", "HOST_DECLARED", "DERIVED", UNAVAILABLE})
 
 
 def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observation_source=None):
@@ -15,7 +15,9 @@ def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observ
     source = observation_source
     if source is None:
         source = "NEXUS_CORE" if provenance == "DERIVED" else "HOST" if provenance == "HOST_DECLARED" else None
-    return {"value": value, "provenance": provenance, "unit": unit, "basis": basis,
+    estimate_status = "UNAVAILABLE" if provenance == UNAVAILABLE else "NOT_ESTIMATED"
+    return {"value": value, "provenance": provenance, "estimate_status": estimate_status,
+            "estimation_basis": None, "unit": unit, "basis": basis,
             "observation_source": source}
 
 
@@ -106,6 +108,7 @@ class PanelViewModel:
                     for key, item in latest["metrics"].items():
                         value_metrics[key] = {
                             "value": item["value"], "provenance": item["provenance"],
+                            "estimate_status": item["estimate_status"],
                             "unit": item["unit"], "basis": item["basis"],
                             "estimation_basis": item["estimation_basis"],
                             "observation_source": latest["record_source"],

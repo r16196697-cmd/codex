@@ -106,6 +106,8 @@ def launch_panel(view_model) -> None:
                     f"Content hash: {content.get('content_hash', 'UNAVAILABLE')}\n"
                     f"Compilation: {content.get('status')} at {content.get('compiled_at', 'UNAVAILABLE')}\n"
                     f"Host delivery: {content.get('host_delivery_status', 'UNAVAILABLE')}\n"
+                    f"Actual delivery observed: {content.get('delivery_observed', False)} ({content.get('actual_host_delivery', 'UNKNOWN')})\n"
+                    f"Delivery Run: {content.get('delivery_run_id', 'UNAVAILABLE')}\n"
                     f"Model-visible exposure: {content.get('model_visible_exposure', 'UNKNOWN')}\n"
                     f"Provenance: {content.get('provenance', 'UNAVAILABLE')}"
                 )
@@ -117,7 +119,10 @@ def launch_panel(view_model) -> None:
         value_rows = []
         for key, item in snapshot["value_metrics"].items():
             value = item["value"] if item["value"] is not None else item["provenance"]
-            value_rows.append({"metric": key, "value": value, "provenance": item["provenance"]})
+            provenance = item["provenance"]
+            if item.get("estimate_status") == "ESTIMATED":
+                provenance += " / ESTIMATED"
+            value_rows.append({"metric": key, "value": value, "provenance": provenance})
         fill_tree(pages["VALUE"], ("metric", "value", "provenance"), value_rows)
 
     def change_mode(_event=None):
