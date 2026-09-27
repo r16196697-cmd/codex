@@ -31,6 +31,19 @@ class MemoryService:
         self.store, self.authority, self.verifier = store, authority, verifier
         self.modes = RuntimeModeService(store, authority)
 
+    def status_summary(self) -> dict:
+        """Return counts and truth/status labels only; never expose memory bodies."""
+        self.modes.require("memory_read")
+        with self.store._connection() as conn:
+            raw = int(conn.execute("SELECT COUNT(*) FROM raw_history_rows").fetchone()[0])
+            admitted = int(conn.execute("SELECT COUNT(*) FROM admitted_memory_rows").fetchone()[0])
+            candidates = [dict(row) for row in conn.execute(
+                "SELECT status,truth_state,COUNT(*) AS count FROM memory_candidates "
+                "GROUP BY status,truth_state ORDER BY status,truth_state"
+            )]
+        return {"raw_history_count": raw, "admitted_count": admitted, "candidate_states": candidates,
+                "payloads_included": False}
+
     def retain_raw(self, *, command_id: str, object_id: str, run_id: str, expires_at: str | None = None) -> None:
         self.modes.require("memory_write")
         expires_at = _expiry(expires_at, require_future=False)

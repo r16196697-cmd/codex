@@ -11,6 +11,8 @@ import hashlib
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
+from kernel.participation import ParticipationModeService
+from kernel.participation.service import active_participation_required
 
 
 class CodexHostedBridge:
@@ -23,7 +25,9 @@ class CodexHostedBridge:
         self.trace = trace
         self.runtime = runtime
         self.verifier = verifier
+        self.participation = ParticipationModeService(store)
 
+    @active_participation_required
     def create_task_root(
         self,
         *,
@@ -48,6 +52,7 @@ class CodexHostedBridge:
         A caller must first establish an exact trusted Grant and predefine every
         referenced ID/classification. No policy or grant is created implicitly.
         """
+        self.participation.require_active_ingestion()
         from datetime import datetime, timezone
 
         chain = self.authority.validate_delegation_chain(grant_id)
@@ -119,6 +124,7 @@ class CodexHostedBridge:
         }
         return manifest
 
+    @active_participation_required
     def create_child_run(
         self,
         *,
@@ -140,6 +146,7 @@ class CodexHostedBridge:
         classifications. The Runtime still validates Grant ancestry, boundaries,
         Manifest binding, budget and every state transition.
         """
+        self.participation.require_active_ingestion()
         self.store._require_mode("run_execute")
         kind = run.get("executor_kind")
         if kind not in {"MODEL", "TOOL"} or run.get("parent_run_id") is None:
@@ -302,6 +309,7 @@ class CodexHostedBridge:
                 conn.rollback()
                 raise
 
+    @active_participation_required
     def record_output(
         self,
         *,
@@ -316,6 +324,7 @@ class CodexHostedBridge:
         verifier_id: str,
     ) -> dict[str, Any]:
         """Persist an output object, append its reference, and run T1 integrity verification."""
+        self.participation.require_active_ingestion()
         self.authority.evaluate_authorization(
             grant_id,
             {"task": task_id, "resource": artifact_id, "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
@@ -345,6 +354,7 @@ class CodexHostedBridge:
         )
         return {"artifact_id": artifact_id, "verification": verification}
 
+    @active_participation_required
     def record_evidence(
         self,
         *,
@@ -360,6 +370,7 @@ class CodexHostedBridge:
         verifier_id: str,
     ) -> dict[str, Any]:
         """Persist a source-addressed evidence object and verify its exact bytes."""
+        self.participation.require_active_ingestion()
         from urllib.parse import urlparse
         parsed = urlparse(source_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -405,6 +416,7 @@ class CodexHostedBridge:
         )
         return {"evidence_id": evidence_id, "source_url": source_url, "verification": verification}
 
+    @active_participation_required
     def execute_read_only_file_probe(
         self,
         *,
@@ -416,6 +428,7 @@ class CodexHostedBridge:
         relative_path: str,
     ) -> bytes:
         """Perform one bounded local read after descriptor and Grant checks."""
+        self.participation.require_active_ingestion()
         if descriptor.get("tool_id") != tool_id or descriptor.get("review_status") != "APPROVED" or descriptor.get("effect_class") != "READ_ONLY" or descriptor.get("network_egress") is not False:
             raise PermissionError("Only an approved, explicitly read-only, non-egress descriptor is accepted")
         relative = Path(relative_path)
@@ -444,6 +457,7 @@ class CodexHostedBridge:
             separators=(",", ":"),
         ).encode("utf-8")
 
+    @active_participation_required
     def close_child(
         self,
         *,
@@ -454,6 +468,7 @@ class CodexHostedBridge:
         reservation_id: str,
         actual_units: int,
     ) -> dict[str, Any]:
+        self.participation.require_active_ingestion()
         terminal = "SUCCEEDED" if succeeded else "FAILED"
         self.trace.transition_run(
             command_id=command_id + "-verifying",

@@ -5,7 +5,7 @@
 
 Nexus v0.1 is a local, governed state and reliability runtime attached to a Codex host. Codex remains responsible for reasoning and execution; a thin Hosted Bridge records declared work and actual tool actions through Nexus Core APIs. Nexus provides durable Task/Run state, authority and budget enforcement, objects and evidence, verification, trace, memory governance, purge, and recovery.
 
-The Codex-hosted required conditions in Acceptance Tests T1–T12 were formally accepted for this release. See [the implementation status](docs/operator/IMPLEMENTATION_STATUS.md), [the regression/acceptance evidence](eval/regression/2026-09-25-persistent-host-pilot.md), [the mode and inspect regression](eval/regression/2026-09-25-mode-inspect-regression.md), and [operator CLI documentation](docs/user/operator-cli.md).
+The Codex-hosted required conditions in Acceptance Tests T1–T12 were formally accepted for this release. See [the implementation status](docs/operator/IMPLEMENTATION_STATUS.md), [the regression/acceptance evidence](eval/regression/2026-09-25-persistent-host-pilot.md), [the mode and inspect regression](eval/regression/2026-09-25-mode-inspect-regression.md), [operator CLI documentation](docs/user/operator-cli.md), and [Nexus Utility MVP Slice 1](docs/user/nexus-utility-mvp-slice-1.md).
 
 ## Scope and limits
 
@@ -14,13 +14,14 @@ Implemented and released:
 - Codex-hosted / Attached execution through the thin Host Bridge;
 - deterministic Nexus Runtime semantics, including DAG attempts, routing decisions, escalation/fallback, authority, effects, verification, trace, purge, and recovery;
 - Hosted-required T1–T12 acceptance evidence.
+- ALPHA local native companion panel with persisted participation mode and a sanitized Core-backed state snapshot; this is not a complete Nexus App or an embedded Codex panel.
 
 Not implemented or deferred:
 
 - Standalone Nexus service or independent model execution;
 - independent Model/Search Providers and real Provider Credential Broker use;
 - multi-provider routing or live Codex multi-tier model switching (the current Host does not expose a reliable control/observation interface for that);
-- independent Nexus GUI/application;
+- embedded Codex panel and standalone Nexus application;
 - Bootstrap Academy and automatic evolution/promotion.
 
 E0/E1/E2 Runtime escalation/fallback semantics were tested with deterministic executors. This does not claim that Codex performed a real switch between identifiable model tiers. Hosted model/backend identity and unavailable provider/token telemetry remain unavailable rather than inferred.
