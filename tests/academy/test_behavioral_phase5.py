@@ -119,7 +119,13 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual(packet_text_digest, self.result["model_visible_packet_text_sha256"])
         self.assertEqual("96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c", hashlib.sha256(EVALUATOR.read_bytes()).hexdigest())
         self.assertEqual("PHASE5_EXECUTION_HARNESS_V3", self.result["execution_harness_version"])
-        self.assertFalse(self.result["formal_execution_authorized"])
+        self.assertTrue(self.result["formal_execution_authorized"])
+        self.assertEqual("EXTERNAL_WINDOWS_POWERSHELL", self.result["formal_execution_controller"])
+        self.assertEqual("EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC", self.result["authorization_basis"])
+        self.assertEqual("AUTHORIZED_NOT_STARTED", self.result["formal_matrix_status"])
+        self.assertEqual(0, self.result["eligible_formal_behavioral_trials"])
+        self.assertEqual("PHASE5_PREREGISTRATION_V2", self.result["execution_summary"]["protocol_version"])
+        self.assertEqual("NOT STARTED", self.result["first_eligible_formal_matrix_execution_attempt"])
 
     def test_evaluator_mapping_covers_all_packets(self):
         ids = [row["trial_id"] for row in self.packets["context_packets"]]
@@ -200,7 +206,7 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("No reliable Host telemetry", synthesis_text)
         phases = {item["phase"]: item["status"] for item in candidates["phases"]}
         self.assertEqual("CLOSED / ACCEPTED", phases["4"])
-        self.assertTrue(phases["5"].startswith("IN PROGRESS / V3 HOST PATH BLOCKED"))
+        self.assertTrue(phases["5"].startswith("IN PROGRESS / EXTERNAL CONTROLLER AUTHORIZED"))
         self.assertEqual("NOT OBSERVED", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", candidate_gates["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
@@ -220,6 +226,12 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertIn("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", phase5_doc)
         self.assertIn("V3 diagnostic", phase5_doc)
         self.assertIn("fallback artifact", runbook.lower())
+        self.assertIn("ordinary Windows PowerShell", runbook)
+        self.assertIn("not a Codex integrated/Agent shell", runbook)
+        self.assertIn("current PowerShell process only", runbook)
+        self.assertIn("--sandbox read-only", runbook)
+        self.assertIn("python scripts/eval/run_behavioral_phase5.py --execute-host --timeout 180", runbook)
+        self.assertNotIn("C:\\Users\\", runbook + phase5_doc + synthesis)
 
     def test_runner_serialization_omits_executable_and_capture_absolute_paths(self):
         executable = r"C:\Users\reviewer\AppData\Local\Programs\Codex\codex.exe"
@@ -311,8 +323,8 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", observed["execution_status"])
 
     def test_diagnostic_metadata_is_non_behavioral_and_does_not_upgrade_gates(self):
-        self.assertEqual("BLOCKED", self.result["v3_host_execution_path"])
-        diagnostic = self.result["host_diagnostics"][-1]
+        self.assertEqual("BLOCKED_BY_HOST_STATE_ACCESS", self.result["v3_host_execution_path"])
+        diagnostic = next(item for item in self.result["host_diagnostics"] if item.get("kind") == "NON_BEHAVIORAL_HOST_LIVENESS_DIAGNOSTIC")
         self.assertEqual("NON_BEHAVIORAL_HOST_LIVENESS_DIAGNOSTIC", diagnostic["kind"])
         self.assertEqual(list(FROZEN_SANITIZED_ARGV), diagnostic["sanitized_argv"])
         self.assertEqual(_argv_sha256(FROZEN_SANITIZED_ARGV), diagnostic["sanitized_argv_sha256"])
@@ -337,6 +349,40 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
         self.assertEqual("NOT OBSERVED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
+
+    def test_external_shell_diagnostic_authorizes_controller_without_counting_trial(self):
+        self.assertEqual("SUPPORTED_BY_EXTERNAL_SHELL_DIAGNOSTIC", self.result["nested_outer_sandbox_confound"].split(";")[0])
+        self.assertEqual("BLOCKED_BY_HOST_STATE_ACCESS", self.result["codex_agent_nested_execution_path"])
+        self.assertEqual("SUPPORTED", self.result["external_windows_powershell_execution_path"])
+        diagnostic = next(item for item in self.result["host_diagnostics"] if item.get("kind") == "NON_BEHAVIORAL_EXTERNAL_HOST_DIAGNOSTIC")
+        self.assertEqual("PHASE5_OFFICIAL_HOST_INVOCATION_V1", diagnostic["invocation_spec_id"])
+        self.assertEqual(0, diagnostic["exit_code"])
+        self.assertTrue(diagnostic["thread_started"])
+        self.assertEqual("01a0e1ed-4206-7671-98ba-431aac9ef614", diagnostic["thread_id"])
+        self.assertTrue(diagnostic["turn_completed"])
+        self.assertEqual("P5_OUTER_HOST_OK", diagnostic["agent_output"])
+        self.assertEqual(0, diagnostic["tool_call_count"])
+        self.assertEqual("HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY", diagnostic["usage_basis"])
+        self.assertEqual({"input_tokens": 20481, "cached_input_tokens": 7936, "cache_write_input_tokens": 0, "output_tokens": 10, "reasoning_output_tokens": 0}, diagnostic["host_usage"])
+        self.assertEqual("UNAVAILABLE", diagnostic["provider_dollar_cost"])
+        self.assertEqual("UNAVAILABLE", diagnostic["host_model_identity"])
+        self.assertEqual("UNAVAILABLE / NOT DECOMPOSABLE", diagnostic["ambient_host_input_composition"])
+        self.assertFalse(diagnostic["behavioral_trial_counted"])
+        self.assertFalse(diagnostic["nexus_model_receipt_created"])
+        self.assertEqual(0, self.result["formal_trial_count"])
+        self.assertEqual(0, self.result["eligible_formal_trial_count"])
+        self.assertEqual(0, self.result["nexus_model_receipt_count"])
+        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
+
+    def test_external_controller_runbook_forbids_agent_shell_and_preserves_child_sandbox(self):
+        runbook = RUNBOOK.read_text(encoding="utf-8")
+        self.assertIn("ordinary Windows PowerShell", runbook)
+        self.assertIn("never from a Codex Agent/integrated shell", runbook)
+        self.assertIn("current PowerShell process only", runbook)
+        self.assertIn("--sandbox read-only", runbook)
+        self.assertIn("--ephemeral", runbook)
+        self.assertIn("first eligible formal matrix execution attempt", runbook)
 
     def test_committed_result_contains_no_absolute_local_paths(self):
         serialized = json.dumps(self.result)

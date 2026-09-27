@@ -1,10 +1,28 @@
-# Phase 5 Manual Fallback Runbook
+# Phase 5 External Host Controller Runbook
 
-Status: `FALLBACK ARTIFACT`. The default path is `PHASE5_OFFICIAL_HOST_INVOCATION_V1` through the V3 automated Host bridge, with external-review authorization required before any formal matrix. V2 has one preserved but invalid incident because invocation provenance conflicts; no eligible formal trial exists. Use these manual steps only if the automated path is unavailable and external review authorizes that fallback. The one V3 liveness diagnostic is non-behavioral and does not use these packets.
+Status: `EXTERNAL WINDOWS POWERSHELL CONTROLLER AUTHORIZED — EXTERNAL REVIEW PENDING`. Run the frozen matrix only from an ordinary Windows PowerShell session, never from a Codex Agent/integrated shell. The authorization covers the frozen matrix only; it does not authorize Capability Certification, Shadow, or Production. V2's pre-model incident and the V3 internal diagnostic remain preserved and neither is an eligible behavioral trial. Manual packet execution remains a fallback artifact, not the default path.
 
-## V3 non-behavioral liveness diagnostic
+## External controller diagnostic
 
-The one-time diagnostic was `python scripts/eval/run_behavioral_phase5.py --diagnostic-host-liveness`. It sent only `Return exactly: P5_V3_HOST_OK` to a fresh ephemeral Host process from an empty temporary cwd outside the repository. It did not load the packet fixture or evaluator, count a behavioral trial, or create a Nexus MODEL receipt. The process exited 1 before thread start due to Host state initialization/access failure; the V3 Host path is blocked pending external review. The result persisted sanitized argv and its canonical JSON SHA-256 before process outcome; raw stdout/stderr remain in the private external capture directory.
+An operator ran a non-behavioral diagnostic from ordinary Windows PowerShell with Codex CLI `0.158.0-alpha.2.1`, the frozen child argument semantics, a fresh empty temporary cwd outside the repository, and stdin `Return exactly: P5_OUTER_HOST_OK`. It exited 0; `thread.started` and `turn.completed` were observed; output was `P5_OUTER_HOST_OK`; tool-call count was zero. Thread ID: `01a0e1ed-4206-7671-98ba-431aac9ef614`. Host-reported total-turn telemetry: input 20481, cached input 7936, cache-write input 0, output 10, reasoning output 0. It is not a matrix trial and created no Nexus MODEL receipt. Exposure-component attribution and provider dollar cost remain unavailable; model identity remains unavailable.
+
+`NESTED_OUTER_SANDBOX_CONFOUND = SUPPORTED_BY_EXTERNAL_SHELL_DIAGNOSTIC`; this does not prove a sole root cause because the parent-process environments differ. `CODEX_AGENT_NESTED_EXECUTION_PATH = BLOCKED_BY_HOST_STATE_ACCESS`; `EXTERNAL_WINDOWS_POWERSHELL_EXECUTION_PATH = SUPPORTED`.
+
+## Authorized formal matrix procedure
+
+The first eligible formal matrix execution attempt must be launched from ordinary Windows PowerShell outside Codex Agent execution:
+
+1. Open ordinary Windows PowerShell, not a Codex integrated/Agent shell.
+2. Use the current local `codex.exe`. If needed, add its containing directory to `PATH` for the current PowerShell process only (`$env:PATH`); do not persistently modify the user's PATH and do not commit the local executable path.
+3. Change directory to the `nexus-academy-bootstrap` worktree.
+4. Confirm `git rev-parse HEAD` equals the exact authorization commit SHA provided with the external review authorization, and confirm `git status --short` is empty.
+5. Run the committed harness exactly once:
+
+```powershell
+python scripts/eval/run_behavioral_phase5.py --execute-host --timeout 180
+```
+
+Do not manually invoke `codex exec`, resume a thread, retry a failed trial, or rerun the matrix. The external PowerShell is only the outer controller. Each child invocation still uses the frozen `PHASE5_OFFICIAL_HOST_INVOCATION_V1`, `--sandbox read-only`, `--ephemeral`, a fresh empty cwd outside the repository, stdin packet only, and no resume. This removes the Codex Agent outer-sandbox confound; it does not remove the child Host read-only sandbox. The runner's fail-closed stop conditions remain in force.
 
 ## Safety and freeze
 

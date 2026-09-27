@@ -28,6 +28,12 @@
   "evaluator_sha256": "96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c",
   "execution_count": 0,
   "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+  "external_host_controller_authorization": {
+    "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
+    "formal_execution_authorized": true,
+    "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
+    "scope": "FROZEN_FORMAL_MATRIX_ONLY; NOT CAPABILITY CERTIFICATION, SHADOW, OR PRODUCTION AUTHORIZATION"
+  },
   "execution_incidents": [
     {
       "attempted_behavioral_packet": "A17",
@@ -115,6 +121,7 @@
     "host_model_execution_observed": false,
     "incomplete_or_pre_model_failure_count": 1,
     "matrix_status": "STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT",
+    "protocol_version": "PHASE5_PREREGISTRATION_V2",
     "presence_completed_count": 0,
     "stopped_after_trial_id": "A17",
     "tool_contaminated_count": 0,
@@ -128,10 +135,12 @@
     "observation": "HOST_REPORTED_TOTAL_INPUT_TOKENS exceeded explicit packet bytes in observed diagnostics; this does not decompose input composition."
   },
   "fixture_sha256": "f41f960addbef6580102ca382bfc9b6dff90c6285afadaed18335bd1b2d8f00e",
-  "formal_execution_authorized": false,
-  "formal_matrix_status": "FORMAL_MATRIX_BLOCKED",
+  "formal_execution_authorized": true,
+  "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
+  "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
+  "formal_matrix_status": "AUTHORIZED_NOT_STARTED",
   "formal_trial_count": 0,
-  "formal_trial_results": "NO ELIGIBLE FORMAL TRIAL; STOPPED ON FIRST PRE-MODEL FAILURE",
+  "formal_trial_results": "NO ELIGIBLE FORMAL TRIAL; HISTORICAL V2 INCIDENT STOPPED PRE-MODEL; V3 MATRIX AUTHORIZED BUT NOT STARTED",
   "formal_trials": [],
   "gates": {
     "G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY": "SUPPORTED_BY_REAL_HOST_PILOT",
@@ -224,9 +233,34 @@
       "timed_out": false,
       "tool_call_count": "UNAVAILABLE",
       "turn_completed": false,
-      "v3_host_execution_path": "BLOCKED",
+      "v3_host_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
       "wall_clock_seconds": 0.078,
       "usage_basis": "UNAVAILABLE"
+    },
+    {
+      "agent_output": "P5_OUTER_HOST_OK",
+      "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
+      "behavioral_trial_counted": false,
+      "codex_cli_version": "codex-cli 0.158.0-alpha.2.1",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "exit_code": 0,
+      "host_model_identity": "UNAVAILABLE",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 7936,
+        "input_tokens": 20481,
+        "output_tokens": 10,
+        "reasoning_output_tokens": 0
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "kind": "NON_BEHAVIORAL_EXTERNAL_HOST_DIAGNOSTIC",
+      "nexus_model_receipt_created": false,
+      "provider_dollar_cost": "UNAVAILABLE",
+      "thread_id": "01a0e1ed-4206-7671-98ba-431aac9ef614",
+      "thread_started": true,
+      "tool_call_count": 0,
+      "turn_completed": true,
+      "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY"
     }
   ],
   "host_interface": "Codex CLI codex exec; each invocation receives only one packet on UTF-8 stdin, in a fresh empty temporary cwd outside the repository.",
@@ -254,6 +288,9 @@
     }
   ],
   "host_memory_contamination": "NOT INDEPENDENTLY VERIFIED",
+  "nested_outer_sandbox_confound": "SUPPORTED_BY_EXTERNAL_SHELL_DIAGNOSTIC; not proven as the sole root cause because parent-process environments differ",
+  "codex_agent_nested_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
+  "external_windows_powershell_execution_path": "SUPPORTED",
   "manual_host_runs_required": false,
   "matrix_status": "STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT",
   "model_visible_packet_text_hash_rule": "SHA-256 of trial_id, NUL, and packet_text rows sorted by trial_id, joined by LF plus final LF.",
@@ -285,7 +322,7 @@
   "protocol_version": "PHASE5_PREREGISTRATION_V3",
   "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
   "schema_version": 1,
-  "status": "IN PROGRESS / V3 HOST PATH BLOCKED — EXTERNAL REVIEW PENDING",
+  "status": "IN PROGRESS / EXTERNAL CONTROLLER AUTHORIZED — EXTERNAL REVIEW PENDING",
   "successful_context_trial_count": 0,
   "successful_presence_trial_count": 0,
   "tokens_and_cost": {
@@ -298,5 +335,7 @@
     "provider_dollar_cost": "UNAVAILABLE",
     "token_telemetry": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY; no estimate used"
   },
-  "v3_host_execution_path": "BLOCKED"
+  "v3_host_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
+  "eligible_formal_behavioral_trials": 0,
+  "first_eligible_formal_matrix_execution_attempt": "NOT STARTED"
 }
