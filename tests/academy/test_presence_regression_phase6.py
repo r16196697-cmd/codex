@@ -1,15 +1,28 @@
 import hashlib
 import json
+import os
 import re
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.eval.build_phase6_skill_screen import build_ledger
 from scripts.eval.run_presence_regression_phase6 import (
+    AUTHORIZATION_BASIS,
+    CONTROLLER_ENV,
+    EXECUTION_HARNESS_VERSION,
+    FORMAL_CONTROLLER,
+    FROZEN_SANITIZED_ARGV,
     SCREEN_CRITERIA,
     derive_screen_exclusion_reasons,
     model_visible_packet_digest,
+    run_formal_matrix,
     score_trial,
+    screen_candidate,
     validate_preregistration,
     validate_skill_screen,
 )
@@ -45,12 +58,15 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertIn("REPLACED BEFORE ANY PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V1"])
         self.assertEqual("FROZEN BEFORE FIRST PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V2"])
         self.assertEqual("PRESENCE_REGRESSION_EVAL_V2", self.evaluator["evaluator_version"])
-        self.assertEqual("IN PROGRESS / PREREGISTRATION — EXTERNAL REVIEW PENDING", self.result["status"])
-        self.assertFalse(self.result["execution_authorized"])
+        self.assertEqual("IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING", self.result["status"])
+        self.assertTrue(self.result["execution_authorized"])
+        self.assertTrue(self.result["formal_execution_authorized"])
+        self.assertEqual("EXTERNAL_WINDOWS_POWERSHELL", self.result["formal_execution_controller"])
+        self.assertEqual("EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2", self.result["authorization_basis"])
         self.assertEqual(0, self.result["formal_trial_count"])
         self.assertEqual(0, self.result["execution_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
-        self.assertEqual([], self.result.get("formal_trials", []))
+        self.assertEqual({}, self.result.get("formal_trials", {}))
         self.assertEqual("PHASE5_OFFICIAL_HOST_INVOCATION_V1", self.result["invocation_spec_id"])
         self.assertEqual("CLOSED / ACCEPTED", self.phase5_result["status"])
         self.assertEqual("CLOSED / ACCEPTED", self.result["phase5_closure"]["status"])
@@ -149,7 +165,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
             self.assertEqual(expected, self.evaluator["trials"][trial]["expected"])
         self.assertEqual(self.result["packet_fixture_sha256"], hashlib.sha256(PHASE6_PACKETS.read_bytes()).hexdigest())
         self.assertEqual(self.result["evaluator_sha256"], hashlib.sha256(PHASE6_EVALUATOR.read_bytes()).hexdigest())
-        self.assertEqual("744a59be844e89c83a9cbc565d9f2ce5a3bb66d0b70205c5aeb68a6a1fe55fc3", self.result["packet_fixture_sha256"])
+        self.assertEqual("af544292d3f5a27621cac559b47ef2297fc0087b603de7901c43a2fa94a81e3b", self.result["packet_fixture_sha256"])
         self.assertEqual("bfb4ce22e873173ee5a3839d6d64056d6c4c90445c6c2de84b49d5b1f0f9607e", self.result["evaluator_sha256"])
 
     def test_packets_hide_conditions_and_scoring_metadata_and_have_fresh_values(self):
@@ -220,12 +236,12 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(12, summary["relevant_control_pair_count"])
         self.assertEqual(0, summary["formal_trial_count"])
         self.assertEqual(0, summary["nexus_model_receipt_count"])
-        self.assertFalse(summary["host_execution_authorized"])
+        self.assertTrue(summary["host_execution_authorized"])
         runner_source = (ROOT / "scripts/eval/run_presence_regression_phase6.py").read_text(encoding="utf-8")
-        self.assertNotIn("import subprocess", runner_source)
-        self.assertNotIn("subprocess.run(", runner_source)
-        self.assertNotIn("--execute-host", runner_source)
-        self.assertNotIn("codex exec", runner_source)
+        self.assertIn("--execute-host", runner_source)
+        self.assertIn("EXTERNAL_WINDOWS_POWERSHELL", runner_source)
+        self.assertIn("subprocess_shell", runner_source)
+        self.assertNotIn('("exec", "--ephemeral"', runner_source)
 
     def test_candidate_statuses_skill_screen_and_phase_gates(self):
         candidates = json.loads(CANDIDATES.read_text(encoding="utf-8"))
@@ -245,7 +261,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(0, summary["selected_candidate_count"])
         self.assertEqual(0, screen["selected_candidate_count"])
         self.assertEqual([], screen["selected_candidates"])
-        self.assertEqual("READ_ONLY_STATIC_INSTRUCTION_ARTIFACT_SCREEN", screen["status"])
+        self.assertEqual("READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING", screen["status"])
         self.assertEqual(build_ledger(), ledger)
         self.assertTrue(any("project-experience-curator" in row["artifact_id"] and not row["selection_eligible"] for row in ledger["rows"]))
         self.assertFalse(any(row["selection_eligible"] for row in ledger["rows"]))
@@ -261,7 +277,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         phase5_phase = next(row for row in candidates["phases"] if row["phase"] == "5")
         phase6_phase = next(row for row in candidates["phases"] if row["phase"] == "6")
         self.assertEqual("CLOSED / ACCEPTED", phase5_phase["status"])
-        self.assertIn("EXTERNAL REVIEW PENDING", phase6_phase["status"])
+        self.assertIn("FORMAL MATRIX AUTHORIZED", phase6_phase["status"])
         phase5_doc = PHASE5_DOC.read_text(encoding="utf-8")
         phase6_doc = PHASE6_DOC.read_text(encoding="utf-8")
         synthesis = SYNTHESIS.read_text(encoding="utf-8")
@@ -273,13 +289,159 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertIn("No Academy-wide PASS", phase6_doc)
 
     def test_skill_screen_eligibility_is_fully_derived_and_unknown_blocks(self):
-        criteria = {name: "UNKNOWN" for name in SCREEN_CRITERIA}
-        self.assertTrue(derive_screen_exclusion_reasons(criteria))
+        ideal = {
+            "requires_secret_or_auth": "FALSE",
+            "requires_network": "FALSE",
+            "requires_filesystem_mutation": "FALSE",
+            "requires_shell_or_system_mutation": "FALSE",
+            "deterministic_task_available": "TRUE",
+            "narrow_trigger": "TRUE",
+            "instruction_boundary_clear": "TRUE",
+            "safe_unrelated_control_constructible": "TRUE",
+        }
+        self.assertEqual({"selection_eligible": True, "exclusion_reasons": []}, screen_candidate(ideal))
+        for field in SCREEN_CRITERIA[:4]:
+            for value, reason_prefix in (("TRUE", "REQUIRES_"), ("UNKNOWN", "UNKNOWN_")):
+                criteria = dict(ideal, **{field: value})
+                result = screen_candidate(criteria)
+                self.assertFalse(result["selection_eligible"], (field, value))
+                self.assertIn(reason_prefix, result["exclusion_reasons"][0])
+        positive_reasons = {
+            "deterministic_task_available": "NO_DETERMINISTIC_TASK_AVAILABLE",
+            "narrow_trigger": "TRIGGER_NOT_NARROW",
+            "instruction_boundary_clear": "INSTRUCTION_BOUNDARY_NOT_CLEAR",
+            "safe_unrelated_control_constructible": "NO_SAFE_UNRELATED_CONTROL",
+        }
+        for field, reason in positive_reasons.items():
+            for value, expected_reason in (("FALSE", reason), ("UNKNOWN", f"UNKNOWN_{field.upper()}")):
+                result = screen_candidate(dict(ideal, **{field: value}))
+                self.assertFalse(result["selection_eligible"], (field, value))
+                self.assertIn(expected_reason, result["exclusion_reasons"])
         ledger = json.loads(SKILL_SCREEN.read_text(encoding="utf-8"))
+        curator = next(row for row in ledger["rows"] if "project-experience-curator" in row["artifact_id"])
+        self.assertEqual("TRUE", curator["criteria"]["requires_filesystem_mutation"])
+        self.assertFalse(curator["selection_eligible"])
         bad = json.loads(json.dumps(ledger))
         bad["rows"][0]["selection_eligible"] = True
         with self.assertRaises(ValueError):
             validate_skill_screen(bad)
+
+    def _temporary_result(self, temp_dir: str) -> Path:
+        path = Path(temp_dir) / "phase6-result.json"
+        path.write_bytes(PHASE6_RESULT.read_bytes())
+        return path
+
+    @staticmethod
+    def _host_jsonl(thread_id: str, *, tool: bool = False) -> str:
+        events = [
+            {"type": "thread.started", "thread_id": thread_id},
+            {"type": "item.completed", "item": {"id": "msg-1", "type": "agent_message", "text": '{"result":"mock"}'}},
+        ]
+        if tool:
+            events.insert(1, {"type": "item.started", "item": {"id": "tool-1", "type": "function_call"}})
+        events.append({"type": "turn.completed", "usage": {"input_tokens": 10, "cached_input_tokens": 2, "cache_write_input_tokens": 0, "output_tokens": 3, "reasoning_output_tokens": 1}})
+        return "\n".join(json.dumps(event) for event in events) + "\n"
+
+    def test_external_adapter_uses_frozen_argv_and_persists_provenance_before_mocked_process(self):
+        with tempfile.TemporaryDirectory(prefix="phase6-adapter-test-") as temp_dir:
+            result_path = self._temporary_result(temp_dir)
+            capture_dir = Path(temp_dir) / "captures"
+            fake_executable = str(Path(temp_dir) / "private" / "codex.exe")
+            call_count = 0
+
+            def mocked_run(command, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                persisted = json.loads(result_path.read_text(encoding="utf-8"))
+                self.assertEqual(call_count, persisted["attempted_trial_count"])
+                trial = next(row for row in persisted["formal_trials"].values() if row["execution_status"] == "INVOCATION_IN_PROGRESS")
+                self.assertEqual("INVOCATION_IN_PROGRESS", trial["execution_status"])
+                self.assertTrue(trial["argv_persisted_before_process_outcome"])
+                self.assertEqual(list(FROZEN_SANITIZED_ARGV), trial["sanitized_argv"])
+                self.assertEqual("PHASE5_OFFICIAL_HOST_INVOCATION_V1", trial["invocation_spec_id"])
+                self.assertEqual(EXECUTION_HARNESS_VERSION, trial["execution_harness_version"])
+                self.assertEqual("c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da", trial["sanitized_argv_sha256"])
+                self.assertEqual([fake_executable, *FROZEN_SANITIZED_ARGV[1:]], command)
+                self.assertNotIn("--ask-for-approval", command)
+                self.assertFalse(kwargs["shell"])
+                self.assertIn(kwargs["input"], {row["model_visible_text"] for row in self.packets["packets"]})
+                cwd = Path(kwargs["cwd"])
+                self.assertTrue(cwd.is_dir())
+                self.assertEqual([], list(cwd.iterdir()))
+                self.assertNotEqual(ROOT.resolve(), cwd.resolve())
+                self.assertNotIn(ROOT.resolve(), cwd.resolve().parents)
+                self.assertTrue(Path(kwargs["env"].get("CODEX_HOME", "")))
+                return SimpleNamespace(stdout=self._host_jsonl(f"mock-thread-{call_count}"), stderr="", returncode=0)
+
+            with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+                 patch("scripts.eval.run_presence_regression_phase6.shutil.which", return_value=fake_executable), \
+                 patch("scripts.eval.run_behavioral_phase5.subprocess.run", side_effect=mocked_run):
+                completed = run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
+
+            self.assertEqual("FORMAL_MATRIX_COMPLETE", completed["status"])
+            self.assertEqual(24, call_count)
+            self.assertEqual(24, completed["formal_trial_count"])
+            self.assertEqual(0, completed["nexus_model_receipt_count"])
+            self.assertTrue(all(row["subprocess_shell"] is False for row in completed["formal_trials"].values()))
+            self.assertTrue(all(row["formal_trial_counted"] for row in completed["formal_trials"].values()))
+            persisted_json = result_path.read_text(encoding="utf-8")
+            self.assertNotIn(fake_executable, persisted_json)
+            self.assertNotIn(str(capture_dir.resolve()), persisted_json)
+            self.assertEqual("PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED", completed["raw_capture_location"])
+            with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+                 patch("scripts.eval.run_presence_regression_phase6.shutil.which", return_value="codex"), \
+                 patch("scripts.eval.run_behavioral_phase5.subprocess.run") as process:
+                with self.assertRaises(SystemExit):
+                    run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
+                process.assert_not_called()
+
+    def test_external_adapter_stops_on_first_mocked_protocol_failure(self):
+        cases = (
+            ("PRE_MODEL_HOST_INVOCATION_FAILURE", SimpleNamespace(stdout="", stderr="parser failure", returncode=2)),
+            ("INCOMPLETE_HOST_EXECUTION", SimpleNamespace(stdout='{"type":"thread.started","thread_id":"incomplete"}\n', stderr="", returncode=0)),
+            ("INCOMPLETE_HOST_EXECUTION", SimpleNamespace(stdout='{"type":"thread.started","thread_id":"empty-output"}\n{"type":"item.completed","item":{"id":"empty","type":"agent_message","text":""}}\n{"type":"turn.completed","usage":{}}\n', stderr="", returncode=0)),
+            ("CONTAMINATED_BY_TOOL_USE", SimpleNamespace(stdout=self._host_jsonl("tool-thread", tool=True), stderr="", returncode=0)),
+        )
+        for expected_status, response in cases:
+            with self.subTest(expected_status=expected_status), tempfile.TemporaryDirectory(prefix="phase6-fail-closed-") as temp_dir:
+                result_path = self._temporary_result(temp_dir)
+                capture_dir = Path(temp_dir) / "captures"
+                with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+                     patch("scripts.eval.run_presence_regression_phase6.shutil.which", return_value="codex"), \
+                     patch("scripts.eval.run_behavioral_phase5.subprocess.run", return_value=response) as process:
+                    stopped = run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
+                self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", stopped["status"])
+                self.assertEqual(expected_status, stopped["blocking_condition"])
+                self.assertEqual(1, stopped["attempted_trial_count"])
+                self.assertEqual(0, stopped["formal_trial_count"])
+                self.assertEqual(1, process.call_count)
+
+        with tempfile.TemporaryDirectory(prefix="phase6-timeout-") as temp_dir:
+            result_path = self._temporary_result(temp_dir)
+            capture_dir = Path(temp_dir) / "captures"
+            with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+                 patch("scripts.eval.run_presence_regression_phase6.shutil.which", return_value="codex"), \
+                 patch("scripts.eval.run_behavioral_phase5.subprocess.run", side_effect=subprocess.TimeoutExpired("codex", 1)) as process:
+                stopped = run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
+            self.assertEqual("TIMEOUT", stopped["blocking_condition"])
+            self.assertEqual(1, stopped["attempted_trial_count"])
+            self.assertEqual(0, stopped["formal_trial_count"])
+            self.assertEqual(1, process.call_count)
+
+    def test_external_adapter_stops_when_mock_reuses_thread_id(self):
+        with tempfile.TemporaryDirectory(prefix="phase6-reused-thread-") as temp_dir:
+            result_path = self._temporary_result(temp_dir)
+            capture_dir = Path(temp_dir) / "captures"
+            response = self._host_jsonl("same-thread")
+            with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
+                 patch("scripts.eval.run_presence_regression_phase6.shutil.which", return_value="codex"), \
+                 patch("scripts.eval.run_behavioral_phase5.subprocess.run", return_value=SimpleNamespace(stdout=response, stderr="", returncode=0)) as process:
+                stopped = run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
+            self.assertEqual("FRESH_THREAD_ID_REUSED", stopped["blocking_condition"])
+            self.assertEqual(2, stopped["attempted_trial_count"])
+            self.assertEqual(1, stopped["formal_trial_count"])
+            self.assertEqual(1, stopped["unique_thread_id_count"])
+            self.assertEqual(2, process.call_count)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ class BootstrapSynthesisTests(unittest.TestCase):
     def test_phase_statuses_and_shadow_gate_keep_behavioral_gaps_open(self):
         ledger = json.loads((ROOT / "eval/academy/results/bootstrap-academy-candidates.json").read_text(encoding="utf-8"))
         statuses = {row["phase"]: row["status"] for row in ledger["phases"]}
-        self.assertEqual(statuses, {"0":"CLOSED / ACCEPTED", "1":"CLOSED / ACCEPTED", "2":"CLOSED / ACCEPTED", "3":"CLOSED / ACCEPTED", "4":"CLOSED / ACCEPTED", "5":"CLOSED / ACCEPTED", "6":"IN PROGRESS / PREREGISTRATION — EXTERNAL REVIEW PENDING"})
+        self.assertEqual(statuses, {"0":"CLOSED / ACCEPTED", "1":"CLOSED / ACCEPTED", "2":"CLOSED / ACCEPTED", "3":"CLOSED / ACCEPTED", "4":"CLOSED / ACCEPTED", "5":"CLOSED / ACCEPTED", "6":"IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING"})
         gates = {row["gate"]: row["status"] for row in ledger["shadow_entry_gate_candidate"]}
         self.assertEqual(gates["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"], "SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX")
         self.assertEqual(gates["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"], "UNAVAILABLE")

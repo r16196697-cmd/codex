@@ -1,15 +1,28 @@
-"""Validate and score the frozen Phase 6 preregistration without Host access.
-
-This preregistration-only utility deliberately has no Host subprocess path.
-An execution adapter may be added only after external review authorizes trials.
-"""
+"""Validate and execute the frozen Phase 6 matrix through the accepted Phase 5 Host adapter."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from scripts.eval.run_behavioral_phase5 import (
+    ARGV_HASH_RULE,
+    EXECUTION_HARNESS_VERSION as PHASE5_EXECUTION_HARNESS_VERSION,
+    FROZEN_SANITIZED_ARGV,
+    OFFICIAL_INVOCATION_SPEC_ID,
+    PRIVATE_CAPTURE_LOCATION,
+    _argv_sha256,
+    _execute_host as _phase5_execute_host,
+    _external_capture_dir,
+    _extract_events,
+    _host_command,
+    _serialize_persisted_result,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,6 +41,26 @@ SCREEN_CRITERIA = (
     "instruction_boundary_clear",
     "safe_unrelated_control_constructible",
 )
+NEGATIVE_CRITERIA = SCREEN_CRITERIA[:4]
+POSITIVE_CRITERIA = SCREEN_CRITERIA[4:]
+NEGATIVE_LABELS = {
+    "requires_secret_or_auth": "SECRET_OR_AUTH",
+    "requires_network": "NETWORK",
+    "requires_filesystem_mutation": "FILESYSTEM_MUTATION",
+    "requires_shell_or_system_mutation": "SHELL_OR_SYSTEM_MUTATION",
+}
+POSITIVE_FAILURES = {
+    "deterministic_task_available": "NO_DETERMINISTIC_TASK_AVAILABLE",
+    "narrow_trigger": "TRIGGER_NOT_NARROW",
+    "instruction_boundary_clear": "INSTRUCTION_BOUNDARY_NOT_CLEAR",
+    "safe_unrelated_control_constructible": "NO_SAFE_UNRELATED_CONTROL",
+}
+FORMAL_CONTROLLER = "EXTERNAL_WINDOWS_POWERSHELL"
+AUTHORIZATION_BASIS = "EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2"
+EXECUTION_HARNESS_VERSION = "PHASE6_EXTERNAL_EXECUTION_ADAPTER_V1"
+CONTROLLER_ENV = "NEXUS_PHASE6_EXTERNAL_CONTROLLER"
+USAGE_BASIS = "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY"
+PRIVATE_CAPTURE_PATH = PRIVATE_CAPTURE_LOCATION
 
 
 def sha256(raw: bytes) -> str:
@@ -77,16 +110,33 @@ def score_trial(output: str, expected: dict[str, Any], task_kind: str, presence:
 def derive_screen_exclusion_reasons(criteria: dict[str, str]) -> list[str]:
     """Return deterministic reasons; UNKNOWN never counts as a safe pass."""
     reasons = []
-    for name in SCREEN_CRITERIA:
+    if set(criteria) != set(SCREEN_CRITERIA):
+        raise ValueError("Static-screen criteria must contain exactly the eight frozen criteria.")
+    for name in NEGATIVE_CRITERIA:
         value = criteria[name]
-        label = name.removeprefix("requires_").upper()
         if value == "TRUE":
-            reasons.append(f"REQUIRES_{label}")
+            reasons.append(f"REQUIRES_{NEGATIVE_LABELS[name]}")
         elif value == "UNKNOWN":
-            reasons.append(f"UNKNOWN_{label}")
+            reasons.append(f"UNKNOWN_{NEGATIVE_LABELS[name]}")
         elif value != "FALSE":
             raise ValueError(f"Invalid static-screen criterion value for {name}: {value}")
+    for name in POSITIVE_CRITERIA:
+        value = criteria[name]
+        if value == "FALSE":
+            reasons.append(POSITIVE_FAILURES[name])
+        elif value == "UNKNOWN":
+            reasons.append(f"UNKNOWN_{name.upper()}")
+        elif value != "TRUE":
+            raise ValueError(f"Invalid static-screen criterion value for {name}: {value}")
     return reasons
+
+
+def screen_candidate(criteria: dict[str, str]) -> dict[str, Any]:
+    reasons = derive_screen_exclusion_reasons(criteria)
+    eligible = all(criteria[name] == "FALSE" for name in NEGATIVE_CRITERIA) and all(
+        criteria[name] == "TRUE" for name in POSITIVE_CRITERIA
+    )
+    return {"selection_eligible": eligible, "exclusion_reasons": reasons}
 
 
 def validate_skill_screen(ledger: dict[str, Any]) -> dict[str, Any]:
@@ -111,10 +161,9 @@ def validate_skill_screen(ledger: dict[str, Any]) -> dict[str, Any]:
         criteria = row.get("criteria", {})
         if set(criteria) != set(SCREEN_CRITERIA):
             raise ValueError(f"Static Skill screen criteria incomplete for {artifact_id}.")
-        reasons = derive_screen_exclusion_reasons(criteria)
-        eligible = not reasons and all(criteria[name] == "TRUE" for name in SCREEN_CRITERIA[4:]) and all(
-            criteria[name] == "FALSE" for name in SCREEN_CRITERIA[:4]
-        )
+        derived = screen_candidate(criteria)
+        reasons = derived["exclusion_reasons"]
+        eligible = derived["selection_eligible"]
         if row.get("exclusion_reasons") != reasons or row.get("selection_eligible") is not eligible:
             raise ValueError(f"Static Skill screen derived fields mismatch for {artifact_id}.")
         selected += int(eligible)
@@ -130,6 +179,169 @@ def model_visible_packet_digest(rows: list[dict[str, Any]]) -> str:
     ordered = sorted(rows, key=lambda row: row["trial_id"])
     payload = "\n".join(f"{row['trial_id']}\0{row['model_visible_text']}" for row in ordered) + "\n"
     return sha256(payload.encode("utf-8"))
+
+
+def _persist_result(path: Path, result: dict[str, Any]) -> None:
+    result["raw_capture_location"] = PRIVATE_CAPTURE_PATH
+    path.write_text(_serialize_persisted_result(result), encoding="utf-8")
+
+
+def _classify_execution(executed: dict[str, Any], message: str | None, session_id: str | None,
+                        turn_completed: bool, tool_calls: int | str,
+                        seen_thread_ids: set[str]) -> tuple[str, bool]:
+    if executed.get("timed_out") is True:
+        return "TIMEOUT", False
+    repeated_thread = bool(session_id and session_id in seen_thread_ids)
+    if session_id:
+        seen_thread_ids.add(session_id)
+    if repeated_thread:
+        return "FRESH_THREAD_ID_REUSED", False
+    if tool_calls == "UNAVAILABLE" or (isinstance(tool_calls, int) and tool_calls > 0):
+        return "CONTAMINATED_BY_TOOL_USE", False
+    exit_code = executed.get("exit_code")
+    if exit_code != 0 and not session_id:
+        return "PRE_MODEL_HOST_INVOCATION_FAILURE", False
+    eligible = exit_code == 0 and session_id is not None and turn_completed and bool(message and message.strip()) and tool_calls == 0
+    if eligible:
+        return "COMPLETED", True
+    return "INCOMPLETE_HOST_EXECUTION", False
+
+
+def run_formal_matrix(
+    *,
+    packets_path: Path = PACKETS_PATH,
+    evaluator_path: Path = EVALUATOR_PATH,
+    results_path: Path = RESULT_PATH,
+    timeout: int = 180,
+    capture_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Execute the once-only authorized matrix; intended for external PowerShell only."""
+    prior = json.loads(results_path.read_text(encoding="utf-8"))
+    if os.environ.get(CONTROLLER_ENV) != FORMAL_CONTROLLER:
+        raise SystemExit(f"Set {CONTROLLER_ENV}=EXTERNAL_WINDOWS_POWERSHELL in the current external PowerShell process.")
+    if prior.get("formal_execution_controller") != FORMAL_CONTROLLER or prior.get("formal_execution_authorized") is not True:
+        raise SystemExit("Refusing Host execution: external execution authorization metadata is absent.")
+    if prior.get("authorization_basis") != AUTHORIZATION_BASIS:
+        raise SystemExit("Refusing Host execution: authorization basis mismatch.")
+    if prior.get("execution_count", 0) != 0 or prior.get("attempted_trial_count", 0) != 0 or prior.get("formal_trials"):
+        raise SystemExit("Refusing repeat Phase 6 execution; preserve the first execution record.")
+    if prior.get("formal_trial_count", 0) != 0 or prior.get("nexus_model_receipt_count", 0) != 0:
+        raise SystemExit("Refusing Host execution: prior trials or MODEL receipts are present.")
+
+    validate_preregistration(packets_path, evaluator_path, results_path)
+    packets = json.loads(packets_path.read_text(encoding="utf-8"))
+    evaluator = json.loads(evaluator_path.read_text(encoding="utf-8"))
+    packet_by_id = {row["trial_id"]: row for row in packets["packets"]}
+    order = packets["execution_order"]
+    if prior.get("execution_order_sha256") != packets["execution_order_sha256"]:
+        raise SystemExit("Refusing Host execution: frozen order differs from authorized result metadata.")
+    codex = shutil.which("codex")
+    if not codex:
+        raise SystemExit("Host execution unavailable: codex CLI not found on PATH.")
+    _, provenance = _host_command(codex)
+    if tuple(provenance["sanitized_argv"]) != FROZEN_SANITIZED_ARGV:
+        raise SystemExit("Refusing Host execution: sanitized argv does not match Phase 5 frozen invocation.")
+    if capture_dir is None:
+        capture_dir = _external_capture_dir(Path(tempfile.mkdtemp(prefix="nexus-academy-phase6-captures-")))
+    else:
+        capture_dir = _external_capture_dir(capture_dir)
+        capture_dir.mkdir(parents=True, exist_ok=True)
+
+    result = dict(prior)
+    result.update({
+        "status": "HOST_TRIALS_IN_PROGRESS",
+        "execution_count": 1,
+        "attempted_trial_count": 0,
+        "formal_trial_count": 0,
+        "formal_trials": {},
+        "raw_capture_location": PRIVATE_CAPTURE_PATH,
+        "nexus_model_receipt_count": 0,
+        "host_model_identity": "UNAVAILABLE",
+        "provider_dollar_cost": "UNAVAILABLE",
+        "per_exposure_token_attribution": "UNAVAILABLE",
+        "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
+        "cross_session_memory_confound": "UNCHARACTERIZED",
+        "sanitized_argv": provenance["sanitized_argv"],
+        "sanitized_argv_sha256": provenance["sanitized_argv_sha256"],
+        "argv_hash_rule": ARGV_HASH_RULE,
+    })
+    _persist_result(results_path, result)
+    seen_thread_ids: set[str] = set()
+
+    for index, trial_id in enumerate(order, start=1):
+        packet_row = packet_by_id[trial_id]
+        packet = packet_row["model_visible_text"]
+        mapping = evaluator["trials"][trial_id]
+
+        def persist_invocation(raw_provenance: dict[str, Any]) -> None:
+            phase6_provenance = {
+                **raw_provenance,
+                "execution_harness_version": EXECUTION_HARNESS_VERSION,
+                "invocation_spec_id": OFFICIAL_INVOCATION_SPEC_ID,
+                "underlying_invocation_adapter_version": PHASE5_EXECUTION_HARNESS_VERSION,
+                "subprocess_shell": False,
+                "argv_persisted_before_process_outcome": True,
+            }
+            result["attempted_trial_count"] = index
+            result["formal_trials"][trial_id] = {
+                "trial_id": trial_id,
+                "family_id": packet_row["family_id"],
+                "presence": packet_row["presence"],
+                "task_kind": packet_row["task_kind"],
+                "packet_sha256": packet_row["packet_sha256"],
+                "execution_status": "INVOCATION_IN_PROGRESS",
+                "formal_trial_counted": False,
+                **phase6_provenance,
+            }
+            _persist_result(results_path, result)
+
+        executed = _phase5_execute_host(
+            codex, packet, timeout, capture_dir, trial_id, persist_invocation,
+        )
+        stdout = executed.pop("_stdout", "")
+        message, usage, tool_calls, session_id, turn_completed = _extract_events(stdout)
+        status, eligible = _classify_execution(executed, message, session_id, turn_completed, tool_calls, seen_thread_ids)
+        observed = {
+            **result["formal_trials"][trial_id],
+            "execution_status": status,
+            "exit_code": executed.get("exit_code"),
+            "timed_out": executed.get("timed_out"),
+            "thread_started": session_id is not None,
+            "thread_id": session_id,
+            "turn_completed": turn_completed,
+            "agent_output": message,
+            "output_sha256": sha256(message.encode("utf-8")) if message is not None else None,
+            "tool_call_count": tool_calls,
+            "host_usage": usage if turn_completed else "UNAVAILABLE",
+            "usage_basis": USAGE_BASIS,
+            "stderr_classification": executed.get("stderr_classification"),
+            "raw_capture_stdout": executed.get("raw_capture_stdout"),
+            "raw_capture_stderr": executed.get("raw_capture_stderr"),
+            "wall_clock_seconds": executed.get("wall_clock_seconds"),
+            "formal_trial_counted": eligible,
+            "relevant_utility": "NOT_APPLICABLE",
+            "unrelated_task_preservation": "NOT_APPLICABLE",
+        }
+        if eligible and message is not None:
+            scored = score_trial(message, mapping["expected"], mapping["task_kind"], mapping["presence"])
+            observed.update(scored)
+            result["formal_trial_count"] += 1
+        result["formal_trials"][trial_id] = observed
+        result["unique_thread_id_count"] = len(seen_thread_ids)
+        result["nexus_model_receipt_count"] = 0
+        _persist_result(results_path, result)
+        if not eligible:
+            result["status"] = "STOPPED_ON_PROTOCOL_CONDITION"
+            result["blocking_trial_id"] = trial_id
+            result["blocking_condition"] = status
+            _persist_result(results_path, result)
+            return result
+
+    result["status"] = "FORMAL_MATRIX_COMPLETE"
+    result["completed_trial_count"] = len(order)
+    result["nexus_model_receipt_count"] = 0
+    _persist_result(results_path, result)
+    return result
 
 
 def validate_preregistration(
@@ -211,9 +423,20 @@ def validate_preregistration(
         if ordered_levels != list(LEVELS):
             raise ValueError(f"Presence order is not monotonic for {key}.")
     if result["formal_trial_count"] != 0 or result["execution_count"] != 0 or result["nexus_model_receipt_count"] != 0:
-        raise ValueError("Preregistration result must not contain formal trials or MODEL receipts.")
-    if result["execution_authorized"] or packets["execution_authorized"]:
-        raise ValueError("Phase 6 Host execution is not authorized before external review.")
+        raise ValueError("Authorized-but-unexecuted result must have zero trials, invocations, and MODEL receipts.")
+    if result.get("attempted_trial_count", 0) != 0 or result.get("formal_trials", []):
+        raise ValueError("Pre-execution validation requires no attempted formal trials.")
+    if result.get("execution_authorized") is not True or packets.get("execution_authorized") is not True:
+        raise ValueError("Phase 6 external execution authorization metadata is missing.")
+    if result.get("formal_execution_authorized") is not True or result.get("formal_execution_controller") != FORMAL_CONTROLLER:
+        raise ValueError("Phase 6 formal controller authorization metadata is inconsistent.")
+    if result.get("authorization_basis") != AUTHORIZATION_BASIS:
+        raise ValueError("Phase 6 authorization basis is inconsistent.")
+    _command, argv_provenance = _host_command("codex")
+    if result.get("sanitized_argv") != argv_provenance["sanitized_argv"]:
+        raise ValueError("Phase 6 sanitized argv differs from the canonical Phase 5 invocation.")
+    if result.get("sanitized_argv_sha256") != _argv_sha256(FROZEN_SANITIZED_ARGV):
+        raise ValueError("Phase 6 sanitized argv SHA-256 differs from the canonical Phase 5 invocation.")
     return {
         "protocol_version": packets["protocol_version"],
         "packet_count": len(rows),
@@ -228,14 +451,26 @@ def validate_preregistration(
         "skill_screen_source_counts": screen_summary["source_counts"],
         "formal_trial_count": 0,
         "nexus_model_receipt_count": 0,
-        "host_execution_authorized": False,
+        "host_execution_authorized": True,
+        "formal_execution_controller": FORMAL_CONTROLLER,
     }
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate the Phase 6 presence-regression preregistration; no Host execution.")
+    parser = argparse.ArgumentParser(description="Validate the frozen Phase 6 matrix or run its externally controlled once-only execution.")
     parser.add_argument("--validate", action="store_true", help="Validate frozen packets, evaluator, order, and result metadata.")
+    parser.add_argument("--execute-host", action="store_true", help="Execute the once-only Phase 6 matrix from external Windows PowerShell only.")
+    parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
+    if args.execute_host:
+        result = run_formal_matrix(timeout=args.timeout)
+        print(json.dumps({
+            "status": result["status"],
+            "attempted_trial_count": result.get("attempted_trial_count", 0),
+            "formal_trial_count": result.get("formal_trial_count", 0),
+            "nexus_model_receipt_count": result.get("nexus_model_receipt_count", 0),
+        }, ensure_ascii=False, sort_keys=True))
+        return 0 if result["status"] == "FORMAL_MATRIX_COMPLETE" else 2
     print(json.dumps(validate_preregistration(), ensure_ascii=False, sort_keys=True))
     return 0
 

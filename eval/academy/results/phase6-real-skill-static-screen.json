@@ -1,7 +1,9 @@
 {
-  "artifact_kind": "READ_ONLY_STATIC_INSTRUCTION_ARTIFACT_SCREEN",
-  "screening_status": "REPRODUCIBLE_STATIC_SCREEN_WITH_UNKNOWN_CRITERIA",
+  "artifact_kind": "READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING",
+  "screening_status": "READ_ONLY_STATIC_ARTIFACT_INVENTORY_WITH_CONSERVATIVE_UNKNOWN_BLOCKING",
   "claims_boundary": [
+    "The 136 artifacts are inventoried and hashed; semantic criteria are not substantively classified unless directly established.",
+    "Zero selected means zero statically qualified candidates under current known/unknown evidence, not zero Skills are suitable.",
     "This is not runtime safety verification.",
     "This does not mean a Skill is safe, evaluated, or natively loaded.",
     "UNKNOWN criteria block selection."
