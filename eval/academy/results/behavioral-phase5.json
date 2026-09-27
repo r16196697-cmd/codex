@@ -18,22 +18,859 @@
     "usage_basis": "HOST_REPORTED_TOTAL_INPUT_TOKENS"
   },
   "artifact_kind": "ACADEMY_BEHAVIORAL_BRIDGE_RESULT",
-  "attempted_count": 1,
-  "automated_host_behavioral_bridge": "FEASIBLE; invocation method only; no formal behavioral matrix result",
-  "blocking_trial_id": "A17",
+  "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
+  "automated_host_behavioral_bridge": "FEASIBLE; external Windows PowerShell controlled formal matrix completed once",
+  "codex_agent_nested_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
   "codex_cli_version": "codex-cli 0.158.0-alpha.2.1",
   "codex_executable_observation": "Resolved from PATH; absolute local path intentionally omitted.",
-  "cross_session_memory_confound": "UNCHARACTERIZED",
-  "eligible_formal_trial_count": 0,
-  "evaluator_sha256": "96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c",
-  "execution_count": 0,
-  "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
-  "external_host_controller_authorization": {
-    "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
-    "formal_execution_authorized": true,
-    "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
-    "scope": "FROZEN_FORMAL_MATRIX_ONLY; NOT CAPABILITY CERTIFICATION, SHADOW, OR PRODUCTION AUTHORIZATION"
+  "context_trials": {
+    "A17": {
+      "agent_output": "{\"code\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C0_NONE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "single_fact",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "1b84f575b763ea09697fd3c6ab7e404fb51de88a9906b2f1a2fd9a326e095b9d",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e201-ad4c-7000-9bb2-f36f553aeb13",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 7936,
+        "input_tokens": 20509,
+        "output_tokens": 21,
+        "reasoning_output_tokens": 10
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"code\":\"UNKNOWN\"}",
+      "output_sha256": "977983c0790c486347657b65552b556cc11684fd28ea4a9c676deb380afaf4f7",
+      "packet_bytes": 294,
+      "packet_chars": 294,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "A17.stderr.txt",
+      "raw_capture_stdout": "A17.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "b309d3aa426e2604cd17f5006a399e5eb25e971ff86c38c11a15e88f097924fe",
+      "task_type": null,
+      "thread_id": "01a0e201-ad4c-7000-9bb2-f36f553aeb13",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "A17",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 15.188
+    },
+    "B29": {
+      "agent_output": "{\"code\":\"VEIL-739\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C1_MINIMAL_RELEVANT",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "single_fact",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "6a132c27501d7ed812151dcb2ad0ee90980f092591b1e8b7daecf5b52f61d8b6",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e202-baed-73e1-a29d-c99314164daf",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20524,
+        "output_tokens": 26,
+        "reasoning_output_tokens": 12
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"code\":\"VEIL-739\"}",
+      "output_sha256": "a2201c6558608e46975594acba46666bb5d5217e0b8ef622e925875015020104",
+      "packet_bytes": 336,
+      "packet_chars": 336,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "B29.stderr.txt",
+      "raw_capture_stdout": "B29.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "d09063c937ff76f93ee01f58503520ade4a30d7d98f2ec6138cce77c8de7b2b9",
+      "task_type": null,
+      "thread_id": "01a0e202-baed-73e1-a29d-c99314164daf",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "B29",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.547
+    },
+    "D31": {
+      "agent_output": "{\"retention_days\":\"23\",\"handoff\":\"MIRA-Q8\",\"region\":\"LCL-6\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C1_MINIMAL_RELEVANT",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "multi_fact_composition",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "69bfee6b85a9676261361930dfd927b55e7bc5629f878528ccb02a0709bc230a",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e203-4a9b-7d10-9eb6-9d01d20ec16e",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20576,
+        "output_tokens": 37,
+        "reasoning_output_tokens": 9
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"retention_days\":\"23\",\"handoff\":\"MIRA-Q8\",\"region\":\"LCL-6\"}",
+      "output_sha256": "a3e659b6a358ba7fe558310bb0c0e9090c8c5e276a68463223e4eb5ca2975a63",
+      "packet_bytes": 586,
+      "packet_chars": 586,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "D31.stderr.txt",
+      "raw_capture_stdout": "D31.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "52e4ac128c9c5bbc61276c2cad92367a1e4c8169f2a902b06ec0c6e6ce2690b7",
+      "task_type": null,
+      "thread_id": "01a0e203-4a9b-7d10-9eb6-9d01d20ec16e",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "D31",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.953
+    },
+    "E04": {
+      "agent_output": "{\"retention_days\":\"UNKNOWN\",\"handoff\":\"UNKNOWN\",\"region\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C0_NONE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "multi_fact_composition",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "73d75d766972ff6c19adb044558b6c6730988d09e7f05a102c492301eed7be7d",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e201-e86b-78b3-847d-706442d2994f",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20536,
+        "output_tokens": 33,
+        "reasoning_output_tokens": 11
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"retention_days\":\"UNKNOWN\",\"handoff\":\"UNKNOWN\",\"region\":\"UNKNOWN\"}",
+      "output_sha256": "a8d48d9f7d8868e8f2809057119eda1bf3aa871b730e3e473ad4a369faab81b8",
+      "packet_bytes": 418,
+      "packet_chars": 418,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "E04.stderr.txt",
+      "raw_capture_stdout": "E04.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "e7c4bb9c014385a168ac902f7aba2a17bdd02c425737a6660bb4a05c254553dc",
+      "task_type": null,
+      "thread_id": "01a0e201-e86b-78b3-847d-706442d2994f",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "E04",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 22.828
+    },
+    "F22": {
+      "agent_output": "{\"route\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C0_NONE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "similar_identifier",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "379dd36285f7c62dda495f746c55bd8bbae15579e3c6686d258dd3109238e232",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e202-88e9-7cc1-a3b4-d1677bdf95f5",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20516,
+        "output_tokens": 9,
+        "reasoning_output_tokens": 0
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"route\":\"UNKNOWN\"}",
+      "output_sha256": "0d3b65a7010bc75accb9cf6e9733665c9313e865caa7b6e6b5f77761c23170b2",
+      "packet_bytes": 329,
+      "packet_chars": 329,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "F22.stderr.txt",
+      "raw_capture_stdout": "F22.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "26f6c74c056d3a1ba3c61f268598e1243a5732a786d8e7fb5880589c6c92c04b",
+      "task_type": null,
+      "thread_id": "01a0e202-88e9-7cc1-a3b4-d1677bdf95f5",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "F22",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.797
+    },
+    "G08": {
+      "agent_output": "{\"route\":\"LOCAL-K2\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C1_MINIMAL_RELEVANT",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "similar_identifier",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "05f0bc2f88fc48ca76c7455e93487693b31af8a4f6d814ca0e93e6a3e28a5596",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e203-b31e-7200-ba5b-678f133a2878",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 7936,
+        "input_tokens": 20530,
+        "output_tokens": 23,
+        "reasoning_output_tokens": 10
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"route\":\"LOCAL-K2\"}",
+      "output_sha256": "e85b24cb4b11a9f1dbd7f3b415e4ae61e48333bbed36ac0814015f32ca0f073a",
+      "packet_bytes": 368,
+      "packet_chars": 368,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "G08.stderr.txt",
+      "raw_capture_stdout": "G08.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "546a8e93229d98d05ddeae09c8a388a0d99d5547777e64d6d18423eb05c5e7bf",
+      "task_type": null,
+      "thread_id": "01a0e203-b31e-7200-ba5b-678f133a2878",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "G08",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.86
+    },
+    "H11": {
+      "agent_output": "{\"status\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C0_NONE",
+      "conflict_handling_correct": true,
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "conflicting_sources",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "3a9af9dd133fd8b97a0ecb1a7c4f3426b4639671c3aaab03503f451da09704d7",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e202-ebef-79d3-8c3d-1e743437dc5d",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20504,
+        "output_tokens": 37,
+        "reasoning_output_tokens": 26
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"status\":\"UNKNOWN\"}",
+      "output_sha256": "6ab9fe06bc36d0b3d5335a0b6cb347c4967d0d40aba4682dbc7b86142645db00",
+      "packet_bytes": 271,
+      "packet_chars": 271,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "H11.stderr.txt",
+      "raw_capture_stdout": "H11.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "3029c371b05b088f3e36cd095a225edb748e72bc26f2a4c233dbc57cd9103f54",
+      "task_type": null,
+      "thread_id": "01a0e202-ebef-79d3-8c3d-1e743437dc5d",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "H11",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.531
+    },
+    "J15": {
+      "agent_output": "{\"status\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C1_MINIMAL_RELEVANT",
+      "conflict_handling_correct": true,
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "conflicting_sources",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "38a06b4485ede4eae1cb158ae715f66e21ac9a937757fc63f65f5f4721426412",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e204-178e-7e11-a697-63ac50e5223c",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 18176,
+        "input_tokens": 20541,
+        "output_tokens": 25,
+        "reasoning_output_tokens": 14
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"status\":\"UNKNOWN\"}",
+      "output_sha256": "6ab9fe06bc36d0b3d5335a0b6cb347c4967d0d40aba4682dbc7b86142645db00",
+      "packet_bytes": 413,
+      "packet_chars": 413,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "J15.stderr.txt",
+      "raw_capture_stdout": "J15.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "c881d220cd8177424665f4282f8f024a34d1ab86b2c29fb20669a7ed52fbd25d",
+      "task_type": null,
+      "thread_id": "01a0e204-178e-7e11-a697-63ac50e5223c",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "J15",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.656
+    },
+    "K02": {
+      "agent_output": "{\"code\":\"VEIL-739\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C2_BROAD_SAFE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "single_fact",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "d80af25a29e7964c796b3c67b0daf504df376cb3fa6da89c3e168ec6c3b2a0c9",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e203-e55e-7663-ba34-50cd8c1ce4c1",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 18176,
+        "input_tokens": 20565,
+        "output_tokens": 42,
+        "reasoning_output_tokens": 28
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"code\":\"VEIL-739\"}",
+      "output_sha256": "a2201c6558608e46975594acba46666bb5d5217e0b8ef622e925875015020104",
+      "packet_bytes": 529,
+      "packet_chars": 529,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "K02.stderr.txt",
+      "raw_capture_stdout": "K02.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "6b69e481131ef042129ad2c2a7cfb48a68636dce2771623b4fc522a4b4c5795c",
+      "task_type": null,
+      "thread_id": "01a0e203-e55e-7663-ba34-50cd8c1ce4c1",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "K02",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.859
+    },
+    "L73": {
+      "agent_output": "{\"retention_days\":\"23 days\",\"handoff\":\"MIRA-Q8\",\"region\":\"LCL-6\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C2_BROAD_SAFE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": false,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "multi_fact_composition",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "4fa51aaf3eaf648a7621acb649c7ddd29c05e95c40c25f76cedd5928136aede1",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e204-8a80-71b1-9a92-6d9fc28e08dd",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 18176,
+        "input_tokens": 20619,
+        "output_tokens": 57,
+        "reasoning_output_tokens": 28
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"retention_days\":\"23 days\",\"handoff\":\"MIRA-Q8\",\"region\":\"LCL-6\"}",
+      "output_sha256": "c59cde567fe446d7c225e72ffcf015c7bbae2cd40ab9c86a186f55be9e4556e4",
+      "packet_bytes": 780,
+      "packet_chars": 780,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "L73.stderr.txt",
+      "raw_capture_stdout": "L73.stdout.jsonl",
+      "required_fact_coverage": 0.6666666666666666,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "0c43d8eb1cb15e8a0daeef7f4ee036e5f91c3c3db718fc8849785f6b4b7fb1ed",
+      "task_type": null,
+      "thread_id": "01a0e204-8a80-71b1-9a92-6d9fc28e08dd",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "L73",
+      "turn_completed": true,
+      "unsupported_assertion_count": 1,
+      "wall_clock_seconds": 12.641
+    },
+    "M26": {
+      "agent_output": "{\"route\":\"LOCAL-K2\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C2_BROAD_SAFE",
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "similar_identifier",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "e56d16976ef4e791614c73c3b5e895b7135e2542da5cb7a22abe33b0539fe96b",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e204-bbc7-7093-b61e-58b595b7cec0",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20567,
+        "output_tokens": 54,
+        "reasoning_output_tokens": 41
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"route\":\"LOCAL-K2\"}",
+      "output_sha256": "e85b24cb4b11a9f1dbd7f3b415e4ae61e48333bbed36ac0814015f32ca0f073a",
+      "packet_bytes": 559,
+      "packet_chars": 559,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "M26.stderr.txt",
+      "raw_capture_stdout": "M26.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "cb72be1e519156694eaea0d65402e7d6eac10430f5daeef4e746b9086345b4dd",
+      "task_type": null,
+      "thread_id": "01a0e204-bbc7-7093-b61e-58b595b7cec0",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "M26",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 14.047
+    },
+    "N58": {
+      "agent_output": "{\"status\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": "C2_BROAD_SAFE",
+      "conflict_handling_correct": true,
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": "conflicting_sources",
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "1074dfdcc64a54b34a20d6c2a87c7db2e74aa83916cb6d596f58dcb6ee8a0d6e",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e205-2a0c-7c90-b867-b439c6460250",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20588,
+        "output_tokens": 46,
+        "reasoning_output_tokens": 35
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"status\":\"UNKNOWN\"}",
+      "output_sha256": "6ab9fe06bc36d0b3d5335a0b6cb347c4967d0d40aba4682dbc7b86142645db00",
+      "packet_bytes": 600,
+      "packet_chars": 600,
+      "presence": null,
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "N58.stderr.txt",
+      "raw_capture_stdout": "N58.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "cfac40f28d1ab5b330639ff39dcb5690f9915ce25412a9d78944c47f95210a3c",
+      "task_type": null,
+      "thread_id": "01a0e205-2a0c-7c90-b867-b439c6460250",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "N58",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 12.734
+    }
   },
+  "cross_session_memory_confound": "UNCHARACTERIZED",
+  "eligible_formal_behavioral_trials": 18,
+  "eligible_formal_trial_count": 18,
+  "evaluator_sha256": "96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c",
+  "execution_count": 18,
+  "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
   "execution_incidents": [
     {
       "attempted_behavioral_packet": "A17",
@@ -111,22 +948,6 @@
     "W34"
   ],
   "execution_order_sha256": "579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6",
-  "execution_summary": {
-    "attempted_trial_count": 1,
-    "behavioral_inference_allowed": false,
-    "context_completed_count": 0,
-    "cross_session_memory_confound": "UNCHARACTERIZED",
-    "eligible_formal_trial_count": 0,
-    "first_execution_only": true,
-    "host_model_execution_observed": false,
-    "incomplete_or_pre_model_failure_count": 1,
-    "matrix_status": "STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT",
-    "protocol_version": "PHASE5_PREREGISTRATION_V2",
-    "presence_completed_count": 0,
-    "stopped_after_trial_id": "A17",
-    "tool_contaminated_count": 0,
-    "unique_thread_id_count": 0
-  },
   "exposure_observability": {
     "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
     "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY",
@@ -134,18 +955,48 @@
     "full_model_visible_context": "UNAVAILABLE",
     "observation": "HOST_REPORTED_TOTAL_INPUT_TOKENS exceeded explicit packet bytes in observed diagnostics; this does not decompose input composition."
   },
+  "external_host_controller_authorization": {
+    "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
+    "formal_execution_authorized": true,
+    "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
+    "scope": "FROZEN_FORMAL_MATRIX_ONLY; NOT CAPABILITY CERTIFICATION, SHADOW, OR PRODUCTION AUTHORIZATION"
+  },
+  "external_windows_powershell_execution_path": "SUPPORTED",
+  "first_eligible_formal_matrix_execution_attempt": "COMPLETED; FIRST AND ONLY MATRIX EXECUTION",
   "fixture_sha256": "f41f960addbef6580102ca382bfc9b6dff90c6285afadaed18335bd1b2d8f00e",
   "formal_execution_authorized": true,
   "formal_execution_controller": "EXTERNAL_WINDOWS_POWERSHELL",
-  "authorization_basis": "EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC",
-  "formal_matrix_status": "AUTHORIZED_NOT_STARTED",
-  "formal_trial_count": 0,
-  "formal_trial_results": "NO ELIGIBLE FORMAL TRIAL; HISTORICAL V2 INCIDENT STOPPED PRE-MODEL; V3 MATRIX AUTHORIZED BUT NOT STARTED",
-  "formal_trials": [],
+  "formal_matrix_status": "FORMAL_MATRIX_COMPLETE",
+  "real_skill_evaluated_count": 0,
+  "discovered_skill_count": 136,
+  "all_discovered_skills_lifecycle": "DISCOVERED / UNEVALUATED",
+  "project_experience_curator": "DISCOVERED / UNEVALUATED",
+  "formal_trial_count": 18,
+  "formal_trial_results": "18/18 eligible trials completed; descriptive scoring from frozen evaluator; external review pending",
+  "formal_trials": [
+    "A17",
+    "E04",
+    "V06",
+    "F22",
+    "B29",
+    "H11",
+    "T63",
+    "D31",
+    "R41",
+    "G08",
+    "K02",
+    "J15",
+    "U07",
+    "L73",
+    "M26",
+    "S12",
+    "N58",
+    "W34"
+  ],
   "gates": {
-    "G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY": "SUPPORTED_BY_REAL_HOST_PILOT",
+    "G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY": "SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX",
     "G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF": "UNAVAILABLE",
-    "H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR": "NOT OBSERVED",
+    "H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR": "OBSERVED_IN_REAL_HOST_PILOT",
     "H2_REAL_SKILL_CAPABILITY_UTILITY": "NOT TESTED",
     "I_HOST_MEMORY_CONTAMINATION": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
     "J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY": "SUPPORTED_BY_REAL_HOST",
@@ -228,14 +1079,14 @@
       "sentinel": "Return exactly: P5_V3_HOST_OK",
       "stderr_classification": "HOST_STATE_INITIALIZATION_OR_ACCESS_FAILURE",
       "subprocess_shell": false,
-    "thread_id": null,
-    "thread_started": false,
+      "thread_id": null,
+      "thread_started": false,
       "timed_out": false,
       "tool_call_count": "UNAVAILABLE",
       "turn_completed": false,
+      "usage_basis": "UNAVAILABLE",
       "v3_host_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
-      "wall_clock_seconds": 0.078,
-      "usage_basis": "UNAVAILABLE"
+      "wall_clock_seconds": 0.078
     },
     {
       "agent_output": "P5_OUTER_HOST_OK",
@@ -288,18 +1139,445 @@
     }
   ],
   "host_memory_contamination": "NOT INDEPENDENTLY VERIFIED",
-  "nested_outer_sandbox_confound": "SUPPORTED_BY_EXTERNAL_SHELL_DIAGNOSTIC; not proven as the sole root cause because parent-process environments differ",
-  "codex_agent_nested_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
-  "external_windows_powershell_execution_path": "SUPPORTED",
   "manual_host_runs_required": false,
-  "matrix_status": "STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT",
+  "matrix_status": "HOST_TRIALS_COMPLETED",
   "model_visible_packet_text_hash_rule": "SHA-256 of trial_id, NUL, and packet_text rows sorted by trial_id, joined by LF plus final LF.",
   "model_visible_packet_text_sha256": "66f3217dc376519668bc2e415904923e7d09dc7c1a3a0bef4a4b2f5ae6f3bdb6",
+  "nested_outer_sandbox_confound": "SUPPORTED_BY_EXTERNAL_SHELL_DIAGNOSTIC; not proven as the sole root cause because parent-process environments differ",
   "nexus_model_receipt_count": 0,
   "nexus_model_receipt_note": "Trials are external Academy CLI invocations, not CodexHostedBridge MODEL Runs; no synthetic Core receipt was created.",
   "official_command": "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -",
   "official_invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
-  "presence_trials": {},
+  "presence_trials": {
+    "R41": {
+      "agent_output": "{\"result\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [
+        "academy-capability:glyph-shift"
+      ],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "3d1041a97b36632d53c3406c03ca72f38c80f29f12836c5e2674fc5194973f0b",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e203-7d2a-7d43-abe1-4693089fa41f",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20519,
+        "output_tokens": 52,
+        "reasoning_output_tokens": 41
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"result\":\"UNKNOWN\"}",
+      "output_sha256": "33c0c822575aac69a251609a4112d124d177270d3aff76d1114dc27b97d8fc65",
+      "packet_bytes": 352,
+      "packet_chars": 352,
+      "presence": "P1_METADATA_ONLY",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "R41.stderr.txt",
+      "raw_capture_stdout": "R41.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "fbb701dff1b5dc83ec08db217e2865e7425ba18658c1229466b34ac00f0022ac",
+      "task_type": "capability_task",
+      "thread_id": "01a0e203-7d2a-7d43-abe1-4693089fa41f",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "R41",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 13.797
+    },
+    "S12": {
+      "agent_output": "{\"result\":\"X1-T5\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [
+        "academy-capability:glyph-shift"
+      ],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "ef8371bde0bbba1d081cbbc8ac3f68b4025d7780ff8d6bf5382cb4e4e9046843",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e204-f2be-7523-beca-df11cc948f90",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 18176,
+        "input_tokens": 20550,
+        "output_tokens": 46,
+        "reasoning_output_tokens": 32
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"result\":\"X1-T5\"}",
+      "output_sha256": "f2f96fceb5162b20511bf185264381b6e37b3f3ef506ec4ae544a34f01edaa3e",
+      "packet_bytes": 504,
+      "packet_chars": 500,
+      "presence": "P2_FULL_INSTRUCTION",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "S12.stderr.txt",
+      "raw_capture_stdout": "S12.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "9003b0e6f29413d75f6b83acf9be826e10b761308a33ecdc342085dbb4bdfe4a",
+      "task_type": "capability_task",
+      "thread_id": "01a0e204-f2be-7523-beca-df11cc948f90",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "S12",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 14.157
+    },
+    "T63": {
+      "agent_output": "{\"owner\":\"KITE-309\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "7df9609306cb2d99c3b6b113211b13bee95fed95b3ab64f34685ef0a3a9c95a8",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e203-1ce6-7921-883a-3ab76b042f7a",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20499,
+        "output_tokens": 24,
+        "reasoning_output_tokens": 10
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"owner\":\"KITE-309\"}",
+      "output_sha256": "52e5a6cb4375402f5e333eee8bb8f4aa516583752d987bd30906ad85b26ddf06",
+      "packet_bytes": 208,
+      "packet_chars": 208,
+      "presence": "P0_ABSENT",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "T63.stderr.txt",
+      "raw_capture_stdout": "T63.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "7df9609306cb2d99c3b6b113211b13bee95fed95b3ab64f34685ef0a3a9c95a8",
+      "task_type": "unrelated_legacy_task",
+      "thread_id": "01a0e203-1ce6-7921-883a-3ab76b042f7a",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "T63",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 11.688
+    },
+    "U07": {
+      "agent_output": "{\"owner\":\"KITE-309\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [
+        "academy-capability:glyph-shift"
+      ],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "46374a889a45c2231f5f637d1d9ee87820b9c596f2ea41bb2358586f6dec7fb4",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e204-48fc-74a2-bdd5-9e88b48530d2",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 18176,
+        "input_tokens": 20519,
+        "output_tokens": 30,
+        "reasoning_output_tokens": 16
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"owner\":\"KITE-309\"}",
+      "output_sha256": "52e5a6cb4375402f5e333eee8bb8f4aa516583752d987bd30906ad85b26ddf06",
+      "packet_bytes": 335,
+      "packet_chars": 335,
+      "presence": "P1_METADATA_ONLY",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "U07.stderr.txt",
+      "raw_capture_stdout": "U07.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "b2142cdfaf8eb63ad942013eaedbf08b6445899d677a306516ff3d4655d3f24f",
+      "task_type": "unrelated_legacy_task",
+      "thread_id": "01a0e204-48fc-74a2-bdd5-9e88b48530d2",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "U07",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 16.75
+    },
+    "V06": {
+      "agent_output": "{\"result\":\"UNKNOWN\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": true,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "55976e47feac53d77a98a1464e824959fa2e81bd788cebea3ff23f73b5c6cec2",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e202-4197-7002-a609-01212ea7ea11",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20496,
+        "output_tokens": 78,
+        "reasoning_output_tokens": 67
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"result\":\"UNKNOWN\"}",
+      "output_sha256": "33c0c822575aac69a251609a4112d124d177270d3aff76d1114dc27b97d8fc65",
+      "packet_bytes": 225,
+      "packet_chars": 225,
+      "presence": "P0_ABSENT",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "V06.stderr.txt",
+      "raw_capture_stdout": "V06.stdout.jsonl",
+      "required_fact_coverage": 1.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "55976e47feac53d77a98a1464e824959fa2e81bd788cebea3ff23f73b5c6cec2",
+      "task_type": "capability_task",
+      "thread_id": "01a0e202-4197-7002-a609-01212ea7ea11",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "V06",
+      "turn_completed": true,
+      "unsupported_assertion_count": 0,
+      "wall_clock_seconds": 18.266
+    },
+    "W34": {
+      "agent_output": "{\"owner\":\"RPAL-632\"}",
+      "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
+      "argv_persisted_before_process_outcome": true,
+      "condition": null,
+      "conflict_handling_correct": "NOT_APPLICABLE",
+      "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+      "distractor_adoption_count": 0,
+      "exact_correct": false,
+      "execution_harness_version": "PHASE5_EXECUTION_HARNESS_V3",
+      "execution_status": "COMPLETED",
+      "exit_code": 0,
+      "explicit_packet_visibility": "KNOWN",
+      "exposed_capability_refs": [
+        "academy-capability:glyph-shift"
+      ],
+      "exposed_object_refs": [],
+      "family": null,
+      "formal_behavioral_trial_eligible": true,
+      "formal_trial_counted": true,
+      "format_valid": true,
+      "full_exposed_packet_sha256": "defe0403260db2c2f704b9e7730578310e133b603b282b4d41823fce6f07e00d",
+      "full_model_visible_context": "UNAVAILABLE",
+      "host_execution_observed": true,
+      "host_model_identity": "UNAVAILABLE",
+      "host_session_id": "01a0e205-5bc6-7b01-8ab8-a04ff72d8d93",
+      "host_usage": {
+        "cache_write_input_tokens": 0,
+        "cached_input_tokens": 12032,
+        "input_tokens": 20554,
+        "output_tokens": 64,
+        "reasoning_output_tokens": 50
+      },
+      "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+      "output": "{\"owner\":\"RPAL-632\"}",
+      "output_sha256": "02d15fc815bc679bbd3cbba631f747f9c5ce77ad1276cd1176c133cbdb042c4f",
+      "packet_bytes": 487,
+      "packet_chars": 483,
+      "presence": "P2_FULL_INSTRUCTION",
+      "provider": "UNAVAILABLE",
+      "provider_request_id": "UNAVAILABLE",
+      "raw_capture_stderr": "W34.stderr.txt",
+      "raw_capture_stdout": "W34.stdout.jsonl",
+      "required_fact_coverage": 0.0,
+      "retry_count": "UNAVAILABLE",
+      "sanitized_argv": [
+        "codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--color",
+        "never",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-"
+      ],
+      "sanitized_argv_hash_rule": "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':')).",
+      "sanitized_argv_sha256": "c00a30408ea66d1e595a4f2452c9dea3e52ed6e9fb5cfad33a728045fe83c8da",
+      "stderr_classification": "EMPTY",
+      "subprocess_shell": false,
+      "task_prompt_sha256": "319c434986b1cbc2865c38ba849bdd2d7c697b2c0844da915df0adacb540aa8c",
+      "task_type": "unrelated_legacy_task",
+      "thread_id": "01a0e205-5bc6-7b01-8ab8-a04ff72d8d93",
+      "thread_started": true,
+      "timed_out": false,
+      "tool_call_count": 0,
+      "trial_id": "W34",
+      "turn_completed": true,
+      "unsupported_assertion_count": 1,
+      "wall_clock_seconds": 18.25
+    }
+  },
   "prior_worktree_liveness_diagnostic": {
     "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE FROM HOST TELEMETRY",
     "cwd": "Academy Git worktree; not eligible as a behavioral trial",
@@ -322,9 +1600,9 @@
   "protocol_version": "PHASE5_PREREGISTRATION_V3",
   "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
   "schema_version": 1,
-  "status": "IN PROGRESS / EXTERNAL CONTROLLER AUTHORIZED — EXTERNAL REVIEW PENDING",
-  "successful_context_trial_count": 0,
-  "successful_presence_trial_count": 0,
+  "status": "IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING",
+  "successful_context_trial_count": 12,
+  "successful_presence_trial_count": 6,
   "tokens_and_cost": {
     "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
     "host_model_identity": "UNAVAILABLE",
@@ -336,6 +1614,1373 @@
     "token_telemetry": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY; no estimate used"
   },
   "v3_host_execution_path": "BLOCKED_BY_HOST_STATE_ACCESS",
-  "eligible_formal_behavioral_trials": 0,
-  "first_eligible_formal_matrix_execution_attempt": "NOT STARTED"
+  "historical_execution_summaries": {
+    "PHASE5_PREREGISTRATION_V2": {
+      "attempted_trial_count": 1,
+      "behavioral_inference_allowed": false,
+      "context_completed_count": 0,
+      "cross_session_memory_confound": "UNCHARACTERIZED",
+      "eligible_formal_trial_count": 0,
+      "first_execution_only": true,
+      "host_model_execution_observed": false,
+      "incomplete_or_pre_model_failure_count": 1,
+      "matrix_status": "STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT",
+      "presence_completed_count": 0,
+      "protocol_version": "PHASE5_PREREGISTRATION_V2",
+      "stopped_after_trial_id": "A17",
+      "tool_contaminated_count": 0,
+      "unique_thread_id_count": 0
+    }
+  },
+  "historical_attempted_count_v2": 1,
+  "historical_blocking_trial_id_v2": "A17",
+  "execution_summary": {
+    "protocol_version": "PHASE5_PREREGISTRATION_V3",
+    "status": "HOST_TRIALS_COMPLETED",
+    "first_and_only_execution": true,
+    "attempted_trial_count": 18,
+    "eligible_formal_trial_count": 18,
+    "execution_count": 18,
+    "context_completed_count": 12,
+    "presence_completed_count": 6,
+    "unique_thread_id_count": 18,
+    "duplicate_thread_count": 0,
+    "tool_contaminated_count": 0,
+    "pre_model_incomplete_timeout_count": 0,
+    "execution_status_counts": {
+      "COMPLETED": 18
+    },
+    "formal_trial_ids_in_execution_order": [
+      "A17",
+      "E04",
+      "V06",
+      "F22",
+      "B29",
+      "H11",
+      "T63",
+      "D31",
+      "R41",
+      "G08",
+      "K02",
+      "J15",
+      "U07",
+      "L73",
+      "M26",
+      "S12",
+      "N58",
+      "W34"
+    ],
+    "formal_trial_record_source": "context_trials and presence_trials; raw trial records preserved in place",
+    "unsupported_assertion_count_total": 2,
+    "distractor_adoption_count_total": 0,
+    "context_by_condition": {
+      "C0_NONE": {
+        "trial_count": 4,
+        "exact_correct_count": 4,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "C1_MINIMAL_RELEVANT": {
+        "trial_count": 4,
+        "exact_correct_count": 4,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "C2_BROAD_SAFE": {
+        "trial_count": 4,
+        "exact_correct_count": 3,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 0.9166666666666666,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0
+      }
+    },
+    "context_by_family": {
+      "single_fact": {
+        "trials": [
+          {
+            "trial_id": "A17",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "B29",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "K02",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "multi_fact_composition": {
+        "trials": [
+          {
+            "trial_id": "E04",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "D31",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "L73",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.6666666666666666,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 2,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 0.8888888888888888,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0
+      },
+      "similar_identifier": {
+        "trials": [
+          {
+            "trial_id": "F22",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "G08",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "M26",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "conflicting_sources": {
+        "trials": [
+          {
+            "trial_id": "H11",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          },
+          {
+            "trial_id": "J15",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          },
+          {
+            "trial_id": "N58",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "conflict_handling_correct_count": 3,
+        "conflict_handling_trial_count": 3,
+        "conflict_handling_by_trial": {
+          "H11": true,
+          "J15": true,
+          "N58": true
+        }
+      }
+    },
+    "presence_by_condition": {
+      "P0_ABSENT": {
+        "trial_count": 2,
+        "exact_correct_count": 2,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "V06",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20496,
+              "output_tokens": 78,
+              "reasoning_output_tokens": 67
+            }
+          },
+          {
+            "trial_id": "T63",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20499,
+              "output_tokens": 24,
+              "reasoning_output_tokens": 10
+            }
+          }
+        ]
+      },
+      "P1_METADATA_ONLY": {
+        "trial_count": 2,
+        "exact_correct_count": 2,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "R41",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20519,
+              "output_tokens": 52,
+              "reasoning_output_tokens": 41
+            }
+          },
+          {
+            "trial_id": "U07",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 18176,
+              "input_tokens": 20519,
+              "output_tokens": 30,
+              "reasoning_output_tokens": 16
+            }
+          }
+        ]
+      },
+      "P2_FULL_INSTRUCTION": {
+        "trial_count": 2,
+        "exact_correct_count": 1,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 0.5,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "S12",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 18176,
+              "input_tokens": 20550,
+              "output_tokens": 46,
+              "reasoning_output_tokens": 32
+            }
+          },
+          {
+            "trial_id": "W34",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.0,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20554,
+              "output_tokens": 64,
+              "reasoning_output_tokens": 50
+            }
+          }
+        ]
+      }
+    },
+    "presence_by_task_type": {
+      "capability_task": {
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "V06",
+            "presence": "P0_ABSENT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "R41",
+            "presence": "P1_METADATA_ONLY",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "S12",
+            "presence": "P2_FULL_INSTRUCTION",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          }
+        ]
+      },
+      "unrelated_legacy_task": {
+        "trial_count": 3,
+        "exact_correct_count": 2,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 0.6666666666666666,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "T63",
+            "presence": "P0_ABSENT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "U07",
+            "presence": "P1_METADATA_ONLY",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "W34",
+            "presence": "P2_FULL_INSTRUCTION",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.0,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0
+          }
+        ]
+      }
+    },
+    "host_token_telemetry_by_condition": {
+      "C0_NONE": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20504,
+            "max": 20536,
+            "mean": 20516.25
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 7936,
+            "max": 12032,
+            "mean": 11008
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 9,
+            "max": 37,
+            "mean": 25
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 26,
+            "mean": 11.75
+          }
+        }
+      },
+      "C1_MINIMAL_RELEVANT": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20524,
+            "max": 20576,
+            "mean": 20542.75
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 7936,
+            "max": 18176,
+            "mean": 12544
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 23,
+            "max": 37,
+            "mean": 27.75
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 9,
+            "max": 14,
+            "mean": 11.25
+          }
+        }
+      },
+      "C2_BROAD_SAFE": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20565,
+            "max": 20619,
+            "mean": 20584.75
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 42,
+            "max": 57,
+            "mean": 49.75
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 28,
+            "max": 41,
+            "mean": 33
+          }
+        }
+      },
+      "P0_ABSENT": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20496,
+            "max": 20499,
+            "mean": 20497.5
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 12032,
+            "mean": 12032
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 24,
+            "max": 78,
+            "mean": 51
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 10,
+            "max": 67,
+            "mean": 38.5
+          }
+        }
+      },
+      "P1_METADATA_ONLY": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20519,
+            "max": 20519,
+            "mean": 20519
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 30,
+            "max": 52,
+            "mean": 41
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 16,
+            "max": 41,
+            "mean": 28.5
+          }
+        }
+      },
+      "P2_FULL_INSTRUCTION": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20550,
+            "max": 20554,
+            "mean": 20552
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 46,
+            "max": 64,
+            "mean": 55
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 32,
+            "max": 50,
+            "mean": 41
+          }
+        }
+      }
+    },
+    "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+    "per_exposure_token_attribution": "UNAVAILABLE",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
+    "host_model_identity": "UNAVAILABLE",
+    "provider_dollar_cost": "UNAVAILABLE",
+    "cross_session_memory_confound": "UNCHARACTERIZED",
+    "host_memory_contamination": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
+    "causal_inference_allowed": false,
+    "interpretation": "Descriptive comparison observed in this real Host pilot only; exposure conditions were ordered and cross-session Memory contamination is uncharacterized.",
+    "P3": "NOT TESTED / HOST OBSERVABILITY GAP"
+  },
+  "formal_matrix_result": {
+    "protocol_version": "PHASE5_PREREGISTRATION_V3",
+    "status": "HOST_TRIALS_COMPLETED",
+    "first_and_only_execution": true,
+    "attempted_trial_count": 18,
+    "eligible_formal_trial_count": 18,
+    "execution_count": 18,
+    "context_completed_count": 12,
+    "presence_completed_count": 6,
+    "unique_thread_id_count": 18,
+    "duplicate_thread_count": 0,
+    "tool_contaminated_count": 0,
+    "pre_model_incomplete_timeout_count": 0,
+    "execution_status_counts": {
+      "COMPLETED": 18
+    },
+    "formal_trial_ids_in_execution_order": [
+      "A17",
+      "E04",
+      "V06",
+      "F22",
+      "B29",
+      "H11",
+      "T63",
+      "D31",
+      "R41",
+      "G08",
+      "K02",
+      "J15",
+      "U07",
+      "L73",
+      "M26",
+      "S12",
+      "N58",
+      "W34"
+    ],
+    "formal_trial_record_source": "context_trials and presence_trials; raw trial records preserved in place",
+    "unsupported_assertion_count_total": 2,
+    "distractor_adoption_count_total": 0,
+    "context_by_condition": {
+      "C0_NONE": {
+        "trial_count": 4,
+        "exact_correct_count": 4,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "C1_MINIMAL_RELEVANT": {
+        "trial_count": 4,
+        "exact_correct_count": 4,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "C2_BROAD_SAFE": {
+        "trial_count": 4,
+        "exact_correct_count": 3,
+        "format_valid_count": 4,
+        "mean_required_fact_coverage": 0.9166666666666666,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0
+      }
+    },
+    "context_by_family": {
+      "single_fact": {
+        "trials": [
+          {
+            "trial_id": "A17",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "B29",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "K02",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "multi_fact_composition": {
+        "trials": [
+          {
+            "trial_id": "E04",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "D31",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "L73",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.6666666666666666,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 2,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 0.8888888888888888,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0
+      },
+      "similar_identifier": {
+        "trials": [
+          {
+            "trial_id": "F22",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "G08",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          },
+          {
+            "trial_id": "M26",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE"
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0
+      },
+      "conflicting_sources": {
+        "trials": [
+          {
+            "trial_id": "H11",
+            "condition": "C0_NONE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          },
+          {
+            "trial_id": "J15",
+            "condition": "C1_MINIMAL_RELEVANT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          },
+          {
+            "trial_id": "N58",
+            "condition": "C2_BROAD_SAFE",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": true
+          }
+        ],
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "conflict_handling_correct_count": 3,
+        "conflict_handling_trial_count": 3,
+        "conflict_handling_by_trial": {
+          "H11": true,
+          "J15": true,
+          "N58": true
+        }
+      }
+    },
+    "presence_by_condition": {
+      "P0_ABSENT": {
+        "trial_count": 2,
+        "exact_correct_count": 2,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "V06",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20496,
+              "output_tokens": 78,
+              "reasoning_output_tokens": 67
+            }
+          },
+          {
+            "trial_id": "T63",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20499,
+              "output_tokens": 24,
+              "reasoning_output_tokens": 10
+            }
+          }
+        ]
+      },
+      "P1_METADATA_ONLY": {
+        "trial_count": 2,
+        "exact_correct_count": 2,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "R41",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20519,
+              "output_tokens": 52,
+              "reasoning_output_tokens": 41
+            }
+          },
+          {
+            "trial_id": "U07",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 18176,
+              "input_tokens": 20519,
+              "output_tokens": 30,
+              "reasoning_output_tokens": 16
+            }
+          }
+        ]
+      },
+      "P2_FULL_INSTRUCTION": {
+        "trial_count": 2,
+        "exact_correct_count": 1,
+        "format_valid_count": 2,
+        "mean_required_fact_coverage": 0.5,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "S12",
+            "task_type": "capability_task",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 18176,
+              "input_tokens": 20550,
+              "output_tokens": 46,
+              "reasoning_output_tokens": 32
+            }
+          },
+          {
+            "trial_id": "W34",
+            "task_type": "unrelated_legacy_task",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.0,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0,
+            "conflict_handling_correct": "NOT_APPLICABLE",
+            "host_usage": {
+              "cache_write_input_tokens": 0,
+              "cached_input_tokens": 12032,
+              "input_tokens": 20554,
+              "output_tokens": 64,
+              "reasoning_output_tokens": 50
+            }
+          }
+        ]
+      }
+    },
+    "presence_by_task_type": {
+      "capability_task": {
+        "trial_count": 3,
+        "exact_correct_count": 3,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 1.0,
+        "total_unsupported_assertion_count": 0,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "V06",
+            "presence": "P0_ABSENT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "R41",
+            "presence": "P1_METADATA_ONLY",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "S12",
+            "presence": "P2_FULL_INSTRUCTION",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          }
+        ]
+      },
+      "unrelated_legacy_task": {
+        "trial_count": 3,
+        "exact_correct_count": 2,
+        "format_valid_count": 3,
+        "mean_required_fact_coverage": 0.6666666666666666,
+        "total_unsupported_assertion_count": 1,
+        "total_distractor_adoption_count": 0,
+        "trials": [
+          {
+            "trial_id": "T63",
+            "presence": "P0_ABSENT",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "U07",
+            "presence": "P1_METADATA_ONLY",
+            "format_valid": true,
+            "exact_correct": true,
+            "required_fact_coverage": 1.0,
+            "unsupported_assertion_count": 0,
+            "distractor_adoption_count": 0
+          },
+          {
+            "trial_id": "W34",
+            "presence": "P2_FULL_INSTRUCTION",
+            "format_valid": true,
+            "exact_correct": false,
+            "required_fact_coverage": 0.0,
+            "unsupported_assertion_count": 1,
+            "distractor_adoption_count": 0
+          }
+        ]
+      }
+    },
+    "host_token_telemetry_by_condition": {
+      "C0_NONE": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20504,
+            "max": 20536,
+            "mean": 20516.25
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 7936,
+            "max": 12032,
+            "mean": 11008
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 9,
+            "max": 37,
+            "mean": 25
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 26,
+            "mean": 11.75
+          }
+        }
+      },
+      "C1_MINIMAL_RELEVANT": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20524,
+            "max": 20576,
+            "mean": 20542.75
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 7936,
+            "max": 18176,
+            "mean": 12544
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 23,
+            "max": 37,
+            "mean": 27.75
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 9,
+            "max": 14,
+            "mean": 11.25
+          }
+        }
+      },
+      "C2_BROAD_SAFE": {
+        "trial_count": 4,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 4,
+            "min": 20565,
+            "max": 20619,
+            "mean": 20584.75
+          },
+          "cached_input_tokens": {
+            "count": 4,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 4,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 4,
+            "min": 42,
+            "max": 57,
+            "mean": 49.75
+          },
+          "reasoning_output_tokens": {
+            "count": 4,
+            "min": 28,
+            "max": 41,
+            "mean": 33
+          }
+        }
+      },
+      "P0_ABSENT": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20496,
+            "max": 20499,
+            "mean": 20497.5
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 12032,
+            "mean": 12032
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 24,
+            "max": 78,
+            "mean": 51
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 10,
+            "max": 67,
+            "mean": 38.5
+          }
+        }
+      },
+      "P1_METADATA_ONLY": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20519,
+            "max": 20519,
+            "mean": 20519
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 30,
+            "max": 52,
+            "mean": 41
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 16,
+            "max": 41,
+            "mean": 28.5
+          }
+        }
+      },
+      "P2_FULL_INSTRUCTION": {
+        "trial_count": 2,
+        "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+        "metrics": {
+          "input_tokens": {
+            "count": 2,
+            "min": 20550,
+            "max": 20554,
+            "mean": 20552
+          },
+          "cached_input_tokens": {
+            "count": 2,
+            "min": 12032,
+            "max": 18176,
+            "mean": 15104
+          },
+          "cache_write_input_tokens": {
+            "count": 2,
+            "min": 0,
+            "max": 0,
+            "mean": 0
+          },
+          "output_tokens": {
+            "count": 2,
+            "min": 46,
+            "max": 64,
+            "mean": 55
+          },
+          "reasoning_output_tokens": {
+            "count": 2,
+            "min": 32,
+            "max": 50,
+            "mean": 41
+          }
+        }
+      }
+    },
+    "usage_basis": "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY",
+    "per_exposure_token_attribution": "UNAVAILABLE",
+    "ambient_host_input_composition": "UNAVAILABLE / NOT DECOMPOSABLE",
+    "host_model_identity": "UNAVAILABLE",
+    "provider_dollar_cost": "UNAVAILABLE",
+    "cross_session_memory_confound": "UNCHARACTERIZED",
+    "host_memory_contamination": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
+    "causal_inference_allowed": false,
+    "interpretation": "Descriptive comparison observed in this real Host pilot only; exposure conditions were ordered and cross-session Memory contamination is uncharacterized.",
+    "P3": "NOT TESTED / HOST OBSERVABILITY GAP"
+  },
+  "context_trial_count": 12,
+  "presence_trial_count": 6,
+  "attempted_count": 18
 }

@@ -18,6 +18,7 @@ from scripts.eval.run_behavioral_phase5 import (
     _host_command,
     _run_one,
     _serialize_persisted_result,
+    run as run_phase5,
     score,
 )
 
@@ -40,34 +41,38 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         cls.evaluator = json.loads(EVALUATOR.read_text(encoding="utf-8"))
         cls.result = json.loads(RESULT.read_text(encoding="utf-8"))
 
-    def test_v2_incident_is_preserved_as_invalid_provenance_and_v3_has_no_formal_trials(self):
+    def test_v2_incident_is_preserved_separately_from_v3_formal_matrix(self):
         digest = hashlib.sha256(PACKETS.read_bytes()).hexdigest()
         self.assertEqual(digest, self.result["fixture_sha256"])
+        self.assertEqual("f41f960addbef6580102ca382bfc9b6dff90c6285afadaed18335bd1b2d8f00e", digest)
         self.assertEqual(18, self.packets["packet_count"])
         self.assertEqual("PHASE5_PREREGISTRATION_V3", self.packets["protocol_version"])
         self.assertEqual("PHASE5_PREREGISTRATION_V3", self.result["protocol_version"])
         self.assertEqual("REPLACED BEFORE ANY FORMAL BEHAVIORAL TRIAL", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V1"])
         self.assertIn("INVOCATION PROVENANCE CONFLICT", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V2"])
         self.assertIn("HARDENED BEFORE FIRST ELIGIBLE FORMAL TRIAL", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V3"])
-        self.assertEqual(0, self.result["execution_count"])
-        self.assertEqual(0, self.result["formal_trial_count"])
-        self.assertEqual(1, self.result["attempted_count"])
-        self.assertEqual([], self.result["formal_trials"])
-        self.assertEqual("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", self.result["matrix_status"])
+        self.assertEqual("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", self.result["historical_execution_summaries"]["PHASE5_PREREGISTRATION_V2"]["matrix_status"])
+        self.assertEqual(1, self.result["historical_attempted_count_v2"])
+        self.assertEqual("A17", self.result["historical_blocking_trial_id_v2"])
+        self.assertEqual("HOST_TRIALS_COMPLETED", self.result["matrix_status"])
+        self.assertEqual(18, self.result["execution_count"])
+        self.assertEqual(18, self.result["formal_trial_count"])
+        self.assertEqual(18, self.result["attempted_count"])
+        self.assertEqual(18, len(self.result["formal_trials"]))
         self.assertEqual("INVALID", self.result["execution_incidents"][0]["formal_behavioral_evidence"])
         self.assertFalse(self.result["execution_incidents"][0]["behavioral_inference_allowed"])
-        self.assertEqual(0, self.result["eligible_formal_trial_count"])
+        self.assertEqual(18, self.result["eligible_formal_trial_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
         self.assertFalse(self.result["manual_host_runs_required"])
-        self.assertEqual("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", self.result["execution_summary"]["matrix_status"])
-        self.assertTrue(self.result["execution_summary"]["first_execution_only"])
-        self.assertEqual(1, self.result["execution_summary"]["attempted_trial_count"])
-        self.assertEqual(0, self.result["execution_summary"]["eligible_formal_trial_count"])
-        self.assertEqual(0, self.result["execution_summary"]["context_completed_count"])
-        self.assertEqual(0, self.result["execution_summary"]["presence_completed_count"])
-        self.assertEqual(0, self.result["execution_summary"]["unique_thread_id_count"])
+        self.assertEqual("HOST_TRIALS_COMPLETED", self.result["execution_summary"]["status"])
+        self.assertTrue(self.result["execution_summary"]["first_and_only_execution"])
+        self.assertEqual(18, self.result["execution_summary"]["attempted_trial_count"])
+        self.assertEqual(18, self.result["execution_summary"]["eligible_formal_trial_count"])
+        self.assertEqual(12, self.result["execution_summary"]["context_completed_count"])
+        self.assertEqual(6, self.result["execution_summary"]["presence_completed_count"])
+        self.assertEqual(18, self.result["execution_summary"]["unique_thread_id_count"])
         self.assertEqual(0, self.result["execution_summary"]["tool_contaminated_count"])
-        self.assertEqual(1, self.result["execution_summary"]["incomplete_or_pre_model_failure_count"])
+        self.assertEqual(0, self.result["execution_summary"]["pre_model_incomplete_timeout_count"])
         self.assertEqual("UNCHARACTERIZED", self.result["execution_summary"]["cross_session_memory_confound"])
         incident = self.result["execution_incidents"][0]
         self.assertEqual("A17", incident["attempted_behavioral_packet"])
@@ -77,8 +82,9 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertIn("does not establish the argv", incident["forensic_capture"]["secret_safe_summary"])
         self.assertEqual("HISTORICAL_CLI_OPTION_PROBE; NOT EVIDENCE OF THE V2 FORMAL A17 ARGV", self.result["historical_pre_model_cli_probe"]["scope"])
         self.assertNotIn("exact_argv", incident)
-        self.assertNotIn("context_trials", self.result)
-        self.assertEqual({}, self.result["presence_trials"])
+        self.assertEqual(12, len(self.result["context_trials"]))
+        self.assertEqual(6, len(self.result["presence_trials"]))
+        self.assertEqual(18, self.result["formal_matrix_result"]["eligible_formal_trial_count"])
 
     def test_official_invocation_and_fixed_order_are_frozen(self):
         expected_command = "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -"
@@ -93,6 +99,99 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         digest = hashlib.sha256(("\n".join(order) + "\n").encode()).hexdigest()
         self.assertEqual(digest, self.packets["execution_order_sha256"])
         self.assertEqual(digest, self.result["execution_order_sha256"])
+        self.assertEqual("579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6", digest)
+
+    def test_formal_matrix_integrity_and_frozen_evaluator_scores(self):
+        trials = {**self.result["context_trials"], **self.result["presence_trials"]}
+        packet_text_by_id = {row["trial_id"]: row["packet_text"] for row in self.packets["context_packets"]}
+        packet_text_by_id = {row["trial_id"]: row["packet_text"] for row in self.packets["context_packets"]}
+        self.assertEqual(18, len(trials))
+        thread_ids = [row["thread_id"] for row in trials.values()]
+        self.assertEqual(18, len(set(thread_ids)))
+        result = self.result["formal_matrix_result"]
+        self.assertEqual(0, result["duplicate_thread_count"])
+        self.assertEqual(0, result["tool_contaminated_count"])
+        self.assertEqual(0, result["pre_model_incomplete_timeout_count"])
+        self.assertEqual(12, self.result["context_trial_count"])
+        self.assertEqual(6, self.result["presence_trial_count"])
+        self.assertEqual(self.packets["execution_order"], result["formal_trial_ids_in_execution_order"])
+        self.assertEqual("FORMAL_MATRIX_COMPLETE", self.result["formal_matrix_status"])
+        self.assertEqual("IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING", self.result["status"])
+
+        for trial_id, row in trials.items():
+            self.assertEqual("COMPLETED", row["execution_status"])
+            self.assertTrue(row["formal_trial_counted"])
+            self.assertEqual(0, row["tool_call_count"])
+            self.assertFalse(row["timed_out"])
+            self.assertEqual(row["thread_id"], row["host_session_id"])
+            self.assertEqual(hashlib.sha256(row["output"].encode("utf-8")).hexdigest(), row["output_sha256"])
+            self.assertEqual(hashlib.sha256(packet_text_by_id[trial_id].encode("utf-8")).hexdigest(), row["full_exposed_packet_sha256"])
+            self.assertEqual(hashlib.sha256(packet_text_by_id[trial_id].encode("utf-8")).hexdigest(), row["full_exposed_packet_sha256"])
+            self.assertEqual(list(FROZEN_SANITIZED_ARGV), row["sanitized_argv"])
+            self.assertFalse(row["subprocess_shell"])
+            mapping = self.evaluator["context_trials"].get(trial_id) or self.evaluator["presence_trials"][trial_id]
+            expected_score = score(
+                row["output"], mapping["expected"], mapping["distractor_values"],
+                conflict_trial=(trial_id in self.evaluator["context_trials"] and mapping.get("family") == "conflicting_sources"),
+            )
+            for metric, value in expected_score.items():
+                self.assertEqual(value, row[metric], f"{trial_id}.{metric} must match frozen evaluator scoring")
+
+        expected_context = {
+            "C0_NONE": (4, 4, 4, 1.0, 0, 0),
+            "C1_MINIMAL_RELEVANT": (4, 4, 4, 1.0, 0, 0),
+            "C2_BROAD_SAFE": (4, 3, 4, 0.9166666666666666, 1, 0),
+        }
+        observed_context = {
+            condition: (row["trial_count"], row["exact_correct_count"], row["format_valid_count"], row["mean_required_fact_coverage"], row["total_unsupported_assertion_count"], row["total_distractor_adoption_count"])
+            for condition, row in result["context_by_condition"].items()
+        }
+        self.assertEqual(expected_context, observed_context)
+        self.assertEqual({"P0_ABSENT": 2, "P1_METADATA_ONLY": 2, "P2_FULL_INSTRUCTION": 2}, {condition: row["trial_count"] for condition, row in result["presence_by_condition"].items()})
+        self.assertEqual(2, result["unsupported_assertion_count_total"])
+        self.assertEqual(0, result["distractor_adoption_count_total"])
+        self.assertEqual({"H11": True, "J15": True, "N58": True}, result["context_by_family"]["conflicting_sources"]["conflict_handling_by_trial"])
+        self.assertEqual("UNCHARACTERIZED", result["cross_session_memory_confound"])
+        self.assertEqual("UNAVAILABLE / NOT INDEPENDENTLY VERIFIED", result["host_memory_contamination"])
+        self.assertFalse(result["causal_inference_allowed"])
+        self.assertEqual("NOT TESTED / HOST OBSERVABILITY GAP", result["P3"])
+        self.assertEqual("UNAVAILABLE", result["per_exposure_token_attribution"])
+        self.assertEqual("UNAVAILABLE / NOT DECOMPOSABLE", result["ambient_host_input_composition"])
+        self.assertEqual("UNAVAILABLE", result["host_model_identity"])
+        self.assertEqual("UNAVAILABLE", result["provider_dollar_cost"])
+        for condition, row in result["host_token_telemetry_by_condition"].items():
+            expected_count = 4 if condition.startswith("C") else 2
+            self.assertEqual(expected_count, row["trial_count"])
+            self.assertEqual("HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY", row["usage_basis"])
+            selected = []
+            for trial_id, trial in trials.items():
+                mapping = self.evaluator["context_trials"].get(trial_id) or self.evaluator["presence_trials"][trial_id]
+                if mapping.get("condition", mapping.get("presence")) == condition:
+                    selected.append(trial["host_usage"])
+            for field in ("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"):
+                values = [usage[field] for usage in selected]
+                self.assertEqual(expected_count, row["metrics"][field]["count"])
+                self.assertEqual(min(values), row["metrics"][field]["min"])
+                self.assertEqual(max(values), row["metrics"][field]["max"])
+                self.assertEqual(sum(values) / len(values), row["metrics"][field]["mean"])
+
+    def test_capability_and_host_receipt_lifecycle_remains_unpromoted(self):
+        self.assertEqual(0, self.result["nexus_model_receipt_count"])
+        self.assertEqual(0, self.result["real_skill_evaluated_count"])
+        self.assertEqual(136, self.result["discovered_skill_count"])
+        self.assertEqual("DISCOVERED / UNEVALUATED", self.result["all_discovered_skills_lifecycle"])
+        self.assertEqual("DISCOVERED / UNEVALUATED", self.result["project_experience_curator"])
+        candidates = json.loads(CANDIDATES.read_text(encoding="utf-8"))
+        self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
+        self.assertEqual("NOT STARTED", candidates["shadow"])
+        self.assertEqual("NOT STARTED", candidates["production_qualification"])
+
+    def test_completed_runner_refuses_second_execution_without_calling_host(self):
+        with patch("scripts.eval.run_behavioral_phase5.shutil.which") as which, patch("scripts.eval.run_behavioral_phase5.subprocess.run") as process:
+            with self.assertRaisesRegex(SystemExit, "Refusing to repeat Host trials"):
+                run_phase5(packets_path=PACKETS, evaluator_path=EVALUATOR, results_path=RESULT, timeout=180)
+            which.assert_not_called()
+            process.assert_not_called()
 
     def test_semantic_exposure_order_is_monotonic_within_each_family(self):
         positions = {trial_id: index for index, trial_id in enumerate(self.packets["execution_order"])}
@@ -122,10 +221,10 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertTrue(self.result["formal_execution_authorized"])
         self.assertEqual("EXTERNAL_WINDOWS_POWERSHELL", self.result["formal_execution_controller"])
         self.assertEqual("EXTERNAL_REVIEW_ACCEPTED_PREREGISTRATION_V3_AND_EXTERNAL_HOST_PATH_DIAGNOSTIC", self.result["authorization_basis"])
-        self.assertEqual("AUTHORIZED_NOT_STARTED", self.result["formal_matrix_status"])
-        self.assertEqual(0, self.result["eligible_formal_behavioral_trials"])
-        self.assertEqual("PHASE5_PREREGISTRATION_V2", self.result["execution_summary"]["protocol_version"])
-        self.assertEqual("NOT STARTED", self.result["first_eligible_formal_matrix_execution_attempt"])
+        self.assertEqual("FORMAL_MATRIX_COMPLETE", self.result["formal_matrix_status"])
+        self.assertEqual(18, self.result["eligible_formal_behavioral_trials"])
+        self.assertEqual("PHASE5_PREREGISTRATION_V3", self.result["execution_summary"]["protocol_version"])
+        self.assertEqual("COMPLETED; FIRST AND ONLY MATRIX EXECUTION", self.result["first_eligible_formal_matrix_execution_attempt"])
 
     def test_evaluator_mapping_covers_all_packets(self):
         ids = [row["trial_id"] for row in self.packets["context_packets"]]
@@ -182,9 +281,9 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("packet_tokens", json.dumps(self.result).lower())
 
     def test_gates_exposure_and_lifecycle_states_are_consistent(self):
-        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
-        self.assertEqual("NOT OBSERVED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("OBSERVED_IN_REAL_HOST_PILOT", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("UNAVAILABLE / NOT INDEPENDENTLY VERIFIED", self.result["gates"]["I_HOST_MEMORY_CONTAMINATION"])
         self.assertEqual("SUPPORTED_BY_REAL_HOST", self.result["gates"]["J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY"])
@@ -206,12 +305,16 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("No reliable Host telemetry", synthesis_text)
         phases = {item["phase"]: item["status"] for item in candidates["phases"]}
         self.assertEqual("CLOSED / ACCEPTED", phases["4"])
-        self.assertTrue(phases["5"].startswith("IN PROGRESS / EXTERNAL CONTROLLER AUTHORIZED"))
-        self.assertEqual("NOT OBSERVED", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING", phases["5"])
+        self.assertEqual("SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX", candidate_gates["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("OBSERVED_IN_REAL_HOST_PILOT", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", candidate_gates["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
         self.assertEqual("NOT STARTED", candidates["shadow"])
         self.assertEqual("NOT STARTED", candidates["production_qualification"])
+        self.assertEqual("DISCOVERED / UNEVALUATED", candidates["capability_certification"]["all_discovered_skills_lifecycle"])
+        self.assertEqual("DISCOVERED / UNEVALUATED", candidates["capability_certification"]["project_experience_curator"])
+        self.assertFalse(any(item["promotion_allowed"] for item in candidates["candidates"]))
 
     def test_docs_no_longer_claim_manual_execution_is_required_or_bridge_blocked(self):
         synthesis = SYNTHESIS.read_text(encoding="utf-8")
@@ -222,15 +325,15 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("HOST_MANUAL_EXECUTION_REQUIRED", synthesis + runbook + phase5_doc)
         self.assertNotIn("MANUAL HOST RUNS REQUIRED", synthesis + runbook + phase5_doc)
         self.assertNotIn("manual fresh-chat runs are required", (synthesis + phase5_doc).lower())
-        self.assertIn("CROSS_SESSION_MEMORY_CONFOUND` is `UNCHARACTERIZED", phase5_doc)
+        self.assertIn("Cross-session Memory confound: `UNCHARACTERIZED`", phase5_doc)
         self.assertIn("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", phase5_doc)
-        self.assertIn("V3 diagnostic", phase5_doc)
-        self.assertIn("fallback artifact", runbook.lower())
+        self.assertIn("V3 internal diagnostic", phase5_doc)
         self.assertIn("ordinary Windows PowerShell", runbook)
-        self.assertIn("not a Codex integrated/Agent shell", runbook)
-        self.assertIn("current PowerShell process only", runbook)
+        self.assertIn("outside Codex Agent execution", runbook)
+        self.assertIn("Any PATH adjustment applied only to that PowerShell process", runbook)
         self.assertIn("--sandbox read-only", runbook)
         self.assertIn("python scripts/eval/run_behavioral_phase5.py --execute-host --timeout 180", runbook)
+        self.assertIn("Do not copy or submit any packet again", runbook)
         self.assertNotIn("C:\\Users\\", runbook + phase5_doc + synthesis)
 
     def test_runner_serialization_omits_executable_and_capture_absolute_paths(self):
@@ -343,11 +446,11 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertFalse(diagnostic["subprocess_shell"])
         self.assertTrue(diagnostic["argv_persisted_before_process_outcome"])
         self.assertNotIn(str(Path.home()), json.dumps(diagnostic))
-        self.assertEqual(0, self.result["formal_trial_count"])
+        self.assertEqual(18, self.result["formal_trial_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
-        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
-        self.assertEqual("NOT OBSERVED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("OBSERVED_IN_REAL_HOST_PILOT", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
 
     def test_external_shell_diagnostic_authorizes_controller_without_counting_trial(self):
@@ -369,20 +472,22 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual("UNAVAILABLE / NOT DECOMPOSABLE", diagnostic["ambient_host_input_composition"])
         self.assertFalse(diagnostic["behavioral_trial_counted"])
         self.assertFalse(diagnostic["nexus_model_receipt_created"])
-        self.assertEqual(0, self.result["formal_trial_count"])
-        self.assertEqual(0, self.result["eligible_formal_trial_count"])
+        self.assertEqual(18, self.result["formal_trial_count"])
+        self.assertEqual(18, self.result["eligible_formal_trial_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
-        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("OBSERVED_IN_REAL_HOST_PILOT", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
 
     def test_external_controller_runbook_forbids_agent_shell_and_preserves_child_sandbox(self):
         runbook = RUNBOOK.read_text(encoding="utf-8")
         self.assertIn("ordinary Windows PowerShell", runbook)
-        self.assertIn("never from a Codex Agent/integrated shell", runbook)
-        self.assertIn("current PowerShell process only", runbook)
+        self.assertIn("outside Codex Agent execution", runbook)
+        self.assertIn("only to that PowerShell process", runbook)
         self.assertIn("--sandbox read-only", runbook)
         self.assertIn("--ephemeral", runbook)
-        self.assertIn("first eligible formal matrix execution attempt", runbook)
+        self.assertIn("first and only eligible matrix", runbook)
+        self.assertIn("Do not run the command below again", runbook)
 
     def test_committed_result_contains_no_absolute_local_paths(self):
         serialized = json.dumps(self.result)
