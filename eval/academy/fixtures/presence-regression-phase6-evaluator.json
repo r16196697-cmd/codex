@@ -1,0 +1,204 @@
+{
+  "artifact_kind": "PRESENCE_REGRESSION_EVALUATOR",
+  "evaluator_version": "PRESENCE_REGRESSION_EVAL_V1",
+  "scoring": "Exact JSON object equality and exact key/type validation only. Keep RELEVANT_UTILITY and UNRELATED_TASK_PRESERVATION as separate outcomes. No aggregate promotion threshold is defined.",
+  "trial_count": 24,
+  "trials": {
+    "VC-REL-P0": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "VC-CTRL-P0": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "QEN-811"
+      }
+    },
+    "VC-REL-P1": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "VC-CTRL-P1": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "QEN-824"
+      }
+    },
+    "VC-REL-P2": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": "CYTF"
+      }
+    },
+    "VC-CTRL-P2": {
+      "family_id": "VARNET_CIPHER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "QEN-839"
+      }
+    },
+    "OP-REL-P0": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "OP-CTRL-P0": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "RUV-126"
+      }
+    },
+    "OP-REL-P1": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "OP-CTRL-P1": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "RUV-143"
+      }
+    },
+    "OP-REL-P2": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": "PEV-935"
+      }
+    },
+    "OP-CTRL-P2": {
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "RUV-157"
+      }
+    },
+    "NO-REL-P0": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "NO-CTRL-P0": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "SAX-264"
+      }
+    },
+    "NO-REL-P1": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "NO-CTRL-P1": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "SAX-278"
+      }
+    },
+    "NO-REL-P2": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": [
+          "CET-168",
+          "LUX-475",
+          "WOM-932"
+        ]
+      }
+    },
+    "NO-CTRL-P2": {
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "SAX-291"
+      }
+    },
+    "AR-REL-P0": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "AR-CTRL-P0": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "TOV-315"
+      }
+    },
+    "AR-REL-P1": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": null
+      }
+    },
+    "AR-CTRL-P1": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "TOV-329"
+      }
+    },
+    "AR-REL-P2": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "expected": {
+        "result": "248"
+      }
+    },
+    "AR-CTRL-P2": {
+      "family_id": "ARDENT_RADIX",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "expected": {
+        "owner": "TOV-344"
+      }
+    }
+  }
+}

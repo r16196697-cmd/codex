@@ -1,0 +1,113 @@
+{
+  "artifact_kind": "PHASE6_PRESENCE_REGRESSION_PREREGISTRATION",
+  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V1",
+  "status": "IN PROGRESS / PREREGISTRATION — EXTERNAL REVIEW PENDING",
+  "formal_trial_count": 0,
+  "execution_count": 0,
+  "nexus_model_receipt_count": 0,
+  "execution_authorized": false,
+  "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+  "packet_count": 24,
+  "synthetic_capability_family_count": 4,
+  "relevant_control_pair_count": 12,
+  "packet_fixture_sha256": "b91173582b6d68ccbb1c329d9dec753f0e129c9f6343f6bd320615683f3262b0",
+  "evaluator_sha256": "fa67f7f99cb649ac2b36bc92b17783b5cf530d4ade8f0de5a55e596c8824356a",
+  "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
+  "frozen_packet_text_sha256_by_trial": {
+    "VC-REL-P0": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460",
+    "OP-CTRL-P0": "ff21e5c15bf8042af412e8b19bf1d84a470321a9f297b2f6ca2cc5950d1692d3",
+    "NO-REL-P0": "69482c47fb54b9076caf1432771acbcd388fac9e0b2acd6b144944e0271abe15",
+    "AR-CTRL-P0": "6f4940a8008af5824c9c6c555b95a677f9805d35e64ec5cb1f83a8dfa23a9da3",
+    "VC-CTRL-P0": "ed215d2a76a760d82d411471c062cf33a47b7890f8e1132ae2cd3057202bf0db",
+    "OP-REL-P0": "a192b26d025a8ccececeada4895d5557c77a6251d933fa9028b574a025529181",
+    "NO-CTRL-P0": "1a013f4a309879a8f58d422f24c53f8e7756375f7d4a035e8097e4dc1cfbb850",
+    "AR-REL-P0": "fe0c068424c8a512142954acdc0fc2a51d51614f30f69c85e7562b12999e1cd3",
+    "NO-REL-P1": "c573c5b8aad0ba2d11a26b1f06ac2cb0017d363cadb6c203b4e29b4fa8814848",
+    "AR-CTRL-P1": "83122136c97786113d63f4edeffa77187dbce0f183e1b96827cd486ffe9ffde1",
+    "VC-REL-P1": "73d2fe6cbe940b92f44a095a25c553ec2ba2c5b335a427ed6c840d18fb061862",
+    "OP-CTRL-P1": "9a5460fe5e8667f72b8f02cff041b2461577f22134413829fac06eae7d8c3a6d",
+    "NO-CTRL-P1": "6de60b4904d279c5da59e0e5673a2e208e4abcfdc7745cd6709566edbcb4d609",
+    "AR-REL-P1": "bf9756a852ba10bce3f552fb99674d06df669ec79fd442fca2150ce2e30fd50d",
+    "VC-CTRL-P1": "4b6794171d85d88bb9c3b466961d78b76d6f75d4e05800e4c33dd3d0b8df1eec",
+    "OP-REL-P1": "8ff0a13bf303ba62ed2b27ef94119bf8ad869145d2e9de8923cc28129f03c036",
+    "OP-REL-P2": "b751fb443b90e12abf0801577efa79bba8094445997e02585a4d4b8baac17ada",
+    "NO-CTRL-P2": "9154b1c7a4a05332e85b2271044035a50e18832f16e342957b0a3b1e3436932a",
+    "AR-REL-P2": "4851eee1fd89c5ef13055d8487da6bd54ffb77b55ca2436389bfc6de6027e388",
+    "VC-CTRL-P2": "4c9b1bf4bcc4d0cba207c8d4f4b9d5ad43a51250079c979c43f692eeb612e1f3",
+    "OP-CTRL-P2": "2344bdb5df1f1d301b39ad11bbcd2492a564967da91378829354cbf71d07f3cb",
+    "NO-REL-P2": "17d92a73c63ae5059acf8e2ae15541a6142148d87233712b765ee2d704ee0a26",
+    "AR-CTRL-P2": "266eba8e47cb281f4d5120c6aa4b88d95d4586b65aeea64c3a9562340cee821f",
+    "VC-REL-P2": "1873dc9fc9e61195bb3ee0331fbd5c1be11a2ee0799b3b2edccafa6f931120ae"
+  },
+  "phase5_closure": {
+    "status": "CLOSED / ACCEPTED",
+    "formal_trial_count": 18,
+    "evidence_scope": "18/18 eligible formal real-Host trials with deterministic frozen-evaluator scoring",
+    "gates": {
+      "G1": "SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX",
+      "G2": "UNAVAILABLE",
+      "H1": "OBSERVED_IN_REAL_HOST_PILOT",
+      "H2": "NOT TESTED",
+      "I": "UNAVAILABLE / NOT INDEPENDENTLY VERIFIED",
+      "J1": "SUPPORTED_BY_REAL_HOST",
+      "J2": "UNAVAILABLE"
+    }
+  },
+  "phase5_external_review_findings": {
+    "L73": {
+      "frozen_output": {
+        "retention_days": "23 days",
+        "handoff": "MIRA-Q8",
+        "region": "LCL-6"
+      },
+      "frozen_expected": {
+        "retention_days": "23",
+        "handoff": "MIRA-Q8",
+        "region": "LCL-6"
+      },
+      "frozen_score": {
+        "exact_correct": false,
+        "required_fact_coverage": 0.6666666666666666,
+        "unsupported_assertion_count": 1
+      },
+      "qualitative_classification": "EXACT_CANONICALIZATION_MISMATCH",
+      "source_fact_preserved": "23 days",
+      "distractor_adopted": false,
+      "wrong_workspace_value_substituted": false,
+      "scoring_changed": false
+    },
+    "W34": {
+      "frozen_owner": "KITE-309",
+      "frozen_output": {
+        "owner": "RPAL-632"
+      },
+      "qualitative_classification": "INSTRUCTION_BLEED_OBSERVATION / PRESENCE_REGRESSION_OBSERVED",
+      "observed_transform_matches_glyph_shift": true,
+      "causal_claim_allowed": false
+    }
+  },
+  "real_skill_screening": {
+    "screened_instruction_artifacts": 136,
+    "source_counts": {
+      "CODEX_SKILLS": 110,
+      "BUNDLED_PLUGIN_SKILLS": 2,
+      "CURATED_PLUGIN_SKILLS": 24
+    },
+    "method": "Read-only static inspection of SKILL.md instruction artifacts and metadata for auth/secret, network, filesystem mutation, shell/system mutation, determinism, trigger narrowness, and unrelated-control feasibility. No Skill executed.",
+    "selected_candidate_count": 0,
+    "selected_candidates": [],
+    "selection_status": "NO_CANDIDATE_MET_ALL_REQUIRED_CRITERIA",
+    "project_experience_curator": "EXCLUDED; may write project instructions; remains DISCOVERED / UNEVALUATED"
+  },
+  "real_skill_evaluated_count": 0,
+  "discovered_skill_count": 136,
+  "all_discovered_skills_lifecycle": "DISCOVERED / UNEVALUATED",
+  "project_experience_curator_status": "DISCOVERED / UNEVALUATED",
+  "capability_certification": "NOT STARTED",
+  "shadow": "NOT STARTED",
+  "production_qualification": "NOT STARTED",
+  "gates": {
+    "PRESENCE_REGRESSION_GATE": "CANDIDATE / PREREGISTRATION_REQUIRED",
+    "OUTPUT_CANONICALIZATION_POLICY": "INSUFFICIENT_EVIDENCE; promotion_allowed=false"
+  }
+}

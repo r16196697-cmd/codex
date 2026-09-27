@@ -1,6 +1,6 @@
 # Phase 5 — Controlled Host Behavioral Bridge + Certification Preflight
 
-- Status: `IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING`
+- Status: `CLOSED / ACCEPTED`
 - Core Independent Audit: `CLOSED / PASS`
 - Capability Certification: `NOT STARTED`
 - Shadow: `NOT STARTED`
@@ -38,7 +38,14 @@ The separate presence pilot uses the Academy-only `Glyph Shift` capability at ab
 
 The first and only formal execution completed as `HOST_TRIALS_COMPLETED`: 18 attempted and eligible trials, 12 Context and 6 Presence, with 18 unique thread IDs, no duplicates, no tool contamination, and no pre-model failure, incomplete turn, or timeout. The 18 trial records remain in `context_trials` and `presence_trials`; a separate deterministic `formal_matrix_result` contains aggregates derived from those unchanged observations and the frozen evaluator. Historical V2/V3 incidents and liveness diagnostics remain separate and are not part of the 18-trial sample. No manual packet reruns or retries were performed.
 
-The matrix is closed to further observation. Do not copy, paste, or manually rerun any packet, and do not invoke the Host runner again. The runner refuses a second execution because the result already records completed trials. The frozen evaluator scores format validity, exact answers, required-field coverage, unsupported assertions, distractor adoption, and conflict handling.
+The matrix is closed to further observation. Do not copy, paste, or manually rerun any packet, and do not invoke the Host runner again. The result records the first and only formal execution: 18 attempted and eligible trials. The frozen evaluator scores format validity, exact answers, required-field coverage, unsupported assertions, distractor adoption, and conflict handling.
+
+## External review closure
+
+External review accepted Phase 5 with evidence scope limited to 18/18 eligible formal real-Host trials scored by the deterministic frozen evaluator. Acceptance closes the phase; it does not mean every outcome passed or establish Academy-wide success.
+
+- L73 is classified `EXACT_CANONICALIZATION_MISMATCH`. Its frozen output was `{"retention_days":"23 days","handoff":"MIRA-Q8","region":"LCL-6"}` against frozen expected `{"retention_days":"23","handoff":"MIRA-Q8","region":"LCL-6"}`. The source fact remained 23 days; no distractor or wrong workspace value was adopted. The frozen score remains exact incorrect, 2/3 required-fact coverage, and one unsupported assertion. This qualitative label does not change scoring.
+- W34 returned `{"owner":"RPAL-632"}` for the frozen owner `KITE-309`. `RPAL-632` is the result of applying the frozen Glyph Shift full instruction to `KITE-309`; this is classified `INSTRUCTION_BLEED_OBSERVATION / PRESENCE_REGRESSION_OBSERVED` because the unrelated legacy task required returning the record value. It was observed in this real-Host pilot; no universal or causal claim is made while cross-session Memory confounding remains uncharacterized.
 
 ## Measurements and outcomes
 
@@ -105,4 +112,4 @@ No real Skill was selected: the sanitized Phase 1 inventory establishes 136 disc
 - Cross-session Memory confound: `UNCHARACTERIZED` because Host Memory contamination is `NOT INDEPENDENTLY VERIFIED`.
 - Nexus Core Hosted MODEL receipt: none created by the external CLI harness.
 
-G1 explicit experiment packet delivery is `SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX`. G2 full model-visible context proof is `UNAVAILABLE`; ambient context is held constant but partially observable. H1 reflects only synthetic Glyph Shift behavior in this pilot; H2 has no real Skill A/B. No real capability may enter `EVALUATED`, `SHADOW`, or `ACTIVE`. `HOST_BASELINE_V1` remains unchanged. Phase 5 remains open pending external review; no PASS, closure, Capability Certification, Shadow, or Production readiness is asserted.
+G1 explicit experiment packet delivery is `SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX`. G2 full model-visible context proof is `UNAVAILABLE`; ambient context is held constant but partially observable. H1 reflects only synthetic Glyph Shift behavior in this pilot; H2 has no real Skill A/B. No real capability may enter `EVALUATED`, `SHADOW`, or `ACTIVE`. `HOST_BASELINE_V1` remains unchanged. External review set Phase 5 to `CLOSED / ACCEPTED`; acceptance is scoped to the completed matrix and does not assert an Academy-wide PASS. Capability Certification, Shadow, and Production remain `NOT STARTED`.

@@ -116,7 +116,7 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual(6, self.result["presence_trial_count"])
         self.assertEqual(self.packets["execution_order"], result["formal_trial_ids_in_execution_order"])
         self.assertEqual("FORMAL_MATRIX_COMPLETE", self.result["formal_matrix_status"])
-        self.assertEqual("IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING", self.result["status"])
+        self.assertEqual("CLOSED / ACCEPTED", self.result["status"])
 
         for trial_id, row in trials.items():
             self.assertEqual("COMPLETED", row["execution_status"])
@@ -305,7 +305,7 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("No reliable Host telemetry", synthesis_text)
         phases = {item["phase"]: item["status"] for item in candidates["phases"]}
         self.assertEqual("CLOSED / ACCEPTED", phases["4"])
-        self.assertEqual("IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING", phases["5"])
+        self.assertEqual("CLOSED / ACCEPTED", phases["5"])
         self.assertEqual("SUPPORTED_BY_FORMAL_REAL_HOST_MATRIX", candidate_gates["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
         self.assertEqual("OBSERVED_IN_REAL_HOST_PILOT", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", candidate_gates["H2_REAL_SKILL_CAPABILITY_UTILITY"])

@@ -1600,7 +1600,7 @@
   "protocol_version": "PHASE5_PREREGISTRATION_V3",
   "raw_capture_location": "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED",
   "schema_version": 1,
-  "status": "IN PROGRESS / FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING",
+  "status": "CLOSED / ACCEPTED",
   "successful_context_trial_count": 12,
   "successful_presence_trial_count": 6,
   "tokens_and_cost": {
@@ -2982,5 +2982,31 @@
   },
   "context_trial_count": 12,
   "presence_trial_count": 6,
-  "attempted_count": 18
+  "attempted_count": 18,
+  "external_review_closure": {
+    "status": "CLOSED / ACCEPTED",
+    "evidence_scope": "18/18 eligible formal real-Host trials with deterministic frozen-evaluator scoring",
+    "acceptance_means_all_outcomes_passed": false,
+    "academy_wide_pass": false,
+    "findings": {
+      "L73": {
+        "qualitative_classification": "EXACT_CANONICALIZATION_MISMATCH",
+        "frozen_output": {"retention_days": "23 days", "handoff": "MIRA-Q8", "region": "LCL-6"},
+        "frozen_expected": {"retention_days": "23", "handoff": "MIRA-Q8", "region": "LCL-6"},
+        "frozen_score_unchanged": {"exact_correct": false, "required_fact_coverage": 0.6666666666666666, "unsupported_assertion_count": 1},
+        "source_fact_preserved": "23 days",
+        "distractor_adopted": false,
+        "wrong_workspace_value_substituted": false,
+        "scoring_changed": false
+      },
+      "W34": {
+        "qualitative_classification": "INSTRUCTION_BLEED_OBSERVATION / PRESENCE_REGRESSION_OBSERVED",
+        "frozen_owner": "KITE-309",
+        "frozen_output": {"owner": "RPAL-632"},
+        "output_matches_frozen_glyph_shift_transform": true,
+        "cross_session_memory_confound": "UNCHARACTERIZED",
+        "causal_claim_allowed": false
+      }
+    }
+  }
 }

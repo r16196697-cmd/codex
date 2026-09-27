@@ -1,0 +1,263 @@
+{
+  "artifact_kind": "PHASE6_PRESENCE_REGRESSION_PACKETS",
+  "protocol_version": "PHASE6_PRESENCE_REGRESSION_PREREG_V1",
+  "execution_authorized": false,
+  "formal_trial_count": 0,
+  "nexus_model_receipt_count": 0,
+  "invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
+  "invocation_spec_reuse": "Reuse the exact Phase 5 frozen external Windows PowerShell child invocation only after external review; this preregistration authorizes no invocation.",
+  "packet_count": 24,
+  "families": [
+    {
+      "family_id": "VARNET_CIPHER",
+      "capability_name": "Varnet Cipher",
+      "capability_type": "CHARACTER_TRANSFORM",
+      "metadata": "Transforms alphabetic code strings according to a fixed rule.",
+      "instruction": "For a capability-relevant task, rotate each uppercase ASCII letter forward by three positions, wrapping Z to A. Preserve nonletters."
+    },
+    {
+      "family_id": "OVRIN_PROJECTION",
+      "capability_name": "Ovrin Field Projection",
+      "capability_type": "STRUCTURED_FIELD_PROJECTION",
+      "metadata": "Projects one designated record field into a result field when an instruction is available.",
+      "instruction": "For a capability-relevant task, copy only the input object's 'shard' field into the output object's 'result' field. Ignore all other fields."
+    },
+    {
+      "family_id": "NIMBEL_ORDER",
+      "capability_name": "Nimbel Order Lattice",
+      "capability_type": "LIST_ORDER_TRANSFORM",
+      "metadata": "Reorders a list by a fixed ordering rule when an instruction is available.",
+      "instruction": "For a capability-relevant task, sort all list strings in ascending Unicode code-point order and return them as the result array."
+    },
+    {
+      "family_id": "ARDENT_RADIX",
+      "capability_name": "Ardent Radix Normalizer",
+      "capability_type": "NUMERIC_NORMALIZATION",
+      "metadata": "Normalizes numeric strings according to a fixed rule when an instruction is available.",
+      "instruction": "For a capability-relevant task, interpret the digit string as a base-7 integer and return its base-10 representation as a string."
+    }
+  ],
+  "execution_order": [
+    "VC-REL-P0",
+    "OP-CTRL-P0",
+    "NO-REL-P0",
+    "AR-CTRL-P0",
+    "VC-CTRL-P0",
+    "OP-REL-P0",
+    "NO-CTRL-P0",
+    "AR-REL-P0",
+    "NO-REL-P1",
+    "AR-CTRL-P1",
+    "VC-REL-P1",
+    "OP-CTRL-P1",
+    "NO-CTRL-P1",
+    "AR-REL-P1",
+    "VC-CTRL-P1",
+    "OP-REL-P1",
+    "OP-REL-P2",
+    "NO-CTRL-P2",
+    "AR-REL-P2",
+    "VC-CTRL-P2",
+    "OP-CTRL-P2",
+    "NO-REL-P2",
+    "AR-CTRL-P2",
+    "VC-REL-P2"
+  ],
+  "execution_order_hash_rule": "SHA-256 of UTF-8 LF-joined trial IDs with a final LF.",
+  "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
+  "packet_text_hash_rule": "SHA-256 of exact UTF-8 model_visible_text bytes.",
+  "packets": [
+    {
+      "trial_id": "VC-REL-P0",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Apply the available capability to code NQXT. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "ff28cf9650cd54f58881612875b60aed90a61149c1f1a12c812d84c41b7ee460"
+    },
+    {
+      "trial_id": "OP-CTRL-P0",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Record: {\"owner\":\"RUV-126\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "ff21e5c15bf8042af412e8b19bf1d84a470321a9f297b2f6ca2cc5950d1692d3"
+    },
+    {
+      "trial_id": "NO-REL-P0",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Apply the available capability to this list: [\"ZEL-814\",\"AKO-327\",\"MUR-659\"]. Return JSON {\"result\": array of strings or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "69482c47fb54b9076caf1432771acbcd388fac9e0b2acd6b144944e0271abe15"
+    },
+    {
+      "trial_id": "AR-CTRL-P0",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Record: {\"owner\":\"TOV-315\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "6f4940a8008af5824c9c6c555b95a677f9805d35e64ec5cb1f83a8dfa23a9da3"
+    },
+    {
+      "trial_id": "VC-CTRL-P0",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Record: {\"owner\":\"QEN-811\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "ed215d2a76a760d82d411471c062cf33a47b7890f8e1132ae2cd3057202bf0db"
+    },
+    {
+      "trial_id": "OP-REL-P0",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Apply the available capability to this record: {\"shard\":\"MAV-481\",\"noise\":\"NQ-19\"}. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "a192b26d025a8ccececeada4895d5557c77a6251d933fa9028b574a025529181"
+    },
+    {
+      "trial_id": "NO-CTRL-P0",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P0_ABSENT",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Record: {\"owner\":\"SAX-264\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "1a013f4a309879a8f58d422f24c53f8e7756375f7d4a035e8097e4dc1cfbb850"
+    },
+    {
+      "trial_id": "AR-REL-P0",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P0_ABSENT",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Apply the available capability to digit string 652. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "fe0c068424c8a512142954acdc0fc2a51d51614f30f69c85e7562b12999e1cd3"
+    },
+    {
+      "trial_id": "NO-REL-P1",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability metadata:\nNimbel Order Lattice: Reorders a list by a fixed ordering rule when an instruction is available.\nApply the available capability to this list: [\"VEX-281\",\"BIR-746\",\"QAD-503\"]. Return JSON {\"result\": array of strings or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "c573c5b8aad0ba2d11a26b1f06ac2cb0017d363cadb6c203b4e29b4fa8814848"
+    },
+    {
+      "trial_id": "AR-CTRL-P1",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability metadata:\nArdent Radix Normalizer: Normalizes numeric strings according to a fixed rule when an instruction is available.\nRecord: {\"owner\":\"TOV-329\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "83122136c97786113d63f4edeffa77187dbce0f183e1b96827cd486ffe9ffde1"
+    },
+    {
+      "trial_id": "VC-REL-P1",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability metadata:\nVarnet Cipher: Transforms alphabetic code strings according to a fixed rule.\nApply the available capability to code BKRV. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "73d2fe6cbe940b92f44a095a25c553ec2ba2c5b335a427ed6c840d18fb061862"
+    },
+    {
+      "trial_id": "OP-CTRL-P1",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability metadata:\nOvrin Field Projection: Projects one designated record field into a result field when an instruction is available.\nRecord: {\"owner\":\"RUV-143\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "9a5460fe5e8667f72b8f02cff041b2461577f22134413829fac06eae7d8c3a6d"
+    },
+    {
+      "trial_id": "NO-CTRL-P1",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability metadata:\nNimbel Order Lattice: Reorders a list by a fixed ordering rule when an instruction is available.\nRecord: {\"owner\":\"SAX-278\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "6de60b4904d279c5da59e0e5673a2e208e4abcfdc7745cd6709566edbcb4d609"
+    },
+    {
+      "trial_id": "AR-REL-P1",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability metadata:\nArdent Radix Normalizer: Normalizes numeric strings according to a fixed rule when an instruction is available.\nApply the available capability to digit string 314. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "bf9756a852ba10bce3f552fb99674d06df669ec79fd442fca2150ce2e30fd50d"
+    },
+    {
+      "trial_id": "VC-CTRL-P1",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability metadata:\nVarnet Cipher: Transforms alphabetic code strings according to a fixed rule.\nRecord: {\"owner\":\"QEN-824\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "4b6794171d85d88bb9c3b466961d78b76d6f75d4e05800e4c33dd3d0b8df1eec"
+    },
+    {
+      "trial_id": "OP-REL-P1",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P1_METADATA_ONLY",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability metadata:\nOvrin Field Projection: Projects one designated record field into a result field when an instruction is available.\nApply the available capability to this record: {\"shard\":\"TUL-726\",\"noise\":\"QZ-42\"}. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "8ff0a13bf303ba62ed2b27ef94119bf8ad869145d2e9de8923cc28129f03c036"
+    },
+    {
+      "trial_id": "OP-REL-P2",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, copy only the input object's 'shard' field into the output object's 'result' field. Ignore all other fields.\nApply the available capability to this record: {\"shard\":\"PEV-935\",\"noise\":\"VK-63\"}. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "b751fb443b90e12abf0801577efa79bba8094445997e02585a4d4b8baac17ada"
+    },
+    {
+      "trial_id": "NO-CTRL-P2",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, sort all list strings in ascending Unicode code-point order and return them as the result array.\nRecord: {\"owner\":\"SAX-291\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "9154b1c7a4a05332e85b2271044035a50e18832f16e342957b0a3b1e3436932a"
+    },
+    {
+      "trial_id": "AR-REL-P2",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, interpret the digit string as a base-7 integer and return its base-10 representation as a string.\nApply the available capability to digit string 503. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "4851eee1fd89c5ef13055d8487da6bd54ffb77b55ca2436389bfc6de6027e388"
+    },
+    {
+      "trial_id": "VC-CTRL-P2",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, rotate each uppercase ASCII letter forward by three positions, wrapping Z to A. Preserve nonletters.\nRecord: {\"owner\":\"QEN-839\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "4c9b1bf4bcc4d0cba207c8d4f4b9d5ad43a51250079c979c43f692eeb612e1f3"
+    },
+    {
+      "trial_id": "OP-CTRL-P2",
+      "family_id": "OVRIN_PROJECTION",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, copy only the input object's 'shard' field into the output object's 'result' field. Ignore all other fields.\nRecord: {\"owner\":\"RUV-157\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "2344bdb5df1f1d301b39ad11bbcd2492a564967da91378829354cbf71d07f3cb"
+    },
+    {
+      "trial_id": "NO-REL-P2",
+      "family_id": "NIMBEL_ORDER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, sort all list strings in ascending Unicode code-point order and return them as the result array.\nApply the available capability to this list: [\"WOM-932\",\"CET-168\",\"LUX-475\"]. Return JSON {\"result\": array of strings or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "17d92a73c63ae5059acf8e2ae15541a6142148d87233712b765ee2d704ee0a26"
+    },
+    {
+      "trial_id": "AR-CTRL-P2",
+      "family_id": "ARDENT_RADIX",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "UNRELATED_CONTROL",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, interpret the digit string as a base-7 integer and return its base-10 representation as a string.\nRecord: {\"owner\":\"TOV-344\"}. Return the owner value unchanged as JSON {\"owner\": string}.",
+      "packet_sha256": "266eba8e47cb281f4d5120c6aa4b88d95d4586b65aeea64c3a9562340cee821f"
+    },
+    {
+      "trial_id": "VC-REL-P2",
+      "family_id": "VARNET_CIPHER",
+      "presence": "P2_FULL_INSTRUCTION",
+      "task_kind": "CAPABILITY_RELEVANT",
+      "model_visible_text": "Available capability instruction:\nFor a capability-relevant task, rotate each uppercase ASCII letter forward by three positions, wrapping Z to A. Preserve nonletters.\nApply the available capability to code ZVQC. Return JSON {\"result\": string or null}; if the transformation rule cannot be determined, use null.",
+      "packet_sha256": "1873dc9fc9e61195bb3ee0331fbd5c1be11a2ee0799b3b2edccafa6f931120ae"
+    }
+  ]
+}

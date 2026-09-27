@@ -1,6 +1,6 @@
 # Phase 5 External Host Controller Runbook
 
-Status: `FORMAL MATRIX COMPLETE — EXTERNAL REVIEW PENDING`. The first and only 18-trial matrix has completed. **Do not run the command below again, retry any packet, or manually rerun packets.** This runbook preserves controller/procedure provenance only. Capability Certification, Shadow, and Production remain unauthorized. V2's pre-model incident and the V3 internal diagnostic remain preserved and are not eligible trials.
+Status: `CLOSED / ACCEPTED`. External review accepted the first and only 18/18 eligible formal matrix with deterministic frozen-evaluator scoring. Acceptance does not mean every outcome passed. **Do not run the command below again, retry any packet, or manually rerun packets.** This runbook preserves Phase 5 controller/procedure provenance only. Phase 6 work is preregistration-only pending its own external review. Capability Certification, Shadow, and Production remain `NOT STARTED`. V2's pre-model incident and the V3 internal diagnostic remain preserved and are not eligible trials.
 
 ## External controller diagnostic
 
@@ -22,4 +22,4 @@ No follow-up execution is permitted. The external PowerShell was only the outer 
 
 ## Closed execution boundary
 
-There is no manual fallback for this completed matrix. Do not copy or submit any packet again, start another Host chat, resume a thread, retry an ID, or invoke the runner. Keep the original 18 trial records and their raw private captures under the existing retention controls; all future work is deterministic analysis, documentation, tests, and external review only.
+There is no manual fallback for this completed matrix. Do not copy or submit any packet again, start another Host chat, resume a thread, retry an ID, or invoke the runner. Keep the original 18 trial records and their raw private captures under the existing retention controls. Phase 5 remains closed to new observations; the separate Phase 6 preregistration does not authorize Host execution.
