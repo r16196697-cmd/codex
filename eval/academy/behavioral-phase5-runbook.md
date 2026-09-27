@@ -1,6 +1,10 @@
 # Phase 5 Manual Fallback Runbook
 
-Status: `FALLBACK ARTIFACT`. The default preregistered path is `PHASE5_OFFICIAL_HOST_INVOCATION_V1` through the automated Host behavioral bridge. The formal matrix has not started. Use these manual steps only if the automated path is unavailable and the external review authorizes that fallback.
+Status: `FALLBACK ARTIFACT`. The default path is `PHASE5_OFFICIAL_HOST_INVOCATION_V1` through the V3 automated Host bridge, with external-review authorization required before any formal matrix. V2 has one preserved but invalid incident because invocation provenance conflicts; no eligible formal trial exists. Use these manual steps only if the automated path is unavailable and external review authorizes that fallback. The one V3 liveness diagnostic is non-behavioral and does not use these packets.
+
+## V3 non-behavioral liveness diagnostic
+
+The one-time diagnostic was `python scripts/eval/run_behavioral_phase5.py --diagnostic-host-liveness`. It sent only `Return exactly: P5_V3_HOST_OK` to a fresh ephemeral Host process from an empty temporary cwd outside the repository. It did not load the packet fixture or evaluator, count a behavioral trial, or create a Nexus MODEL receipt. The process exited 1 before thread start due to Host state initialization/access failure; the V3 Host path is blocked pending external review. The result persisted sanitized argv and its canonical JSON SHA-256 before process outcome; raw stdout/stderr remain in the private external capture directory.
 
 ## Safety and freeze
 

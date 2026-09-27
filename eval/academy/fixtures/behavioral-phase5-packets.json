@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "artifact_kind": "ACADEMY_BLIND_BEHAVIORAL_PACKETS",
-  "fixture_id": "behavioral-phase5-frozen-v2",
-  "protocol_version": "PHASE5_PREREGISTRATION_V2",
-  "freeze_rule": "Freeze this file before formal Host trials; never edit expected answers into packets. V1 was replaced before any formal behavioral trial.",
+  "fixture_id": "behavioral-phase5-frozen-v3",
+  "protocol_version": "PHASE5_PREREGISTRATION_V3",
+  "freeze_rule": "Freeze this file before formal Host trials; never edit expected answers into packets. V1 was replaced before any formal behavioral trial. V2 stopped pre-model with an invocation provenance conflict and zero eligible formal trials. V3 hardens execution-harness provenance before the first eligible formal behavioral trial.",
   "packet_count": 18,
   "official_invocation_spec_id": "PHASE5_OFFICIAL_HOST_INVOCATION_V1",
   "execution_order": [

@@ -22,12 +22,63 @@ DEFAULT_PACKETS = ROOT / "eval" / "academy" / "fixtures" / "behavioral-phase5-pa
 DEFAULT_EVALUATOR = ROOT / "eval" / "academy" / "fixtures" / "behavioral-phase5-evaluator.json"
 DEFAULT_RESULTS = ROOT / "eval" / "academy" / "results" / "behavioral-phase5.json"
 OFFICIAL_INVOCATION_SPEC_ID = "PHASE5_OFFICIAL_HOST_INVOCATION_V1"
+EXECUTION_HARNESS_VERSION = "PHASE5_EXECUTION_HARNESS_V3"
+OFFICIAL_CODEX_EXEC_ARGS = (
+    "exec",
+    "--ephemeral",
+    "--json",
+    "--color",
+    "never",
+    "--sandbox",
+    "read-only",
+    "--skip-git-repo-check",
+    "-",
+)
+FROZEN_SANITIZED_ARGV = ("codex", *OFFICIAL_CODEX_EXEC_ARGS)
+ARGV_HASH_RULE = "SHA-256 of canonical UTF-8 JSON array (ensure_ascii=false; separators=(',', ':'))."
+DIAGNOSTIC_SENTINEL = "Return exactly: P5_V3_HOST_OK"
 CODEX_EXECUTABLE_OBSERVATION = "Resolved from PATH; absolute local path intentionally omitted."
 PRIVATE_CAPTURE_LOCATION = "PRIVATE_EXTERNAL_CAPTURE_NOT_COMMITTED"
 
 
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def _argv_sha256(argv: tuple[str, ...] | list[str]) -> str:
+    canonical = json.dumps(list(argv), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return _sha256(canonical)
+
+
+def _host_command(codex: str) -> tuple[list[str], dict[str, Any]]:
+    command = [codex, *OFFICIAL_CODEX_EXEC_ARGS]
+    if "--ask-for-approval" in command:
+        raise RuntimeError("Forbidden Host argument detected before subprocess invocation.")
+    sanitized_argv = ["codex", *command[1:]]
+    if tuple(sanitized_argv) != FROZEN_SANITIZED_ARGV:
+        raise RuntimeError("Constructed Host argv does not match the frozen official argv.")
+    provenance = {
+        "invocation_spec_id": OFFICIAL_INVOCATION_SPEC_ID,
+        "execution_harness_version": EXECUTION_HARNESS_VERSION,
+        "sanitized_argv": sanitized_argv,
+        "sanitized_argv_sha256": _argv_sha256(sanitized_argv),
+        "sanitized_argv_hash_rule": ARGV_HASH_RULE,
+        "subprocess_shell": False,
+        "cwd_observation": "FRESH_EMPTY_TEMPORARY_DIRECTORY_OUTSIDE_REPOSITORY",
+        "argv_persisted_before_process_outcome": True,
+    }
+    return command, provenance
+
+
+def _stderr_classification(stderr: str) -> str:
+    lowered = stderr.lower()
+    if not stderr.strip():
+        return "EMPTY"
+    if "unexpected argument" in lowered and "--ask-for-approval" in lowered:
+        return "HOST_OR_WRAPPER_ARGUMENT_INJECTION_SUSPECTED"
+    if "state db" in lowered or "app-server" in lowered or "access is denied" in lowered:
+        return "HOST_STATE_INITIALIZATION_OR_ACCESS_FAILURE"
+    return "NONEMPTY_UNCLASSIFIED"
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any], bytes]:
@@ -105,11 +156,18 @@ def score(raw_output: str | None, expected: dict[str, str], distractors: list[st
     }
 
 
-def _run_one(codex: str, trial_id: str, packet: str, timeout: int, capture_dir: Path, seen_thread_ids: set[str]) -> dict[str, Any]:
-    command = [
-        codex, "exec", "--ephemeral", "--json", "--color", "never",
-        "--sandbox", "read-only", "--skip-git-repo-check", "-",
-    ]
+def _execute_host(
+    codex: str,
+    stdin_text: str,
+    timeout: int,
+    capture_dir: Path,
+    capture_stem: str,
+    on_invocation: Any,
+) -> dict[str, Any]:
+    command, provenance = _host_command(codex)
+    # Persist the exact sanitized argv before creating/running the subprocess so
+    # failures and timeouts retain the invocation provenance.
+    on_invocation(provenance)
     env = os.environ.copy()
     home = str(Path.home())
     env.setdefault("HOME", home)
@@ -125,9 +183,9 @@ def _run_one(codex: str, trial_id: str, packet: str, timeout: int, capture_dir: 
             if cwd == ROOT.resolve() or ROOT.resolve() in cwd.parents or any(cwd.iterdir()):
                 raise RuntimeError("Official Host cwd must be a new empty directory outside the Academy repository.")
             completed = subprocess.run(
-                command, input=packet, text=True, encoding="utf-8", errors="strict",
+                command, input=stdin_text, text=True, encoding="utf-8", errors="strict",
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env,
-                timeout=timeout, check=False,
+                timeout=timeout, check=False, shell=False,
             )
             stdout, stderr, exit_code = completed.stdout, completed.stderr, completed.returncode
     except subprocess.TimeoutExpired as exc:
@@ -137,12 +195,41 @@ def _run_one(codex: str, trial_id: str, packet: str, timeout: int, capture_dir: 
     except (OSError, RuntimeError, UnicodeError) as exc:
         stderr = str(exc)
 
-    stdout_path = capture_dir / f"{trial_id}.stdout.jsonl"
-    stderr_path = capture_dir / f"{trial_id}.stderr.txt"
+    stdout_path = capture_dir / f"{capture_stem}.stdout.jsonl"
+    stderr_path = capture_dir / f"{capture_stem}.stderr.txt"
     stdout_path.write_text(stdout, encoding="utf-8")
     stderr_path.write_text(stderr, encoding="utf-8")
     message, usage, tool_calls, session_id, turn_completed = _extract_events(stdout)
-    observed = not timed_out and exit_code == 0 and session_id is not None and turn_completed and message is not None
+    return {
+        **provenance,
+        "thread_id": session_id,
+        "turn_completed": turn_completed,
+        "agent_output": message,
+        "host_usage": usage,
+        "tool_call_count": tool_calls if not timed_out else "UNAVAILABLE",
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "stderr_classification": _stderr_classification(stderr),
+        "raw_capture_stdout": stdout_path.name,
+        "raw_capture_stderr": stderr_path.name,
+        "wall_clock_seconds": round(time.monotonic() - start, 3),
+        "_stdout": stdout,
+    }
+
+
+def _run_one(
+    codex: str,
+    trial_id: str,
+    packet: str,
+    timeout: int,
+    capture_dir: Path,
+    seen_thread_ids: set[str],
+    on_invocation: Any,
+) -> dict[str, Any]:
+    executed = _execute_host(codex, packet, timeout, capture_dir, trial_id, on_invocation)
+    stdout = executed.pop("_stdout")
+    message, usage, tool_calls, session_id, turn_completed = _extract_events(stdout)
+    observed = not executed["timed_out"] and executed["exit_code"] == 0 and session_id is not None and turn_completed and message is not None
     repeated_thread = bool(session_id and session_id in seen_thread_ids)
     if session_id:
         seen_thread_ids.add(session_id)
@@ -157,6 +244,7 @@ def _run_one(codex: str, trial_id: str, packet: str, timeout: int, capture_dir: 
     else:
         status = "INCOMPLETE_HOST_EXECUTION"
     return {
+        **executed,
         "trial_id": trial_id,
         "execution_status": status,
         "host_execution_observed": observed,
@@ -169,17 +257,74 @@ def _run_one(codex: str, trial_id: str, packet: str, timeout: int, capture_dir: 
         "provider_request_id": "UNAVAILABLE",
         "output": message if observed else None,
         "output_sha256": _sha256(message.encode("utf-8")) if observed else None,
-        "tool_call_count": tool_calls if not timed_out else "UNAVAILABLE",
+        "tool_call_count": tool_calls if not executed["timed_out"] else "UNAVAILABLE",
         "retry_count": "UNAVAILABLE",
         "host_usage": usage if turn_completed else "UNAVAILABLE",
-        "wall_clock_seconds": round(time.monotonic() - start, 3),
-        "exit_code": exit_code,
         "explicit_packet_visibility": "KNOWN",
         "full_model_visible_context": "UNAVAILABLE",
         "ambient_host_context": "HELD_CONSTANT_BUT_PARTIALLY_OBSERVABLE",
-        "raw_capture_stdout": stdout_path.name,
-        "raw_capture_stderr": stderr_path.name,
     }
+
+
+def run_diagnostic(*, results_path: Path, timeout: int) -> dict[str, Any]:
+    result, _ = _load_json(results_path)
+    diagnostics = result.setdefault("host_diagnostics", [])
+    if any(item.get("execution_harness_version") == EXECUTION_HARNESS_VERSION for item in diagnostics):
+        raise SystemExit("Refusing to repeat the V3 Host liveness diagnostic.")
+    if result.get("formal_trial_count", 0) != 0 or result.get("nexus_model_receipt_count", 0) != 0:
+        raise SystemExit("Refusing diagnostic: behavioral trial or MODEL receipt count is nonzero.")
+    codex = shutil.which("codex")
+    if not codex:
+        raise SystemExit("Host liveness diagnostic unavailable: codex CLI not found on PATH.")
+    capture_dir = _external_capture_dir(Path(tempfile.mkdtemp(prefix="nexus-academy-phase5-captures-")))
+    diagnostic: dict[str, Any] = {
+        "kind": "NON_BEHAVIORAL_HOST_LIVENESS_DIAGNOSTIC",
+        "sentinel": DIAGNOSTIC_SENTINEL,
+        "behavioral_trial_counted": False,
+        "nexus_model_receipt_created": False,
+    }
+
+    def persist_invocation(provenance: dict[str, Any]) -> None:
+        diagnostic.update(provenance)
+        diagnostics.append(diagnostic)
+        result["protocol_version"] = "PHASE5_PREREGISTRATION_V3"
+        result["execution_harness_version"] = EXECUTION_HARNESS_VERSION
+        result["status"] = "IN PROGRESS / V3 HOST DIAGNOSTIC RECORDED"
+        results_path.write_text(_serialize_persisted_result(result), encoding="utf-8")
+
+    executed = _execute_host(codex, DIAGNOSTIC_SENTINEL, timeout, capture_dir, "V3-liveness", persist_invocation)
+    executed.pop("_stdout", None)
+    diagnostic.update(executed)
+    diagnostic["thread_started"] = diagnostic.get("thread_id") is not None
+    if diagnostic.get("turn_completed") is not True:
+        diagnostic["host_usage"] = "UNAVAILABLE"
+        diagnostic["usage_basis"] = "UNAVAILABLE"
+    else:
+        diagnostic["usage_basis"] = "HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY"
+    if diagnostic.get("thread_id") is None:
+        diagnostic["tool_call_count"] = "UNAVAILABLE"
+    message = diagnostic.get("agent_output")
+    diagnostic["host_execution_observed"] = (
+        diagnostic.get("exit_code") == 0
+        and diagnostic.get("thread_id") is not None
+        and diagnostic.get("turn_completed") is True
+        and isinstance(message, str)
+    )
+    diagnostic["v3_host_execution_path"] = (
+        "SUPPORTED" if diagnostic["host_execution_observed"] and diagnostic.get("tool_call_count") == 0
+        else "BLOCKED"
+    )
+    diagnostic["thread_id"] = executed.get("thread_id")
+    if diagnostic["stderr_classification"] == "HOST_OR_WRAPPER_ARGUMENT_INJECTION_SUSPECTED":
+        result["v3_host_execution_path"] = "HOST_OR_WRAPPER_ARGUMENT_INJECTION_SUSPECTED"
+        result["formal_matrix_status"] = "FORMAL_MATRIX_BLOCKED"
+    else:
+        result["v3_host_execution_path"] = diagnostic["v3_host_execution_path"]
+    result["host_diagnostics"][-1] = diagnostic
+    result["formal_trial_count"] = 0
+    result["nexus_model_receipt_count"] = 0
+    results_path.write_text(_serialize_persisted_result(result), encoding="utf-8")
+    return result
 
 
 def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout: int) -> dict[str, Any]:
@@ -187,8 +332,10 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
     evaluator, _ = _load_json(evaluator_path)
     prior, _ = _load_json(results_path)
     packet_hash = _sha256(packet_bytes)
-    if prior.get("status") != "IN PROGRESS / PREREGISTERED V2" or prior.get("fixture_sha256") != packet_hash:
-        raise SystemExit("Refusing to run: results are not pending for this exact frozen fixture.")
+    if prior.get("protocol_version") != "PHASE5_PREREGISTRATION_V3" or prior.get("fixture_sha256") != packet_hash:
+        raise SystemExit("Refusing to run: results are not V3 for this exact frozen fixture.")
+    if prior.get("formal_execution_authorized") is not True:
+        raise SystemExit("Refusing to run formal trials: external review has not authorized execution.")
     if prior.get("execution_count", 0) != 0:
         raise SystemExit("Refusing to repeat Host trials; preserve the first execution record.")
     if packet_doc.get("official_invocation_spec_id") != OFFICIAL_INVOCATION_SPEC_ID:
@@ -238,7 +385,18 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
         packet = packet_by_id[trial_id]
         is_context = trial_id in context_mapping
         mapping = context_mapping[trial_id] if is_context else presence_mapping[trial_id]
-        observed = _run_one(codex, trial_id, packet, timeout, capture_dir, seen_thread_ids)
+        destination = result["context_trials"] if is_context else result["presence_trials"]
+
+        def persist_invocation(provenance: dict[str, Any]) -> None:
+            destination[trial_id] = {
+                "trial_id": trial_id,
+                "execution_status": "INVOCATION_IN_PROGRESS",
+                "formal_trial_counted": False,
+                **provenance,
+            }
+            results_path.write_text(_serialize_persisted_result(result), encoding="utf-8")
+
+        observed = _run_one(codex, trial_id, packet, timeout, capture_dir, seen_thread_ids, persist_invocation)
         observed.update({
             "condition": mapping.get("condition") if is_context else None,
             "family": mapping.get("family") if is_context else None,
@@ -270,11 +428,24 @@ def run(*, packets_path: Path, evaluator_path: Path, results_path: Path, timeout
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--execute-host", action="store_true", help="Explicitly invoke the installed Codex CLI for each frozen trial")
+    parser.add_argument("--diagnostic-host-liveness", action="store_true", help="Run one non-behavioral Host liveness sentinel using the frozen argv")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--packets", type=Path, default=DEFAULT_PACKETS)
     parser.add_argument("--evaluator", type=Path, default=DEFAULT_EVALUATOR)
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
     args = parser.parse_args()
+    if args.diagnostic_host_liveness:
+        result = run_diagnostic(results_path=args.results, timeout=args.timeout)
+        diagnostic = result["host_diagnostics"][-1]
+        print(json.dumps({
+            "status": diagnostic["v3_host_execution_path"],
+            "exit_code": diagnostic["exit_code"],
+            "thread_started": diagnostic["thread_id"] is not None,
+            "turn_completed": diagnostic["turn_completed"],
+            "tool_call_count": diagnostic["tool_call_count"],
+            "nexus_model_receipt_count": result["nexus_model_receipt_count"],
+        }, sort_keys=True))
+        return 0 if diagnostic["v3_host_execution_path"] == "SUPPORTED" else 2
     if not args.execute_host:
         print("No Host calls made. Pass --execute-host only after reviewing the frozen packets and evaluator separation.")
         return 0

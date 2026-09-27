@@ -3,11 +3,20 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.eval.run_behavioral_phase5 import (
+    ARGV_HASH_RULE,
     CODEX_EXECUTABLE_OBSERVATION,
+    DIAGNOSTIC_SENTINEL,
+    EXECUTION_HARNESS_VERSION,
+    FROZEN_SANITIZED_ARGV,
+    OFFICIAL_CODEX_EXEC_ARGS,
     PRIVATE_CAPTURE_LOCATION,
     _external_capture_dir,
+    _argv_sha256,
+    _host_command,
+    _run_one,
     _serialize_persisted_result,
     score,
 )
@@ -31,20 +40,26 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         cls.evaluator = json.loads(EVALUATOR.read_text(encoding="utf-8"))
         cls.result = json.loads(RESULT.read_text(encoding="utf-8"))
 
-    def test_first_formal_execution_stopped_on_first_pre_model_failure(self):
+    def test_v2_incident_is_preserved_as_invalid_provenance_and_v3_has_no_formal_trials(self):
         digest = hashlib.sha256(PACKETS.read_bytes()).hexdigest()
         self.assertEqual(digest, self.result["fixture_sha256"])
         self.assertEqual(18, self.packets["packet_count"])
-        self.assertEqual("PHASE5_PREREGISTRATION_V2", self.packets["protocol_version"])
-        self.assertEqual("PHASE5_PREREGISTRATION_V2", self.result["protocol_version"])
+        self.assertEqual("PHASE5_PREREGISTRATION_V3", self.packets["protocol_version"])
+        self.assertEqual("PHASE5_PREREGISTRATION_V3", self.result["protocol_version"])
         self.assertEqual("REPLACED BEFORE ANY FORMAL BEHAVIORAL TRIAL", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V1"])
-        self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", self.result["status"])
+        self.assertIn("INVOCATION PROVENANCE CONFLICT", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V2"])
+        self.assertIn("HARDENED BEFORE FIRST ELIGIBLE FORMAL TRIAL", self.result["protocol_history"]["PHASE5_PREREGISTRATION_V3"])
         self.assertEqual(0, self.result["execution_count"])
         self.assertEqual(0, self.result["formal_trial_count"])
         self.assertEqual(1, self.result["attempted_count"])
+        self.assertEqual([], self.result["formal_trials"])
+        self.assertEqual("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", self.result["matrix_status"])
+        self.assertEqual("INVALID", self.result["execution_incidents"][0]["formal_behavioral_evidence"])
+        self.assertFalse(self.result["execution_incidents"][0]["behavioral_inference_allowed"])
+        self.assertEqual(0, self.result["eligible_formal_trial_count"])
         self.assertEqual(0, self.result["nexus_model_receipt_count"])
         self.assertFalse(self.result["manual_host_runs_required"])
-        self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["execution_summary"]["matrix_status"])
+        self.assertEqual("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", self.result["execution_summary"]["matrix_status"])
         self.assertTrue(self.result["execution_summary"]["first_execution_only"])
         self.assertEqual(1, self.result["execution_summary"]["attempted_trial_count"])
         self.assertEqual(0, self.result["execution_summary"]["eligible_formal_trial_count"])
@@ -54,10 +69,16 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertEqual(0, self.result["execution_summary"]["tool_contaminated_count"])
         self.assertEqual(1, self.result["execution_summary"]["incomplete_or_pre_model_failure_count"])
         self.assertEqual("UNCHARACTERIZED", self.result["execution_summary"]["cross_session_memory_confound"])
-        self.assertEqual(["A17"], list(self.result["context_trials"]))
+        incident = self.result["execution_incidents"][0]
+        self.assertEqual("A17", incident["attempted_behavioral_packet"])
+        self.assertEqual("INVOCATION_PROVENANCE_CONFLICT", incident["classification"])
+        self.assertEqual(0, incident["forensic_capture"]["stdout_bytes"])
+        self.assertEqual("HOST_STATE_INITIALIZATION_OR_ACCESS_FAILURE", incident["forensic_capture"]["stderr_classification"])
+        self.assertIn("does not establish the argv", incident["forensic_capture"]["secret_safe_summary"])
+        self.assertEqual("HISTORICAL_CLI_OPTION_PROBE; NOT EVIDENCE OF THE V2 FORMAL A17 ARGV", self.result["historical_pre_model_cli_probe"]["scope"])
+        self.assertNotIn("exact_argv", incident)
+        self.assertNotIn("context_trials", self.result)
         self.assertEqual({}, self.result["presence_trials"])
-        self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", self.result["context_trials"]["A17"]["execution_status"])
-        self.assertFalse(self.result["context_trials"]["A17"]["formal_behavioral_trial_eligible"])
 
     def test_official_invocation_and_fixed_order_are_frozen(self):
         expected_command = "codex exec --ephemeral --json --color never --sandbox read-only --skip-git-repo-check -"
@@ -91,11 +112,14 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
             self.assertLess(presence_positions["P0_ABSENT"], presence_positions["P1_METADATA_ONLY"])
             self.assertLess(presence_positions["P1_METADATA_ONLY"], presence_positions["P2_FULL_INSTRUCTION"])
 
-    def test_v2_changes_only_packet_metadata_and_execution_order(self):
+    def test_v3_changes_metadata_without_changing_packet_text_or_evaluator(self):
         rows = sorted(self.packets["context_packets"], key=lambda row: row["trial_id"])
         packet_text_digest = hashlib.sha256("\n".join(row["trial_id"] + "\0" + row["packet_text"] for row in rows).encode() + b"\n").hexdigest()
         self.assertEqual("66f3217dc376519668bc2e415904923e7d09dc7c1a3a0bef4a4b2f5ae6f3bdb6", packet_text_digest)
+        self.assertEqual(packet_text_digest, self.result["model_visible_packet_text_sha256"])
         self.assertEqual("96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c", hashlib.sha256(EVALUATOR.read_bytes()).hexdigest())
+        self.assertEqual("PHASE5_EXECUTION_HARNESS_V3", self.result["execution_harness_version"])
+        self.assertFalse(self.result["formal_execution_authorized"])
 
     def test_evaluator_mapping_covers_all_packets(self):
         ids = [row["trial_id"] for row in self.packets["context_packets"]]
@@ -135,7 +159,7 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
     def test_a17_is_excluded_and_token_usage_is_host_reported_total(self):
         diagnostic = self.result["a17_diagnostic_not_counted"]
         self.assertEqual("BRIDGE_DIAGNOSTIC_NOT_COUNTED", diagnostic["status"])
-        self.assertFalse(self.result["context_trials"]["A17"]["formal_trial_counted"])
+        self.assertFalse(self.result["execution_incidents"][0]["attempted_packet_record"]["formal_trial_counted"])
         self.assertEqual("HOST_REPORTED_TOTAL_INPUT_TOKENS", diagnostic["usage_basis"])
         self.assertEqual({"input_tokens": 20488, "cached_input_tokens": 7936, "output_tokens": 21, "reasoning_output_tokens": 10}, diagnostic["usage"])
         self.assertEqual("HOST_REPORTED_TOTAL_INPUT_TOKENS", self.result["prior_worktree_liveness_diagnostic"]["usage_basis"])
@@ -152,9 +176,9 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("packet_tokens", json.dumps(self.result).lower())
 
     def test_gates_exposure_and_lifecycle_states_are_consistent(self):
-        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT; NO ELIGIBLE FORMAL TRIAL", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
         self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
-        self.assertEqual("NOT OBSERVED; NO PRESENCE TRIAL COMPLETED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("NOT OBSERVED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("UNAVAILABLE / NOT INDEPENDENTLY VERIFIED", self.result["gates"]["I_HOST_MEMORY_CONTAMINATION"])
         self.assertEqual("SUPPORTED_BY_REAL_HOST", self.result["gates"]["J1_HOST_TOTAL_TURN_TOKEN_TELEMETRY"])
@@ -176,8 +200,8 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("No reliable Host telemetry", synthesis_text)
         phases = {item["phase"]: item["status"] for item in candidates["phases"]}
         self.assertEqual("CLOSED / ACCEPTED", phases["4"])
-        self.assertTrue(phases["5"].startswith("IN PROGRESS / FORMAL MATRIX STOPPED"))
-        self.assertEqual("NOT OBSERVED; NO PRESENCE TRIAL COMPLETED", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertTrue(phases["5"].startswith("IN PROGRESS / V3 HOST PATH BLOCKED"))
+        self.assertEqual("NOT OBSERVED", candidate_gates["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
         self.assertEqual("NOT TESTED", candidate_gates["H2_REAL_SKILL_CAPABILITY_UTILITY"])
         self.assertEqual("NOT STARTED", candidates["capability_certification"]["status"])
         self.assertEqual("NOT STARTED", candidates["shadow"])
@@ -193,7 +217,8 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertNotIn("MANUAL HOST RUNS REQUIRED", synthesis + runbook + phase5_doc)
         self.assertNotIn("manual fresh-chat runs are required", (synthesis + phase5_doc).lower())
         self.assertIn("CROSS_SESSION_MEMORY_CONFOUND` is `UNCHARACTERIZED", phase5_doc)
-        self.assertIn("STOPPED_ON_PROTOCOL_CONDITION", phase5_doc)
+        self.assertIn("STOPPED_ON_INVOCATION_PROVENANCE_CONFLICT", phase5_doc)
+        self.assertIn("V3 diagnostic", phase5_doc)
         self.assertIn("fallback artifact", runbook.lower())
 
     def test_runner_serialization_omits_executable_and_capture_absolute_paths(self):
@@ -215,6 +240,103 @@ class BehavioralPhase5ProtocolTests(unittest.TestCase):
         self.assertIn(PRIVATE_CAPTURE_LOCATION, serialized)
         self.assertIn("A17.stdout.jsonl", serialized)
         self.assertIn("A17.stderr.txt", serialized)
+
+    def test_mocked_run_one_uses_frozen_argv_and_persists_provenance_before_outcome(self):
+        codex = str(Path(tempfile.gettempdir()) / "fake-codex-executable")
+        packet = "harmless unit-test packet"
+        events = []
+        stdout = "\n".join((
+            json.dumps({"type": "thread.started", "thread_id": "test-thread"}),
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "OK"}}),
+            json.dumps({"type": "turn.completed", "usage": {"input_tokens": 2, "output_tokens": 1}}),
+        ))
+
+        def persist_before_run(provenance):
+            events.append(("persist", provenance.copy()))
+
+        def mocked_run(command, **kwargs):
+            events.append(("subprocess", command.copy(), kwargs.copy()))
+            self.assertEqual([codex, *OFFICIAL_CODEX_EXEC_ARGS], command)
+            self.assertNotIn("--ask-for-approval", command)
+            self.assertIs(kwargs["shell"], False)
+            self.assertEqual(packet, kwargs["input"])
+            cwd = Path(kwargs["cwd"])
+            self.assertTrue(cwd.is_dir())
+            self.assertEqual([], list(cwd.iterdir()))
+            self.assertNotIn(ROOT.resolve(), cwd.parents)
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("scripts.eval.run_behavioral_phase5.subprocess.run", side_effect=mocked_run):
+            observed = _run_one(codex, "UNIT", packet, 10, Path(directory), set(), persist_before_run)
+
+        self.assertEqual("persist", events[0][0])
+        self.assertEqual("subprocess", events[1][0])
+        self.assertEqual(list(FROZEN_SANITIZED_ARGV), events[0][1]["sanitized_argv"])
+        self.assertEqual(_argv_sha256(FROZEN_SANITIZED_ARGV), events[0][1]["sanitized_argv_sha256"])
+        self.assertEqual(ARGV_HASH_RULE, events[0][1]["sanitized_argv_hash_rule"])
+        self.assertFalse(events[0][1]["subprocess_shell"])
+        self.assertTrue(events[0][1]["argv_persisted_before_process_outcome"])
+        self.assertNotIn(codex, json.dumps(observed))
+        self.assertEqual("COMPLETED", observed["execution_status"])
+        self.assertTrue(observed["formal_behavioral_trial_eligible"])
+
+    def test_forbidden_argument_guard_fails_before_subprocess(self):
+        with patch(
+            "scripts.eval.run_behavioral_phase5.OFFICIAL_CODEX_EXEC_ARGS",
+            (*OFFICIAL_CODEX_EXEC_ARGS, "--ask-for-approval", "never"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Forbidden Host argument"):
+                _host_command("codex")
+
+    def test_argv_provenance_survives_pre_model_process_failure(self):
+        codex = "codex-test"
+        events = []
+
+        def persist(provenance):
+            events.append(("persist", provenance.copy()))
+
+        def failed_run(command, **kwargs):
+            events.append(("subprocess", command.copy(), kwargs.copy()))
+            return subprocess.CompletedProcess(command, 2, stdout="", stderr="parser error")
+
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("scripts.eval.run_behavioral_phase5.subprocess.run", side_effect=failed_run):
+            observed = _run_one(codex, "UNIT-FAIL", "harmless packet", 10, Path(directory), set(), persist)
+
+        self.assertEqual(["persist", "subprocess"], [event[0] for event in events])
+        self.assertEqual(list(FROZEN_SANITIZED_ARGV), observed["sanitized_argv"])
+        self.assertEqual(_argv_sha256(FROZEN_SANITIZED_ARGV), observed["sanitized_argv_sha256"])
+        self.assertEqual(2, observed["exit_code"])
+        self.assertEqual("PRE_MODEL_HOST_INVOCATION_FAILURE", observed["execution_status"])
+
+    def test_diagnostic_metadata_is_non_behavioral_and_does_not_upgrade_gates(self):
+        self.assertEqual("BLOCKED", self.result["v3_host_execution_path"])
+        diagnostic = self.result["host_diagnostics"][-1]
+        self.assertEqual("NON_BEHAVIORAL_HOST_LIVENESS_DIAGNOSTIC", diagnostic["kind"])
+        self.assertEqual(list(FROZEN_SANITIZED_ARGV), diagnostic["sanitized_argv"])
+        self.assertEqual(_argv_sha256(FROZEN_SANITIZED_ARGV), diagnostic["sanitized_argv_sha256"])
+        self.assertEqual(ARGV_HASH_RULE, diagnostic["sanitized_argv_hash_rule"])
+        self.assertEqual(1, diagnostic["exit_code"])
+        self.assertFalse(diagnostic["thread_started"])
+        self.assertIsNone(diagnostic["thread_id"])
+        self.assertFalse(diagnostic["turn_completed"])
+        self.assertIsNone(diagnostic["agent_output"])
+        self.assertEqual("UNAVAILABLE", diagnostic["host_usage"])
+        self.assertEqual("UNAVAILABLE", diagnostic["usage_basis"])
+        self.assertEqual("UNAVAILABLE", diagnostic["tool_call_count"])
+        self.assertEqual("HOST_STATE_INITIALIZATION_OR_ACCESS_FAILURE", diagnostic["stderr_classification"])
+        self.assertFalse(diagnostic["behavioral_trial_counted"])
+        self.assertFalse(diagnostic["nexus_model_receipt_created"])
+        self.assertFalse(diagnostic["subprocess_shell"])
+        self.assertTrue(diagnostic["argv_persisted_before_process_outcome"])
+        self.assertNotIn(str(Path.home()), json.dumps(diagnostic))
+        self.assertEqual(0, self.result["formal_trial_count"])
+        self.assertEqual(0, self.result["nexus_model_receipt_count"])
+        self.assertEqual("SUPPORTED_BY_REAL_HOST_PILOT", self.result["gates"]["G1_EXPLICIT_EXPERIMENT_PACKET_DELIVERY"])
+        self.assertEqual("UNAVAILABLE", self.result["gates"]["G2_FULL_MODEL_VISIBLE_CONTEXT_PROOF"])
+        self.assertEqual("NOT OBSERVED", self.result["gates"]["H1_SYNTHETIC_CAPABILITY_PRESENCE_BEHAVIOR"])
+        self.assertEqual("NOT TESTED", self.result["gates"]["H2_REAL_SKILL_CAPABILITY_UTILITY"])
 
     def test_committed_result_contains_no_absolute_local_paths(self):
         serialized = json.dumps(self.result)
