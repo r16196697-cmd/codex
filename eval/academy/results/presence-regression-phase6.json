@@ -27,8 +27,7 @@
     "external_review_status": "CLOSED / INCONCLUSIVE",
     "retry_allowed": false,
     "remaining_trials_executed": false,
-    "remaining_trials_count": 23,
-    "external_review_status": "PENDING"
+    "remaining_trials_count": 23
   },
   "execution_order_sha256": "f48fca58c13f6e1008bdd3fbb766d45a39e954c6d2837dac75e2fd997ec71d04",
   "external_controller_marker": "Set NEXUS_PHASE6_EXTERNAL_CONTROLLER=EXTERNAL_WINDOWS_POWERSHELL in the current PowerShell process only.",

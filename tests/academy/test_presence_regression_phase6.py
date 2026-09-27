@@ -50,6 +50,44 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         cls.phase5_evaluator = json.loads(PHASE5_EVALUATOR.read_text(encoding="utf-8"))
         cls.phase5_result = json.loads(PHASE5_RESULT.read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _reject_duplicate_json_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON object key: {key}")
+            result[key] = value
+        return result
+
+    def test_closed_incident_review_fields_are_unique_and_consistent(self):
+        phase6_raw = PHASE6_RESULT.read_text(encoding="utf-8")
+        phase6 = json.loads(phase6_raw, object_pairs_hook=self._reject_duplicate_json_keys)
+        incident_path = ROOT / "eval/academy/results/presence-regression-phase6-incident.json"
+        incident = json.loads(
+            incident_path.read_text(encoding="utf-8"),
+            object_pairs_hook=self._reject_duplicate_json_keys,
+        )
+        nested = phase6["formal_execution_incident"]
+        expected_status = "CLOSED / INCONCLUSIVE"
+        expected_decision = "PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE"
+        self.assertEqual(expected_status, nested["external_review_status"])
+        self.assertEqual(expected_decision, nested["external_review_decision"])
+        self.assertEqual(expected_status, phase6["external_review_status"])
+        self.assertEqual(expected_decision, phase6["external_review_decision"])
+        self.assertEqual(expected_status, incident["external_review_status"])
+        self.assertEqual(expected_decision, incident["external_review_decision"])
+        self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", phase6["status"])
+        self.assertEqual("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", phase6["phase_status"])
+        self.assertEqual(1, phase6["execution_count"])
+        self.assertEqual(1, phase6["attempted_trial_count"])
+        self.assertEqual(0, phase6["formal_trial_count"])
+        self.assertEqual("CONTAMINATED_BY_TOOL_USE", phase6["blocking_condition"])
+        self.assertEqual("TRUE_HOST_TOOL_CONTAMINATION", incident["incident_classification"])
+        self.assertEqual("CONSUMED", phase6["formal_execution_authorization_state"])
+        self.assertFalse(phase6["currently_execution_authorized"])
+        self.assertFalse(phase6["retry_allowed"])
+        self.assertFalse(phase6["remaining_trials_executed"])
+
     def test_phase6_formal_incident_is_preserved_and_phase5_is_closed(self):
         self.assertEqual("PHASE6_PRESENCE_REGRESSION_PREREG_V2", self.result["protocol_version"])
         self.assertIn("PHASE6_PRESENCE_REGRESSION_PREREG_V1", self.result["protocol_history"])
