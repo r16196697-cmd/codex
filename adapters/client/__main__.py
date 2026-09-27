@@ -54,6 +54,8 @@ def _parser() -> argparse.ArgumentParser:
     complete = recovery_commands.add_parser("complete")
     complete.add_argument("--command-id", required=True)
     complete.add_argument("--purge-ledger", required=True, type=Path, help="independent Purge Ledger path outside --data-root")
+
+    commands.add_parser("panel", help="open the native panel inside this writer-owned process")
     return parser
 
 
@@ -76,6 +78,36 @@ def main(argv: list[str] | None = None) -> int:
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
         store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
+        if args.command == "panel":
+            from adapters.panel.application import open_panel_application
+            from adapters.panel.ui import launch_panel
+            from kernel.context import ContextPackService
+            from kernel.metering import MeteringService
+            from kernel.participation import ParticipationModeService
+            from kernel.runtime.panel import PanelQueryService
+
+            participation = ParticipationModeService(store)
+            memory = MemoryService(store, authority, verifier=None)
+            metering = MeteringService(store, authority, participation)
+            writer_services = {
+                "store": store,
+                "runtime": runtime,
+                "participation": participation,
+                "panel_queries": PanelQueryService(store),
+                "memory": memory,
+                "context_packs": ContextPackService(
+                    store=store, authority=authority, participation=participation,
+                    memory=memory, metering=metering,
+                ),
+                "metering": metering,
+            }
+            application = open_panel_application(args.data_root, writer_services=writer_services)
+            try:
+                launch_panel(application.view_model)
+            finally:
+                application.close()
+            return 0
+
         client = OperatorClient(runtime)
         if args.command == "mode" and args.mode_action == "show":
             result = client.mode()

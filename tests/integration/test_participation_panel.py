@@ -6,10 +6,12 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from adapters.client.hosted import CodexHostedBridge
 from adapters.panel.application import open_panel_application
 from adapters.storage import ObjectStore
+from kernel.object.errors import WriterAlreadyRunning
 from kernel.authority import AuthorityService
 from kernel.participation import ParticipationModeService
 from kernel.run import TraceRuntime
@@ -170,6 +172,53 @@ class ParticipationPanelTests(unittest.TestCase):
             self.assertNotIn("ObjectStore", ui_source)
         finally:
             application.close()
+
+    def test_writer_owned_cli_panel_path_keeps_writer_open_without_second_store(self):
+        self.store.close()
+        from adapters.client import __main__ as client_cli
+        from adapters.panel.application import open_panel_application as open_panel
+
+        opened = {}
+        actual_runtime = client_cli._runtime
+        actual_open_panel = open_panel
+
+        def capture_runtime(*args, **kwargs):
+            services = actual_runtime(*args, **kwargs)
+            opened["writer_store"] = services[0]
+            return services
+
+        def capture_panel(*args, **kwargs):
+            application = actual_open_panel(*args, **kwargs)
+            opened["panel"] = application
+            return application
+
+        def exercise_panel(view_model):
+            writer_store = opened["writer_store"]
+            panel_app = opened["panel"]
+            self.assertFalse(panel_app._owns_store)
+            snapshot = view_model.snapshot()
+            self.assertEqual(snapshot["participation_mode"], "ACTIVE")
+            view_model.set_participation_mode("OBSERVE", expected_mode="ACTIVE")
+            self.assertEqual(ParticipationModeService(writer_store).current()["mode"], "OBSERVE")
+            with self.assertRaises(WriterAlreadyRunning):
+                ObjectStore(self.root)
+            panel_app.close()
+            self.assertEqual(ParticipationModeService(writer_store).current()["mode"], "OBSERVE")
+            with writer_store._connection() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
+            with self.assertRaises(WriterAlreadyRunning):
+                ObjectStore(self.root)
+
+        with mock.patch.object(client_cli, "_runtime", side_effect=capture_runtime), \
+             mock.patch("adapters.panel.application.open_panel_application", side_effect=capture_panel), \
+             mock.patch("adapters.panel.ui.launch_panel", side_effect=exercise_panel):
+            result = client_cli.main(["--data-root", str(self.root), "panel"])
+        self.assertEqual(result, 0)
+        reopened = ObjectStore(self.root)
+        try:
+            self.assertEqual(ParticipationModeService(reopened).current()["mode"], "OBSERVE")
+        finally:
+            reopened.close()
 
     def test_recovery_mode_preserves_unavailable_instead_of_reporting_zero(self):
         self.store.close()

@@ -97,22 +97,20 @@ class MeteringService:
         explicit `model_visible_input_tokens` value and exposure basis.
         """
         mode = self.participation.current()["mode"]
-        if mode == "BYPASS":
-            raise RuntimeDenied("BYPASS_DISALLOWS_AUTOMATIC_METERING_INGESTION")
-        if mode == "OBSERVE":
-            raise RuntimeDenied("OBSERVE_METERING_UNSUPPORTED_WITHOUT_OBSERVATION_ID")
-        self.store._require_mode("core_write")
+        self.store._require_mode("core_read")
         if not isinstance(host_usage, dict):
             raise RuntimeDenied("HOST_USAGE_INVALID")
+        with self.store._connection() as conn:
+            run = conn.execute("SELECT task_id,grant_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if not run or run["task_id"] != task_id:
+            raise RuntimeDenied("METERING_RUN_TASK_MISMATCH")
+        if grant_id != run["grant_id"]:
+            raise RuntimeDenied("METERING_RUN_GRANT_MISMATCH")
         self.authority.evaluate_authorization(
-            grant_id,
+            run["grant_id"],
             {"task": task_id, "resource": run_id, "action": "TRACE_APPEND", "audience": "nexus-runtime"},
             "metering-auth-" + hashlib.sha256(record_id.encode("utf-8")).hexdigest()[:16],
         )
-        with self.store._connection() as conn:
-            run = conn.execute("SELECT task_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if not run or run["task_id"] != task_id:
-            raise RuntimeDenied("METERING_RUN_TASK_MISMATCH")
 
         metrics = unavailable_metrics()
         total_input = host_usage.get("input_tokens")
@@ -170,10 +168,27 @@ class MeteringService:
             metrics["actual_cost"] = _cost_metric(actual_cost, source_provenance="HOST_DECLARED")
         if estimated_cost is not None:
             metrics["estimated_cost"] = _cost_metric(estimated_cost, source_provenance="HOST_DECLARED", estimated=True)
-        return self._insert_record(
-            record_id=record_id, task_id=task_id, run_id=run_id, source="HOST_DECLARED",
-            mode=mode, context_pack_ref=context_pack_ref, metrics=metrics,
-        )
+        metrics_json = _canonical(metrics).decode("utf-8")
+        digest = hashlib.sha256(metrics_json.encode("utf-8")).hexdigest()
+        with self.store._lock, self.store._connection() as conn:
+            prior = conn.execute("SELECT * FROM value_metering_records WHERE record_id=?", (record_id,)).fetchone()
+            if prior:
+                expected = (task_id, run_id, "HOST_DECLARED", "ACTIVE", context_pack_ref, metrics_json, digest)
+                actual = tuple(prior[key] for key in (
+                    "task_id", "run_id", "record_source", "participation_mode", "context_pack_ref",
+                    "metrics_json", "metrics_sha256"))
+                if actual != expected:
+                    raise RuntimeDenied("METERING_RECORD_ID_CONFLICT")
+                return self._public_record(dict(prior))
+            if mode == "BYPASS":
+                raise RuntimeDenied("BYPASS_DISALLOWS_AUTOMATIC_METERING_INGESTION")
+            if mode == "OBSERVE":
+                raise RuntimeDenied("OBSERVE_METERING_UNSUPPORTED_WITHOUT_OBSERVATION_ID")
+            self.store._require_mode("core_write")
+            return self._insert_record(
+                record_id=record_id, task_id=task_id, run_id=run_id, source="HOST_DECLARED",
+                mode=mode, context_pack_ref=context_pack_ref, metrics=metrics, conn=conn,
+            )
 
     def _insert_context_compile(self, conn, *, record_id: str, task_id: str, run_id: str,
                                 pack_ref: str, byte_size: int, recorded_at: str) -> dict:
@@ -193,8 +208,8 @@ class MeteringService:
                        recorded_at: str | None = None, conn=None) -> dict:
         if not record_id or set(metrics) != set(_METRIC_UNITS):
             raise RuntimeDenied("METERING_RECORD_INVALID")
-        self.store._validate("nexus.metering_record@1.schema.json", {
-            "schema_id": "nexus.metering_record", "schema_version": 1, "task_id": task_id,
+        self.store._validate("nexus.metering_record@2.schema.json", {
+            "schema_id": "nexus.metering_record", "schema_version": 2, "task_id": task_id,
             "run_id": run_id, "record_source": source, "participation_mode": mode,
             "context_pack_ref": context_pack_ref, "metrics": metrics,
             "metrics_sha256": hashlib.sha256(_canonical(metrics)).hexdigest(),

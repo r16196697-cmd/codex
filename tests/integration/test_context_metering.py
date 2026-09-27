@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
+from jsonschema import ValidationError
 
 from adapters.panel.application import open_panel_application
 from adapters.storage import ObjectStore
@@ -23,6 +24,7 @@ from kernel.participation import ParticipationModeService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
+from kernel.object.errors import SchemaUnsupported
 from kernel.runtime.panel import PanelQueryService
 from kernel.object.errors import WriterAlreadyRunning
 
@@ -222,6 +224,95 @@ class ContextMeteringTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeDenied, "METERING_RECORD_ID_CONFLICT"):
             self.metering.record_host_declared(**{**kwargs, "host_usage": {"input_tokens": 18}})
 
+    def test_metering_exact_retry_survives_participation_mode_change(self):
+        kwargs = dict(record_id="mode-replay-host-event", task_id=self.task_id, run_id=self.run_id,
+                      grant_id="ctx-grant", host_usage={"input_tokens": 17, "cached_input_tokens": 4})
+        original = self.metering.record_host_declared(**kwargs)
+        with mock.patch.object(ParticipationModeService, "_blockers", return_value={
+            "active_tasks": 0, "active_runs": 0, "pending_effects": 0, "approval_or_commit_pending": 0,
+        }):
+            self.participation.set_mode(mode="OBSERVE", expected_mode="ACTIVE", command_id="mode-replay-observe")
+        self.assertEqual(self.metering.record_host_declared(**kwargs), original)
+        with mock.patch.object(ParticipationModeService, "_blockers", return_value={
+            "active_tasks": 0, "active_runs": 0, "pending_effects": 0, "approval_or_commit_pending": 0,
+        }):
+            self.participation.set_mode(mode="BYPASS", expected_mode="OBSERVE", command_id="mode-replay-bypass")
+        self.assertEqual(self.metering.record_host_declared(**kwargs), original)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM value_metering_records WHERE record_id=?", (kwargs["record_id"],)
+            ).fetchone()[0], 1)
+        with self.assertRaisesRegex(RuntimeDenied, "METERING_RECORD_ID_CONFLICT"):
+            self.metering.record_host_declared(**{**kwargs, "host_usage": {"input_tokens": 18}})
+        with self.assertRaisesRegex(RuntimeDenied, "BYPASS_DISALLOWS_AUTOMATIC_METERING_INGESTION"):
+            self.metering.record_host_declared(**{**kwargs, "record_id": "new-bypass-event"})
+
+    def test_metering_rejects_grants_not_bound_to_target_run_without_inserting(self):
+        now = datetime.now(timezone.utc)
+        grants = (
+            ("meter-broad-same-task", [self.task_id],
+             ["task:" + self.task_id, self.run_id, "object:extra-resource"],
+             ["TRACE_APPEND", "OBJECT_WRITE", "INSPECT", "CLASSIFY", "MEMORY_SEARCH"],
+             ["nexus-runtime", "nexus-inspect"]),
+            ("meter-unrelated", ["different-task"], [self.run_id], ["TRACE_APPEND"], ["nexus-runtime"]),
+        )
+        for grant_id, tasks, resources, actions, audiences in grants:
+            self.authority.create_grant({
+                "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id,
+                "issued_by": "human-root", "granted_to": "context-agent", "task_scope": tasks,
+                "resource_scope": resources, "action_scope": actions, "audience_scope": audiences,
+                "issued_at": now.isoformat(), "expires_at": (now + timedelta(days=1)).isoformat(),
+                "status": "ACTIVE", "policy_version": "1",
+            }, grant_id + "-create")
+        with self.store._connection() as conn:
+            before = conn.execute("SELECT COUNT(*) FROM value_metering_records").fetchone()[0]
+        for grant_id in ("meter-broad-same-task", "meter-unrelated"):
+            with self.subTest(grant_id=grant_id), self.assertRaisesRegex(RuntimeDenied, "METERING_RUN_GRANT_MISMATCH"):
+                self.metering.record_host_declared(
+                    record_id="must-not-be-recorded-" + grant_id, task_id=self.task_id, run_id=self.run_id,
+                    grant_id=grant_id, host_usage={"input_tokens": 9},
+                )
+        with self.store._connection() as conn:
+            after = conn.execute("SELECT COUNT(*) FROM value_metering_records").fetchone()[0]
+        self.assertEqual(after, before)
+
+    def test_metering_v1_is_historical_v2_is_current_and_unknown_version_fails_closed(self):
+        schema_dir = Path(__file__).resolve().parents[2] / "schemas"
+        v1 = json.loads((schema_dir / "nexus.metering_record@1.schema.json").read_text(encoding="utf-8"))
+        v2 = json.loads((schema_dir / "nexus.metering_record@2.schema.json").read_text(encoding="utf-8"))
+        self.assertIn("ESTIMATED", v1["$defs"]["metric"]["properties"]["provenance"]["enum"])
+        self.assertNotIn("estimate_status", v1["$defs"]["metric"]["properties"])
+        self.assertEqual(v2["properties"]["schema_version"]["const"], 2)
+        self.assertNotIn("ESTIMATED", v2["$defs"]["metric"]["properties"]["provenance"]["enum"])
+        self.assertIn("estimate_status", v2["$defs"]["metric"]["properties"])
+        legacy_document = {
+            "schema_id": "nexus.metering_record", "schema_version": 1, "task_id": self.task_id,
+            "run_id": self.run_id, "record_source": "HOST_DECLARED", "participation_mode": "ACTIVE",
+            "context_pack_ref": None,
+            "metrics": {"estimated_cost": {"value": 0.5, "provenance": "ESTIMATED", "unit": "USD",
+                "basis": "legacy v1 estimate", "estimation_basis": {"pricing_id": "p", "pricing_version": "1", "formula": "f"}}},
+            "metrics_sha256": "a" * 64, "recorded_at": "2026-09-28T00:00:00Z",
+        }
+        self.store._validate("nexus.metering_record@1.schema.json", legacy_document)
+        with self.assertRaises(ValidationError):
+            self.store._validate("nexus.metering_record@2.schema.json", legacy_document)
+        record = self.metering.record_host_declared(
+            record_id="schema-v2-host-event", task_id=self.task_id, run_id=self.run_id,
+            grant_id="ctx-grant", host_usage={"input_tokens": 3},
+        )
+        document = {
+            "schema_id": "nexus.metering_record", "schema_version": 2, "task_id": record["task_id"],
+            "run_id": record["run_id"], "record_source": record["record_source"],
+            "participation_mode": record["participation_mode"], "context_pack_ref": record["context_pack_ref"],
+            "metrics": record["metrics"], "metrics_sha256": record["metrics_sha256"],
+            "recorded_at": record["recorded_at"],
+        }
+        self.store._validate("nexus.metering_record@2.schema.json", document)
+        with self.assertRaises(ValidationError):
+            self.store._validate("nexus.metering_record@1.schema.json", document)
+        with self.assertRaisesRegex(SchemaUnsupported, "SCHEMA_UNSUPPORTED"):
+            self.store._validate("nexus.metering_record@3.schema.json", document)
+
     def test_observe_host_metering_fails_without_observation_identity(self):
         with mock.patch.object(self.participation, "current", return_value={"mode": "OBSERVE"}):
             with self.assertRaisesRegex(RuntimeDenied, "OBSERVE_METERING_UNSUPPORTED_WITHOUT_OBSERVATION_ID"):
@@ -260,6 +351,11 @@ class ContextMeteringTests(unittest.TestCase):
             self.assertEqual(migrated["model_visible_input_tokens"]["estimate_status"], "UNAVAILABLE")
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 25)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        readable = MeteringService(reopened, AuthorityService(reopened, self.policy),
+                                   ParticipationModeService(reopened)).snapshot()
+        migrated_record = next(item for item in readable["records"] if item["record_id"] == "legacy-estimated-meter")
+        self.assertEqual(migrated_record["metrics"]["estimated_cost"]["provenance"], "HOST_DECLARED")
+        self.assertEqual(migrated_record["metrics"]["estimated_cost"]["estimate_status"], "ESTIMATED")
 
     def test_run_bound_context_rejects_mismatched_broader_caller_grant(self):
         now = datetime.now(timezone.utc)
