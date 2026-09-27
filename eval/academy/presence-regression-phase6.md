@@ -1,17 +1,19 @@
 # Phase 6 — Presence Regression Qualification + Capability Certification Gate
 
-- Status: `IN PROGRESS / FORMAL EXECUTION STOPPED — EXTERNAL REVIEW PENDING`
+- Status: `CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED`
 - Protocol: `PHASE6_PRESENCE_REGRESSION_PREREG_V2`
 - Evaluator: `PRESENCE_REGRESSION_EVAL_V2`
 - Formal trial count: `0`
 - Nexus MODEL receipt count: `0`
 - Formal execution controller: `EXTERNAL_WINDOWS_POWERSHELL`
-- Host execution authorized: `true` (external controller only)
+- Historical formal execution authorization: `GRANTED AND CONSUMED` (`EXTERNAL_REVIEW_ACCEPTED_PHASE6_PREREG_V2`)
+- Current execution authorization: `false`
+- Retry allowed: `false`
 - Capability Certification: `NOT STARTED`
 - Shadow: `NOT STARTED`
 - Production qualification: `NOT STARTED`
 
-V1 was replaced before any Phase 6 Host trial because control-regression classification and screening auditability needed correction. External review accepted V2 and froze it for the synthetic 24-trial experiment. The one authorized ordinary Windows PowerShell execution attempt stopped on its first trial because the Host emitted three command-execution tool calls. No retry or remaining-trial execution is permitted. This audit runs no Host subprocess, no liveness check, and no real Skill.
+V1 was replaced before any Phase 6 Host trial because control-regression classification and screening auditability needed correction. External review accepted V2 and froze it for the synthetic 24-trial experiment. The one authorized ordinary Windows PowerShell execution attempt stopped on its first trial because the Host emitted three command-execution tool calls. External review closed this experiment as `PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE`. This is experiment closure, not PASS or accepted qualification. No retry or remaining-trial execution is permitted. This closure update runs no Host subprocess, no liveness check, and no real Skill.
 
 `instruction_scope = TASK_SCOPED_SYNTHETIC_CAPABILITY_INSTRUCTIONS`. Research question: **Can task-scoped capability instructions provide relevant utility while preserving unrelated-task behavior?** A clean result would qualify only the tested task-scoped synthetic instruction design; it would not establish that arbitrary or unscoped capability instructions are safe.
 
@@ -99,7 +101,7 @@ The JSONL contains 10 events. Six `item.started`/`item.completed` lifecycle even
 
 `AMBIENT_HOST_TOOL_POLICY_CONFOUND = POSSIBLE`: the persisted cwd observation is a fresh empty temporary directory outside the repository, so repository project `AGENTS.md` is not inherited through that cwd. Global instructions, Custom Instructions, Host-native policies, and Skill visibility are not observable in this capture. Command-execution tools were available. The read-only sandbox restricted effects but did not prevent tool invocation. No ambient source is established as root cause. The CLI version supplied for this run is `codex-cli 0.158.0-alpha.2.1`; there is no evidence here of version drift.
 
-The incident classification is `TRUE_HOST_TOOL_CONTAMINATION`; detector/schema bug found: no. This does not establish a Presence Regression, relevant-utility failure, VARNET capability failure, P0 unsafety, or Skill-presence effect. The evidence supports external reviewer consideration of `PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE`; external review retains the closure decision. The Presence Regression Gate is `NOT QUALIFIED BY PHASE6 FORMAL MATRIX`; Output Canonicalization remains `INSUFFICIENT_EVIDENCE`.
+The incident classification is `TRUE_HOST_TOOL_CONTAMINATION`; detector/schema bug found: no. This does not establish a Presence Regression, relevant-utility failure, VARNET capability failure, P0 unsafety, or Skill-presence effect. External review decided `PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE`; the experiment is closed without qualification. The Presence Regression Gate is `NOT QUALIFIED BY PHASE6 FORMAL MATRIX`; Output Canonicalization remains `INSUFFICIENT_EVIDENCE`.
 
 ## Read-only Skill candidate screen
 
@@ -109,7 +111,7 @@ If a real Skill instruction artifact is evaluated in a later phase, the evidence
 
 ## Academy candidates and lifecycle
 
-- `PRESENCE_REGRESSION_GATE`: `CANDIDATE / PREREGISTRATION_REQUIRED`; available evidence is the single Phase 5 W34 observation. Missing evidence includes independent replicated capability families, real Skill instruction-artifact evaluation, and P3 invocation-only observability. `promotion_allowed=false`.
+- `PRESENCE_REGRESSION_GATE`: `NOT QUALIFIED BY PHASE6 FORMAL MATRIX; PHASE5 W34 REMAINS A SINGLE OBSERVATION`. Phase 6 V2 was preregistered and attempted once, then stopped at its first trial; retry is forbidden. Any future study of ambient Host/tool-policy confounding or a redesigned experiment must use a new research question and new preregistration, not a Phase 6 retry. `promotion_allowed=false`.
 - `OUTPUT_CANONICALIZATION_POLICY`: `INSUFFICIENT_EVIDENCE`; L73 is one frozen exact mismatch and remains scored incorrect. `promotion_allowed=false`.
 - All 136 Skills remain `DISCOVERED / UNEVALUATED`; no real Skill is promoted. `project-experience-curator` remains `DISCOVERED / UNEVALUATED` and excluded from first-round candidates.
 - Capability Certification, Shadow, and Production remain `NOT STARTED`. No Academy-wide PASS is asserted.
@@ -127,4 +129,4 @@ If a real Skill instruction artifact is evaluated in a later phase, the evidence
 - Phase 5 evaluator SHA-256: `96e919d4798ebea839e6c58949c7fa1706d53806d3dc5041a71476b7a35ff25c`
 - Phase 5 execution-order SHA-256: `579b320800cfddc2d48db7ed1dcc645419614c9e059310a90cfeeaa0e743c3c6`
 
-Run `python scripts/eval/run_presence_regression_phase6.py --validate` for offline artifact consistency validation; it makes no Host call and accepts the preserved stopped-execution record. The one-shot external authorization is consumed. Phase 6 remains `IN PROGRESS / FORMAL EXECUTION STOPPED — EXTERNAL REVIEW PENDING`; no retry or closure decision is made here.
+Run `python scripts/eval/run_presence_regression_phase6.py --validate` for offline artifact consistency validation; it makes no Host call and accepts the preserved stopped-execution record. The historical one-shot external authorization is `GRANTED AND CONSUMED`; current execution authorization is false. Phase 6 is `CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED`; no retry is allowed and no qualification is asserted.

@@ -57,8 +57,15 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual("FROZEN BEFORE FIRST PHASE 6 HOST TRIAL", self.result["protocol_history"]["PHASE6_PRESENCE_REGRESSION_PREREG_V2"])
         self.assertEqual("PRESENCE_REGRESSION_EVAL_V2", self.evaluator["evaluator_version"])
         self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["status"])
+        self.assertEqual("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", self.result["phase_status"])
+        self.assertEqual("CLOSED / INCONCLUSIVE", self.result["external_review_status"])
+        self.assertEqual("PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE", self.result["external_review_decision"])
         self.assertTrue(self.result["execution_authorized"])
         self.assertTrue(self.result["formal_execution_authorized"])
+        self.assertEqual("CONSUMED", self.result["formal_execution_authorization_state"])
+        self.assertFalse(self.result["currently_execution_authorized"])
+        self.assertFalse(self.result["retry_allowed"])
+        self.assertFalse(self.result["remaining_trials_executed"])
         self.assertEqual("EXTERNAL_WINDOWS_POWERSHELL", self.result["formal_execution_controller"])
         self.assertEqual(AUTHORIZATION_BASIS, self.result["authorization_basis"])
         self.assertEqual(0, self.result["formal_trial_count"])
@@ -72,6 +79,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(3, self.result["formal_trials"]["VC-REL-P0"]["tool_call_count"])
         self.assertFalse(self.result["formal_trials"]["VC-REL-P0"]["formal_trial_counted"])
         self.assertEqual("TRUE_HOST_TOOL_CONTAMINATION", self.result["formal_execution_incident"]["classification"])
+        self.assertEqual(3, self.result["formal_trials"]["VC-REL-P0"]["tool_call_count"])
         self.assertFalse(self.result["formal_execution_incident"]["retry_allowed"])
         self.assertFalse(self.result["formal_execution_incident"]["remaining_trials_executed"])
         self.assertEqual("PHASE5_OFFICIAL_HOST_INVOCATION_V1", self.result["invocation_spec_id"])
@@ -245,7 +253,9 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual(1, summary["execution_count"])
         self.assertEqual(1, summary["attempted_trial_count"])
         self.assertEqual(0, summary["nexus_model_receipt_count"])
-        self.assertTrue(summary["host_execution_authorized"])
+        self.assertTrue(summary["host_execution_was_authorized"])
+        self.assertEqual("CONSUMED", summary["host_execution_authorization_state"])
+        self.assertFalse(summary["host_execution_authorized"])
         runner_source = (ROOT / "scripts/eval/run_presence_regression_phase6.py").read_text(encoding="utf-8")
         self.assertIn("--execute-host", runner_source)
         self.assertIn("EXTERNAL_WINDOWS_POWERSHELL", runner_source)
@@ -256,7 +266,9 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         candidates = json.loads(CANDIDATES.read_text(encoding="utf-8"))
         ledger = {item["candidate_id"]: item for item in candidates["candidates"]}
         self.assertEqual("NOT QUALIFIED BY PHASE6 FORMAL MATRIX; PHASE5 W34 REMAINS A SINGLE OBSERVATION", ledger["PRESENCE_REGRESSION_GATE"]["status"])
+        self.assertNotIn("CANDIDATE / PREREGISTRATION_REQUIRED", ledger["PRESENCE_REGRESSION_GATE"]["status"])
         self.assertFalse(ledger["PRESENCE_REGRESSION_GATE"]["promotion_allowed"])
+        self.assertEqual("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", next(row for row in candidates["phases"] if row["phase"] == "6")["status"])
         self.assertIn("W34", ledger["PRESENCE_REGRESSION_GATE"]["evidence_available"])
         self.assertEqual("INSUFFICIENT_EVIDENCE", ledger["OUTPUT_CANONICALIZATION_POLICY"]["status"])
         self.assertFalse(ledger["OUTPUT_CANONICALIZATION_POLICY"]["promotion_allowed"])
@@ -285,7 +297,7 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         phase5_phase = next(row for row in candidates["phases"] if row["phase"] == "5")
         phase6_phase = next(row for row in candidates["phases"] if row["phase"] == "6")
         self.assertEqual("CLOSED / ACCEPTED", phase5_phase["status"])
-        self.assertIn("FORMAL EXECUTION STOPPED", phase6_phase["status"])
+        self.assertEqual("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", phase6_phase["status"])
         phase5_doc = PHASE5_DOC.read_text(encoding="utf-8")
         phase6_doc = PHASE6_DOC.read_text(encoding="utf-8")
         synthesis = SYNTHESIS.read_text(encoding="utf-8")
@@ -298,6 +310,11 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertIn("UNSCOPED/SCOPE-UNGUARDED INSTRUCTION BLEED OBSERVATION", phase6_doc)
         self.assertIn("NATIVE_HOST_SKILL_LOADED_STATE_VERIFIED", phase6_doc)
         self.assertIn("No Academy-wide PASS", phase6_doc)
+        self.assertIn("Historical formal execution authorization: `GRANTED AND CONSUMED`", phase6_doc)
+        self.assertIn("Current execution authorization: `false`", phase6_doc)
+        self.assertIn("new research question and new preregistration", phase6_doc)
+        self.assertNotIn("CANDIDATE / PREREGISTRATION_REQUIRED", phase6_doc)
+        self.assertIn("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", synthesis)
 
     def test_skill_screen_eligibility_is_fully_derived_and_unknown_blocks(self):
         ideal = {
@@ -343,6 +360,9 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual("PHASE6_FORMAL_EXECUTION_INCIDENT_AUDIT_V1", incident["incident_version"])
         self.assertEqual("5b383482536f50ff215644cec314d9fbfd1b11d4", incident["source_formal_commit"])
         self.assertEqual("TRUE_HOST_TOOL_CONTAMINATION", incident["incident_classification"])
+        self.assertEqual("CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED", incident["phase_status"])
+        self.assertEqual("CLOSED / INCONCLUSIVE", incident["external_review_status"])
+        self.assertEqual("PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE", incident["external_review_decision"])
         self.assertEqual(1, incident["execution_count"])
         self.assertEqual(1, incident["attempted_trial_count"])
         self.assertEqual(0, incident["formal_trial_count"])
@@ -372,6 +392,9 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         self.assertEqual("STOPPED_ON_PROTOCOL_CONDITION", self.result["status"])
         self.assertEqual(1, summary["execution_count"])
         self.assertEqual(1, summary["attempted_trial_count"])
+        self.assertFalse(summary["host_execution_authorized"])
+        self.assertTrue(summary["host_execution_was_authorized"])
+        self.assertEqual("CONSUMED", summary["host_execution_authorization_state"])
         with patch.dict(os.environ, {CONTROLLER_ENV: FORMAL_CONTROLLER}), \
              patch("scripts.eval.run_presence_regression_phase6.shutil.which") as which, \
              patch("scripts.eval.run_behavioral_phase5.subprocess.run") as process:
@@ -387,6 +410,8 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
         data = json.loads(PHASE6_RESULT.read_text(encoding="utf-8"))
         data.update({
             "status": "IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING",
+            "formal_execution_authorization_state": "AVAILABLE",
+            "currently_execution_authorized": True,
             "execution_count": 0,
             "attempted_trial_count": 0,
             "completed_trial_count": 0,
@@ -395,6 +420,8 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
             "unique_thread_id_count": 0,
         })
         data.pop("external_review_status", None)
+        data.pop("external_review_decision", None)
+        data.pop("phase_status", None)
         data.pop("formal_execution_incident", None)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
@@ -447,6 +474,8 @@ class PresenceRegressionPhase6Tests(unittest.TestCase):
                 completed = run_formal_matrix(results_path=result_path, capture_dir=capture_dir)
 
             self.assertEqual("FORMAL_MATRIX_COMPLETE", completed["status"])
+            self.assertEqual("CONSUMED", completed["formal_execution_authorization_state"])
+            self.assertFalse(completed["currently_execution_authorized"])
             self.assertEqual(24, call_count)
             self.assertEqual(24, completed["formal_trial_count"])
             self.assertEqual(0, completed["nexus_model_receipt_count"])

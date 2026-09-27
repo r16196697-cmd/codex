@@ -223,6 +223,8 @@ def run_formal_matrix(
         raise SystemExit("Refusing Host execution: external execution authorization metadata is absent.")
     if prior.get("authorization_basis") != AUTHORIZATION_BASIS:
         raise SystemExit("Refusing Host execution: authorization basis mismatch.")
+    if prior.get("formal_execution_authorization_state", "AVAILABLE") != "AVAILABLE" or prior.get("currently_execution_authorized", True) is not True:
+        raise SystemExit("Refusing repeat Phase 6 execution: historical authorization has been consumed.")
     if prior.get("execution_count", 0) != 0 or prior.get("attempted_trial_count", 0) != 0 or prior.get("formal_trials"):
         raise SystemExit("Refusing repeat Phase 6 execution; preserve the first execution record.")
     if prior.get("formal_trial_count", 0) != 0 or prior.get("nexus_model_receipt_count", 0) != 0:
@@ -250,6 +252,8 @@ def run_formal_matrix(
     result = dict(prior)
     result.update({
         "status": "HOST_TRIALS_IN_PROGRESS",
+        "formal_execution_authorization_state": "CONSUMED",
+        "currently_execution_authorized": False,
         "execution_count": 1,
         "attempted_trial_count": 0,
         "formal_trial_count": 0,
@@ -433,12 +437,22 @@ def validate_preregistration(
     if result.get("status") == "IN PROGRESS / FORMAL MATRIX AUTHORIZED — EXTERNAL EXECUTION PENDING":
         if result["execution_count"] != 0 or result["attempted_trial_count"] != 0 or result["formal_trial_count"] != 0 or formal_trials:
             raise ValueError("Pre-execution authorization state must have zero attempts and formal trials.")
+        if result.get("formal_execution_authorization_state", "AVAILABLE") != "AVAILABLE" or result.get("currently_execution_authorized", True) is not True:
+            raise ValueError("Pre-execution authorization must remain available until the first execution attempt.")
     elif result.get("status") == "STOPPED_ON_PROTOCOL_CONDITION":
         if result["execution_count"] != 1 or len(formal_trials) != result["attempted_trial_count"]:
             raise ValueError("Stopped execution record must preserve its one-shot attempt count and trial records.")
         counted = sum(row.get("formal_trial_counted") is True for row in formal_trials.values())
         if counted != result["formal_trial_count"]:
             raise ValueError("Stopped execution formal count does not match preserved trial records.")
+        if result.get("formal_execution_authorization_state") != "CONSUMED" or result.get("currently_execution_authorized") is not False:
+            raise ValueError("Stopped execution must preserve historical authorization as consumed and current authorization as false.")
+        if result.get("retry_allowed") is not False or result.get("remaining_trials_executed") is not False:
+            raise ValueError("Stopped execution must preserve its no-retry and remaining-trials boundary.")
+        if result.get("phase_status") != "CLOSED / INCONCLUSIVE — FORMAL MATRIX EXHAUSTED":
+            raise ValueError("Stopped Phase 6 experiment must retain the externally reviewed phase closure.")
+        if result.get("external_review_status") != "CLOSED / INCONCLUSIVE" or result.get("external_review_decision") != "PHASE6_FORMAL_MATRIX_EXHAUSTED / INCONCLUSIVE":
+            raise ValueError("Stopped Phase 6 experiment must retain the external review decision.")
     if result.get("execution_authorized") is not True or packets.get("execution_authorized") is not True:
         raise ValueError("Phase 6 external execution authorization metadata is missing.")
     if result.get("formal_execution_authorized") is not True or result.get("formal_execution_controller") != FORMAL_CONTROLLER:
@@ -450,6 +464,11 @@ def validate_preregistration(
         raise ValueError("Phase 6 sanitized argv differs from the canonical Phase 5 invocation.")
     if result.get("sanitized_argv_sha256") != _argv_sha256(FROZEN_SANITIZED_ARGV):
         raise ValueError("Phase 6 sanitized argv SHA-256 differs from the canonical Phase 5 invocation.")
+    execution_was_authorized = result.get("formal_execution_authorized") is True
+    authorization_state = result.get("formal_execution_authorization_state")
+    if authorization_state is None:
+        authorization_state = "CONSUMED" if result["execution_count"] or result["attempted_trial_count"] else "AVAILABLE"
+    currently_authorized = authorization_state == "AVAILABLE" and result.get("currently_execution_authorized", True) is True
     return {
         "protocol_version": packets["protocol_version"],
         "packet_count": len(rows),
@@ -466,7 +485,9 @@ def validate_preregistration(
         "attempted_trial_count": result["attempted_trial_count"],
         "formal_trial_count": result["formal_trial_count"],
         "nexus_model_receipt_count": result["nexus_model_receipt_count"],
-        "host_execution_authorized": True,
+        "host_execution_was_authorized": execution_was_authorized,
+        "host_execution_authorization_state": authorization_state,
+        "host_execution_authorized": currently_authorized,
         "formal_execution_controller": FORMAL_CONTROLLER,
     }
 
