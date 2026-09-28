@@ -20,6 +20,20 @@ After current migrations complete on an empty root, the persisted baseline inclu
 
 The policy is supplied to the store from configuration; it is not a normal user Authority record. A policy with no configured anchors therefore leaves the initialized instance without an ordinary root of Authority.
 
+### 2.1 Root Generation and Policy-Binding States
+
+The binding protocol must distinguish the root's generation instead of interpreting every missing binding the same way:
+
+| State | Meaning | Policy-content binding | Ordinary product behavior |
+|---|---|---|---|
+| `FRESH_BOUND_INSTANCE` | Created by the reviewed Stage 1 intent, with its exact binding committed before success is reported. | `BOUND` to the recorded policy version/digest and journal identity digest. | Normal startup is allowed only while all bound identities match. |
+| `LEGACY_UNBOUND_INSTANCE` | Database existed before the binding feature and was migrated without adopting a policy document. This does not mean compromised. | `UNVERIFIED`; no policy digest is inferred. | Read/inspect and explicit adoption are allowed; ordinary mutations are suspended. |
+| `LEGACY_ADOPTED_BOUND_INSTANCE` | Legacy-origin database whose operator explicitly bound a policy at adoption time. | `BOUND_FROM_ADOPTION`; historical policy content remains unknown. | Normal startup is allowed only while the adopted policy and journal identities match. |
+| `PARTIAL_FRESH_BOOTSTRAP` | A fresh-init intent exists, but schema, journal watermark, and binding have not all reached the committed state. | `PENDING` or incomplete. | Ordinary client and product services refuse the root; only exact bootstrap resume/inspection is allowed. |
+| `CONFLICT_OR_RECOVERY_REQUIRED` | Input, schema, journal, binding, or persisted state disagrees or cannot be classified safely. | Untrusted/ambiguous. | Fail closed; require reviewed recovery. |
+
+`LEGACY_UNBOUND_INSTANCE` is an honest compatibility classification, not a finding of compromise. `POLICY_CONTENT_BINDING=UNVERIFIED` means Nexus cannot prove which complete policy document governed the historical database because old Authority rows preserve only `policy_version`.
+
 ## 3. Bootstrap Paradox
 
 Grant creation requires an active issuer, and a root Grant issuer must be an active, persisted Trust Anchor whose exact principal ID is allowed by the loaded policy. A Trust Anchor requires an active Principal and the current policy version. A Task requires an active requester; the Root Run additionally requires a valid Grant with `RUN_CREATE` authority and valid Run/event classification assertions. Thus database initialization alone cannot produce the first governed Task/Run.
@@ -43,10 +57,25 @@ Stage 1 is infrastructure initialization only:
 1. Require an explicit target root, an explicit local policy file, and an explicitly selected independent Purge Journal location. Keep all local paths in process/configuration only.
 2. Validate policy schema and canonicalize its JSON semantics. Require the policy to explicitly list the one intended initial operator anchor; preserve the repository default policy with an empty anchor list.
 3. Validate root and journal safety before constructing `ObjectStore` (see §13).
-4. Invoke the normal `ObjectStore` migration/journal initialization path. Do not create Task/Run/Memory or Authority rows beyond the reserved recovery identity supplied by the existing migration.
-5. Report `INITIALIZED_UNAUTHORIZED` until Stage 2 has completed. The ordinary client may open the initialized store, but no user work is authorized without a Grant.
+4. Require an explicit `INSTANCE_INITIALIZE` mode that ordinary `ObjectStore` construction cannot select implicitly. It applies the normal contiguous migrations and Purge Journal freshness handshake, then commits the binding record. The migration creates the binding schema only; it never hashes or adopts the currently loaded policy.
+5. Report `INITIALIZED_UNAUTHORIZED` only after the complete binding is durably committed and re-read. Do not create Task/Run/Memory or user Authority rows. Ordinary production open is permitted only for a complete bound instance (or the restricted legacy inspect/adoption surface below).
 
-**Policy-binding gap:** current TrustAnchor and Grant records persist only `policy_version`; the current code has no instance-level binding to the full policy-document digest. Stage 1 must not claim that version equality proves policy-content identity. The proposed minimal implementation is a schema/migration-backed singleton instance-binding record containing only an instance ID, policy version, canonical policy SHA-256, independent-journal identity digest, and initialization timestamp. It stores no policy text or local path. Normal product opens must compare the supplied policy's version and digest to this binding and fail closed on mismatch; policy changes need a separately reviewed rotation path. This metadata is an initialization protocol detail, not a new Foundation Contract.
+The fresh binding contains a generated `instance_id`, policy version, canonical policy SHA-256, independent-journal identity digest, and `initialized_at`. It contains no policy text or local path. Initialization has durable intermediate steps, so it is not one database transaction; the final binding transaction is the completion point, and Stage 1 reports success only after that binding is committed and re-read. Normal startup compares all bound values and fails closed on mismatch. Same policy version with a different digest is a conflict; a different policy version is unsupported until a separately reviewed rotation design exists.
+
+### Fresh Stage 1 Partial Failure and Resume
+
+Before side effects, Stage 1 validates the target, configured journal, policy, and aliases. It then atomically writes a small, secret-free fresh-init intent in the target root before creating the journal or database. The intent binds a generated instance ID, stable initialization command ID, policy version/digest, journal identity digest, and protocol version; it is a resume marker, not an Authority grant or completed policy binding. It stores no absolute path.
+
+| Crash point | Next invocation |
+|---|---|
+| Before the intent is durable | No initialization side effect is recognized. A new explicit intent may start only after the normal empty-root/journal preflight passes. |
+| After intent, before journal creation | Verify the exact intent and supplied policy/journal identities, then resume the same initialization. |
+| Journal created, before migrations complete | Verify the journal is still empty and matches the intent; resume only the contiguous migration prefix. Any history or identity mismatch is `CONFLICT_OR_RECOVERY_REQUIRED`. |
+| Migrations complete, before the sequence-zero watermark | Verify the same intent, schema/checksums, empty journal, and no ordinary user rows; complete the existing watermark handshake, then continue. |
+| Watermark complete, before binding commit | Verify all prior identities and the exact pending-fresh marker; commit the binding once. Do not infer completion from `nexus.sqlite` or migrations alone. |
+| Binding committed, response lost | Re-read and compare the exact binding and intent; return the prior success without another mutation. |
+
+An exact retry may resume only the same fresh-init command and immutable request. It must not delete/recreate a database or journal. Missing intent with partial files, changed inputs, unexpected rows, non-empty journal, or an unprovable crash point fails closed for review. Retain the non-sensitive intent as provenance and require it to agree with the committed binding on reopen; it is not silently removed as a repair step.
 
 ## 6. Stage 2 — AUTHORITY_BOOTSTRAP
 
@@ -54,7 +83,7 @@ Stage 2 is a distinct, explicitly invoked operator action after Stage 1. It comp
 
 Recommended sequence:
 
-1. Revalidate the instance-binding record and exact policy digest/version.
+1. Require `FRESH_BOUND_INSTANCE` or an explicitly adopted legacy binding; revalidate the exact current policy digest/version and journal identity. A legacy unbound root cannot enter Stage 2 directly.
 2. Require an interactive TTY confirmation over a displayed, immutable bootstrap request.
 3. Register the exact operator Principal as `HUMAN`, `ACTIVE`.
 4. Register an explicitly named `SERVICE`, `ACTIVE` local bootstrap/runtime Principal for the Bridge to act as. It is not an administrator; it receives only the following task-bound Grant. If review prefers a human as the direct Run actor, that alternative must be explicit and must not silently change actor semantics.
@@ -67,9 +96,15 @@ Stage 2 is not one database transaction today: each AuthorityService operation c
 
 ## 7. Policy / Trust Anchor Model
 
-Recommend option **A/B**: the operator supplies a local, secret-free, schema-valid production policy; Stage 1 validates and binds its version and canonical SHA-256; Stage 2 may register only the exact HUMAN principal already named in that policy. The repo default stays `trust_anchors: []` and is not changed to name the local user.
+For fresh roots, the operator supplies a local, secret-free, schema-valid production policy; Stage 1 validates and binds its version and canonical SHA-256; Stage 2 may register only the exact HUMAN principal already named in that policy. The repo default stays `trust_anchors: []` and is not changed to name the local user.
 
-The policy file path is never stored or shown in Nexus projections. The canonical digest is safe metadata. The current TrustAnchor `policy_ref` and Grant `policy_version` remain as implemented; the new instance binding is the additional content-integrity check required because those existing fields do not persist the document hash.
+### Selected Legacy Strategy: Explicit Adoption Required
+
+Choose **Option A — explicit legacy adoption**, not automatic compatibility writes. A root proven to predate the binding feature is classified `LEGACY_UNBOUND_INSTANCE` with `POLICY_CONTENT_BINDING=UNVERIFIED`. It is not called compromised. Ordinary mutating product paths and new Authority issuance are suspended until an operator explicitly adopts a policy binding; safe read/inspect and the adoption path remain available. This avoids silently trusting whichever policy happens to be loaded while preserving a recovery path for legacy data.
+
+The separate `adopt-policy-binding` operator action must use an interactive local confirmation and, before committing, verify the existing migration/checksum state, Purge Journal identity/head/watermark, object integrity and purge state, and authority consistency. It displays the proposed policy version and digest. It requires every persisted Trust Anchor to be allowed by that policy; all existing Grants, classification assertions, and Approval records must have the proposed policy version and pass current policy/authority consistency checks. Ambiguous or incompatible state is rejected without changing history. Adoption does not rewrite old Authority records or claim that the exact document was used historically. It binds the instance **from adoption time onward**, recording `source=LEGACY_OPERATOR_ADOPTION` and an adoption timestamp; original `initialized_at` remains unknown if it was not recorded. Only after this transaction commits can ordinary product mutations resume under the bound policy.
+
+The policy file path is never stored or shown in Nexus projections. The canonical digest is safe metadata. The current TrustAnchor `policy_ref` and Grant `policy_version` remain as implemented; the instance binding adds content integrity because those existing fields do not persist the document hash. No migration may populate that digest from the process's current policy.
 
 ## 8. Initial Principal
 
@@ -102,17 +137,37 @@ Require `status=ACTIVE`, explicit `issued_at`, and a finite operator-chosen `exp
 
 ## 10. Consistency / Replay / Partial Failure
 
-Stage 1 can be recognized from a complete current migration sequence, a valid instance-binding row, an intact fresh/current Purge Journal watermark, and zero ordinary Principal/Trust Anchor/Grant/Task/Run rows. The reserved recovery Principal is expected. No completion marker is needed for Stage 2: completion is derived from the exact active operator Principal, policy-backed anchor, exact active unexpired root Grant and its CommandLedger results.
+Stage 1 can be recognized as `FRESH_BOUND_INSTANCE` only from a complete current migration sequence, a valid bound instance row, an intact Purge Journal watermark, and zero ordinary Principal/Trust Anchor/Grant/Task/Run rows. The reserved recovery Principal is expected. An existing database whose pre-feature generation was captured as legacy is `LEGACY_UNBOUND_INSTANCE`; its missing policy digest is not repaired by ordinary startup. A durable fresh-init intent without a complete binding is `PARTIAL_FRESH_BOOTSTRAP`. Any state that cannot be proven to match one of these generations is `CONFLICT_OR_RECOVERY_REQUIRED`. No completion marker is needed for Stage 2: completion is derived from the exact active operator Principal, policy-backed anchor, exact active unexpired root Grant and its CommandLedger results.
 
 Derived states should be reported distinctly:
 
 - `UNINITIALIZED`: no Nexus database and no history-bearing journal.
-- `INITIALIZED_UNAUTHORIZED`: migrations/binding/watermark valid; no ordinary authority.
+- `INITIALIZED_UNAUTHORIZED`: a `FRESH_BOUND_INSTANCE` has valid migrations, binding and watermark; no ordinary authority.
+- `LEGACY_UNBOUND_INSTANCE`: migrated historical database; policy content is unverified, not presumed compromised; ordinary mutation is suspended pending explicit adoption.
+- `LEGACY_ADOPTED_BOUND_INSTANCE`: legacy-origin root with an explicit adoption binding; its historical policy content remains unknown, while current opens enforce the adopted digest.
+- `PARTIAL_FRESH_BOOTSTRAP`: a fresh-init intent exists but the complete schema/journal/binding commit is absent; ordinary product open is denied.
 - `AUTHORITY_BOOTSTRAP_PARTIAL`: only an exact prefix of the planned Principal/anchor/grant commands is committed; ordinary bootstrap work remains denied.
 - `AUTHORITY_BOOTSTRAP_COMPLETE`: all exact records and command results match the approved plan. Current usability is checked separately; an expired/revoked Grant does not trigger automatic re-issuance.
 - `CONFLICT_OR_RECOVERY_REQUIRED`: unexpected rows, mismatched replay, altered policy, journal inconsistency, or incompatible data.
 
 On partial Stage 2, only an explicit operator rerun with the same IDs, same request, same policy digest, and same command IDs may resume. The CommandLedger's exact replay returns prior command results without reapplying them; different request semantics conflict. Do not silently generate new command IDs to get around a conflict. If the exact prefix cannot be proven, stop for review.
+
+### Migration and Startup Ordering
+
+The required order is:
+
+1. A dedicated bootstrap preflight determines whether this is an explicitly requested fresh root or a database that already existed before the binding feature. It validates target/journal aliases and the supplied policy without opening a normal writable product instance.
+2. For a fresh root, atomically create the durable fresh-init intent before creating journal/database files. Ordinary startup cannot set `INSTANCE_INITIALIZE` implicitly. A crash residue that is not a complete verifiable intent is a conflict, not an empty-root retry.
+3. Acquire the existing single-writer lock. Apply contiguous checksum-verified migrations. The binding migration creates only the binding/state schema; it never records the loaded policy hash. A narrowly scoped migration-coordinator hook records a generation marker (`PENDING_FRESH` for an explicit matching fresh intent, or `LEGACY_UNBOUND` only when pre-migration evidence proves the database already existed) in the same migration transaction. Both markers have a null policy digest until an explicit binding action commits. This marker records generation only; it is not a policy endorsement.
+4. Run the existing independent Purge Journal startup validation and sequence-zero watermark handshake after schema migrations. Fresh initialization requires the exact empty journal bound by its intent; history or mismatch is a conflict. A legacy root must match its persisted watermark and journal identity; migration cannot bless a replacement journal.
+5. Before orphan cleanup or exposing ordinary Core/application services, ObjectStore validates generation and binding. Fresh initialization commits the complete policy/journal binding only through the restricted bootstrap initialization mode. Legacy remains unverified until the explicit adoption command commits. Normal startup never creates either binding.
+6. `FRESH_BOUND_INSTANCE` opens normally only when schema, policy version/digest, journal identity, and watermark all match. A same-version/different-hash policy fails closed; a different version is unsupported pending a separately reviewed rotation design. Partial or conflicting states expose only a sanitized status and the permitted bootstrap/recovery surface.
+
+If the implementation cannot atomically preserve the pre-migration generation fact alongside the binding-schema migration, it must classify the resulting root as `CONFLICT_OR_RECOVERY_REQUIRED`; it must not guess fresh versus legacy. `force_recovery` is not an initialization mode and must not be reused for this purpose.
+
+### Enforcement Boundary
+
+Use both layers. ObjectStore/Core startup is the invariant boundary: it detects generation, validates bound policy/journal identities, exposes sanitized binding status, and blocks ordinary mutations for partial, conflicting, or legacy-unadopted roots before cleanup/services are exposed. A narrowly scoped inspect/adoption startup mode may expose only reads needed to validate and the binding-adoption mutation; it is distinct from `force_recovery`. The dedicated bootstrap application owns the explicit fresh binding commit and legacy adoption intent. `adapters.client`, Panel, and other compositions consume that status but cannot bypass it; the ordinary ObjectStore constructor never silently binds or adopts a policy.
 
 ## 11. Operator CLI Surface
 
@@ -121,13 +176,14 @@ Recommend a separate module, for example:
 ```text
 python -m adapters.bootstrap initialize-instance --data-root <local-root> --policy <local-policy> --independent-purge-journal <local-journal>
 python -m adapters.bootstrap authority-bootstrap --data-root <local-root> --policy <same-local-policy> --operator-principal-id <id> --runtime-principal-id <id> --task-id <reserved-id> --root-run-id <reserved-id> --grant-id <id> --expires-at <timestamp> --command-id-prefix <stable-id>
+python -m adapters.bootstrap adopt-policy-binding --data-root <legacy-root> --policy <reviewed-local-policy> --command-id <stable-id>
 ```
 
-These are design examples, not implemented commands. Keeping bootstrap separate preserves `python -m adapters.client` and Panel's existing-root-only semantics. Stage 1 should require explicit intent and report that it creates only an unauthorized instance. Stage 2 must require TTY confirmation of the full normalized authority request; no `--yes`, `--force`, environment-driven identity, or startup auto-bootstrap option. Do not print local absolute paths in persistent records or public output.
+These are design examples, not implemented commands. Keeping bootstrap separate preserves `python -m adapters.client` and Panel's existing-root-only semantics. Stage 1 should require explicit intent and report that it creates only an unauthorized instance. Stage 2 must require TTY confirmation of the full normalized authority request; legacy adoption must independently require TTY confirmation of the displayed policy version/digest and compatibility findings. No `--yes`, `--force`, environment-driven identity, or startup auto-bootstrap option is allowed. Do not print local absolute paths in persistent records or public output.
 
 ## 12. Purge Journal Semantics
 
-Reuse `IndependentPurgeJournal` exactly; do not add another journal initializer. For a new root, the configured journal must be independent of the data root, valid, and have no historical records. `ObjectStore`'s existing fresh-start path establishes an empty journal, applies migrations, then persists its identity digest and sequence-zero/head-hash watermark. On normal reopen, the same configured journal identity and current head must match the database watermark. A non-empty journal without a matching database watermark, a changed journal identity, or a missing/mismatched head enters recovery and blocks normal startup.
+Reuse `IndependentPurgeJournal` exactly; do not add another journal initializer. For a new root, the configured journal must be independent of the data root, valid, and have no historical records. The explicit bootstrap flow writes its init intent, establishes the empty journal, applies migrations, performs the existing identity/head validation and sequence-zero watermark handshake, and only then commits the fresh policy binding. On normal reopen, the same configured journal identity and current head must match the database watermark before a bound instance is exposed. A non-empty journal without a matching database watermark, a changed journal identity, or a missing/mismatched head enters recovery and blocks normal startup. A legacy adoption also validates, but never resets, its existing watermark.
 
 The journal identity in the database is a digest, not a local path. A failed initialization must never “fix” a mismatch by deleting/replacing the external journal.
 
@@ -136,7 +192,7 @@ The journal identity in the database is a digest, not a local path. A failed ini
 Before any constructor can create files, the future initializer must:
 
 - reject a target inside the source repository, `ui-preview`, a test/Academy root, or a known backup/restore root;
-- require the target not to exist or to be a strictly empty directory with no database, object payload, foreign file, or existing instance metadata;
+- require the target not to exist or to be a strictly empty directory with no database, object payload, foreign file, or existing instance metadata; on exact resume, the only permitted entry is the verifiable fresh-init intent and its atomic-write residue is never ignored;
 - resolve path aliases and symlinks and prove the final target remains outside the repository and disjoint from source/journal; ambiguous resolution fails closed;
 - ensure the purge journal is outside the data root and empty of historical records; reject aliases between journal and target;
 - never overwrite, migrate an incompatible existing instance as a “fresh” root, recover, or repair in place.
@@ -151,7 +207,11 @@ Pre-Nexus history must be imported as source Artifact/Evidence with explicit `IM
 
 ## 15. Test Plan
 
-**Instance initialization:** external empty root succeeds; existing DB, nonempty root, repo-contained/symlink-escaping target, target alias, stale/nonempty journal, or incompatible policy binding is denied before overwrite; migration sequence completes; normal reopen succeeds with matching journal identity/head; sequence-zero watermark is consistent; no user Task/Run/Principal/Grant is created.
+**Instance initialization and generations:** external empty root succeeds only via explicit fresh intent; existing DB, nonempty root, repo-contained/symlink-escaping target, target alias, stale/nonempty journal, or incompatible policy binding is denied before overwrite; migration sequence completes; normal reopen succeeds with matching journal identity/head; sequence-zero watermark is consistent; no user Task/Run/Principal/Grant is created. A pre-feature root migrates to `LEGACY_UNBOUND_INSTANCE` with a null/unverified policy digest, and tests prove migration never copies the currently loaded policy hash. Same policy version with changed digest fails closed; changed policy version is unsupported. Fresh marker and binding agree across close/reopen.
+
+**Stage 1 partial failure:** inject a crash after intent, journal creation, migration completion, watermark commit, and binding commit. Exact same-command/input retries resume only provable pending states; a lost response after binding returns the committed result. Changed policy/journal/command, unexpected journal history/rows, missing marker with partial files, or unclassifiable migration state fails closed; no path deletes/recreates the database. Ordinary client refuses `PARTIAL_FRESH_BOOTSTRAP` and `CONFLICT_OR_RECOVERY_REQUIRED`.
+
+**Legacy adoption:** unbound legacy roots permit only safe inspection/adoption before binding; ordinary mutations and new Trust Anchor/root Grant issuance are denied. Adoption requires TTY confirmation, valid migration/journal/object/purge integrity, all current Trust Anchors allowed by the supplied policy, and compatible policy versions for existing Grants/classifications/Approvals. Exact adoption replay returns the existing binding; changed request conflicts; incompatible state remains unbound and unmodified. The persisted source/timestamp explicitly say `LEGACY_OPERATOR_ADOPTION` and do not rewrite old Authority rows.
 
 **Authority bootstrap:** empty policy anchor list denies Stage 2; an arbitrary ID not listed in policy cannot become an anchor; exact policy-listed HUMAN is accepted; recovery Principal cannot be promoted/used; explicit SERVICE grantee receives only the exact task-bound Grant; expiry is required; wildcard, unrelated task/resource, egress, Effect, or unapproved actions are denied; exact command replay is idempotent; changed command semantics conflict; failure after each persisted command leaves a detectable partial state and exact retry resumes without duplicate rows.
 
@@ -161,8 +221,8 @@ These tests must use a temporary external root and local test policy, but test i
 
 ## 16. Non-goals
 
-This contract does not authorize creating a production root, changing `default-policy.json`, adding Principal/TrustAnchor/Grant rows, creating a Task/Run, importing source, writing Memory/Evidence/Artifact/Context Pack, changing Foundation Contracts, implementing a general account system, adding policy rotation, building a source importer, or running Utility/Host/Academy experiments.
+This contract does not authorize creating a production root, changing `default-policy.json`, adding Principal/TrustAnchor/Grant rows, creating a Task/Run, importing source, writing Memory/Evidence/Artifact/Context Pack, changing Foundation Contracts, implementing a general account system, implementing policy rotation, building a source importer, or running Utility/Host/Academy experiments. For a bound instance, same-version/different-hash policy is fail-closed and a different policy version remains unsupported until a separate reviewed rotation design.
 
 ## 17. Exact Next Step
 
-External review this bootstrap contract, especially the proposed policy-digest instance binding, local HUMAN/TTY threat-model wording, service-grantee semantics, Cartesian Grant-scope limitation, partial Stage 2 recovery, and exact Stage 3 resource/action plan. Only after acceptance and separate implementation authorization should a small initialization/Authority bootstrap slice be implemented and tested. Bootstrap execution still requires its own explicit authorization; this document grants none.
+External review this bootstrap contract, especially fresh/legacy generation classification, the rule that migration never adopts the loaded policy, explicit legacy adoption compatibility checks, restricted Stage 1 resume, startup enforcement ordering, local HUMAN/TTY threat-model wording, service-grantee semantics, Cartesian Grant-scope limitation, partial Stage 2 recovery, and exact Stage 3 resource/action plan. Only after acceptance and separate implementation authorization should a small initialization/Authority bootstrap slice be implemented and tested. Bootstrap execution still requires its own explicit authorization; this document grants none.
