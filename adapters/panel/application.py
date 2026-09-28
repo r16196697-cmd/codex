@@ -1,4 +1,4 @@
-"""Composition root for the local companion panel; requires an existing Nexus root."""
+"""Composition root for the command-scoped Operator Panel."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from kernel.participation import ParticipationModeService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.panel import PanelQueryService
+from kernel.skills import SkillRegistryService
 
 from adapters.panel.viewmodel import PanelViewModel
 
@@ -41,14 +42,14 @@ def open_panel_application(
 ) -> PanelApplication:
     """Compose from writer-owned services or own a standalone store.
 
-    A live companion passes the canonical writer's service bundle; this path
-    never opens an ObjectStore or attempts to acquire a second writer lock.
+    The writer-owned command path injects its services; that composition never
+    opens a second ObjectStore or attempts to acquire another writer lock.
     """
     root = Path(data_root).expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
         raise ValueError("No existing Nexus database at --data-root; the panel will not initialize one.")
     if writer_services is not None:
-        required = {"store", "runtime", "participation", "panel_queries", "memory", "context_packs", "metering"}
+        required = {"store", "runtime", "participation", "panel_queries", "memory", "context_packs", "metering", "skills"}
         if set(writer_services) != required:
             raise ValueError("PANEL_WRITER_SERVICE_BUNDLE_INVALID")
         store = writer_services["store"]
@@ -68,6 +69,7 @@ def open_panel_application(
         participation = ParticipationModeService(store)
         memory = MemoryService(store, authority, verifier=None)
         metering = MeteringService(store, authority, participation)
+        skills = SkillRegistryService(store=store, authority=authority, participation=participation)
         services = {
             "store": store,
             "runtime": DeterministicRuntime(store, authority, BudgetService(store), TraceRuntime(store, authority)),
@@ -77,6 +79,7 @@ def open_panel_application(
             "context_packs": ContextPackService(store=store, authority=authority, participation=participation,
                                                   memory=memory, metering=metering),
             "metering": metering,
+            "skills": skills,
         }
         return _compose_panel(store=store, services=services, owns_store=True)
     except Exception:
@@ -89,6 +92,7 @@ def _compose_panel(*, store, services: dict, owns_store: bool) -> PanelApplicati
         runtime=services["runtime"], participation=services["participation"],
         panel_queries=services["panel_queries"], memory=services["memory"],
         context_packs=services["context_packs"], metering=services["metering"],
+        skills=services["skills"],
     )
     return PanelApplication(store=store, view_model=view_model,
                             context_packs=services["context_packs"], metering=services["metering"],

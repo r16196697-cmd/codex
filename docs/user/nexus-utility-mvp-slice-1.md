@@ -12,7 +12,7 @@ Use an existing Nexus data root; the panel refuses to initialize a new database:
 python -m adapters.panel --data-root <existing-nexus-data-root>
 ```
 
-The panel uses Python's standard-library Tkinter UI. `adapters.panel.application` composes existing Nexus services and bounded Core queries; the UI only consumes the ViewModel. The current scope is one Nexus data root because the Core has no first-class Project object.
+The panel uses Python's standard-library Tkinter UI. `adapters.panel.application` composes existing Nexus services and bounded Core queries; the UI only consumes the ViewModel. This is a command-scoped Operator Panel: the Panel command itself owns the single writer for its session. It cannot attach concurrently to a different writer process; there is no persistent writer daemon or IPC endpoint. The current scope is one Nexus data root because the Core has no first-class Project object.
 
 ## Participation mode
 
@@ -26,7 +26,7 @@ Leaving `ACTIVE` prompts for confirmation. Mode changes to `OBSERVE` or `BYPASS`
 
 ## Panel pages and evidence
 
-`OVERVIEW`, `TASKS`, and `MEMORY` show bounded Core metadata. Memory payload bodies are never included. `CONTEXT` and `SKILLS` report `NOT IMPLEMENTED` until their production runtimes exist; Academy static screening is not a production Skill registry.
+At the Slice 1 boundary, `CONTEXT` and `SKILLS` reported `NOT IMPLEMENTED`; later Slice 2 and Slice 3 documents supersede those page states. `OVERVIEW`, `TASKS`, and `MEMORY` show bounded Core metadata. Memory payload bodies are never included. Academy static screening is not a production Skill registry.
 
 `VALUE` presents a metering shape with `OBSERVED`, `HOST_DECLARED`, `DERIVED`, and `UNAVAILABLE` provenance. The panel reports grounded Core counts as derived snapshots. Host token/latency telemetry, Context Pack size, Skill selection/loading, duplicate/reused work, and cost/savings remain `UNAVAILABLE` unless later reported or derived from actual Nexus records. Missing telemetry is `null` plus `UNAVAILABLE`, never zero. No behavioral experiment is run by this slice.
 

@@ -152,7 +152,8 @@ class ParticipationPanelTests(unittest.TestCase):
             self.assertEqual(snapshot["participation_mode"], "ACTIVE")
             self.assertEqual(snapshot["runtime_mode"], "NORMAL")
             self.assertEqual(snapshot["context_status"]["status"], "NOT COMPILED")
-            self.assertEqual(snapshot["skill_status"]["status"], "NOT IMPLEMENTED")
+            self.assertEqual(snapshot["skill_status"]["status"], "OBSERVED")
+            self.assertEqual(snapshot["skill_status"]["registered_count"], 0)
             for name in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_tokens",
                          "latency", "context_pack_size", "skill_instructions_selected",
                          "skill_instructions_loaded", "duplicate_work_reused_count",

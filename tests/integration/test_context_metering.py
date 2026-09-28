@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import shutil
 import tempfile
 import unittest
+from types import SimpleNamespace
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,6 +28,7 @@ from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
 from kernel.object.errors import SchemaUnsupported
 from kernel.runtime.panel import PanelQueryService
+from kernel.skills import SkillRegistryService
 from kernel.object.errors import WriterAlreadyRunning
 
 
@@ -337,9 +340,16 @@ class ContextMeteringTests(unittest.TestCase):
                  metrics_json, hashlib.sha256(metrics_json.encode("utf-8")).hexdigest(), "2026-09-28T00:00:00Z"),
             )
             conn.execute("DELETE FROM schema_migrations WHERE version=25")
+            conn.execute("DELETE FROM schema_migrations WHERE version=26")
             conn.execute("PRAGMA user_version=24")
         self.store.close()
-        reopened = ObjectStore(self.root, policy=self.policy)
+        migration_dir = Path(self.temp.name) / "migration-25-only"
+        migration_dir.mkdir()
+        source_migrations = Path(__file__).resolve().parents[2] / "migrations"
+        for migration in source_migrations.glob("*.sql"):
+            if int(migration.name[:4]) <= 25:
+                shutil.copy2(migration, migration_dir / migration.name)
+        reopened = ObjectStore(self.root, policy=self.policy, migrations_dir=migration_dir)
         self.store = reopened
         self.addCleanup(reopened.close)
         with reopened._connection() as conn:
@@ -536,6 +546,8 @@ class ContextMeteringTests(unittest.TestCase):
             "store": self.store, "runtime": self.runtime, "participation": self.participation,
             "panel_queries": PanelQueryService(self.store), "memory": self.memory,
             "context_packs": self.context, "metering": self.metering,
+            "skills": SkillRegistryService(store=self.store, authority=self.authority,
+                                            participation=self.participation),
         }
         app = open_panel_application(self.root, writer_services=writer_services)
         try:
@@ -546,7 +558,8 @@ class ContextMeteringTests(unittest.TestCase):
             self.assertEqual(context["status"], "PACK_COMPILED")
             self.assertEqual(context["pack_id"], self.pack_ids[0])
             self.assertEqual(context["model_visible_exposure"], "UNKNOWN")
-            self.assertEqual(snapshot["skill_status"]["status"], "NOT IMPLEMENTED")
+            self.assertEqual(snapshot["skill_status"]["status"], "OBSERVED")
+            self.assertEqual(snapshot["skill_status"]["registered_count"], 0)
             self.assertEqual(snapshot["value_metrics"]["context_pack_bytes"]["provenance"], "DERIVED")
             self.assertEqual(snapshot["value_metrics"]["host_total_turn_input_tokens"]["value"], 100)
             self.assertEqual(snapshot["value_metrics"]["host_total_turn_input_tokens"]["provenance"], "HOST_DECLARED")
@@ -581,6 +594,239 @@ class ContextMeteringTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
         finally:
             reopened.close()
+
+    def _skill_service_and_package(self, *, name="tiny-helper", description="A tiny deterministic helper.", resources=None):
+        package_root = Path(self.temp.name) / "skill-packages"
+        package = package_root / "sample"
+        package.mkdir(parents=True, exist_ok=True)
+        body = f"---\nname: {name}\ndescription: {description}\n---\n\nInstruction body for {name}.\n"
+        (package / "SKILL.md").write_text(body, encoding="utf-8")
+        for relative, content in (resources or {}).items():
+            target = package / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        service = SkillRegistryService(store=self.store, authority=self.authority,
+                                      participation=self.participation,
+                                      source_roots={"EXPLICIT_IMPORT": package_root})
+        return service, package
+
+    def _register_skill(self, *, service, package, namespace="test", name="tiny-helper"):
+        from kernel.skills.service import _canonical, _sha256
+        package_doc = service._read_package("EXPLICIT_IMPORT", "sample")
+        identity = {"name": package_doc["name"], "source_scope": "EXPLICIT_IMPORT",
+                    "source_namespace": namespace, "source_ref": "sample",
+                    "package_manifest_sha256": package_doc["package_manifest_sha256"]}
+        skill_id = "skill-" + _sha256(_canonical(identity))
+        source_object_ref = "skill-src-" + _sha256(skill_id.encode("utf-8"))
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            self.authority.record_classification_assertion(
+                self._class("class-" + source_object_ref, "OBJECT", source_object_ref),
+                grant_id="ctx-grant", task_id=self.task_id, audience="nexus-runtime",
+                command_id="classify-" + source_object_ref,
+            )
+            registered = service.register_package(
+                source_scope="EXPLICIT_IMPORT", source_namespace=namespace, source_ref="sample",
+                task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+                classification_assertion_ref="class-" + source_object_ref,
+                command_id="register-" + namespace,
+            )
+        self.assertEqual(registered["skill_id"], skill_id)
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            enabled = service.review(skill_id=skill_id, next_status="ENABLED", task_id=self.task_id,
+                                     run_id=self.run_id, grant_id="ctx-grant", command_id="review-" + namespace)
+        self.assertTrue(enabled["eligible"])
+        return skill_id, package_doc
+
+    def test_skill_package_validation_hashes_and_metadata_only_discovery(self):
+        service, package = self._skill_service_and_package()
+        skill_id, doc = self._register_skill(service=service, package=package)
+        again = service._read_package("EXPLICIT_IMPORT", "sample")
+        self.assertEqual(doc["package_manifest_sha256"], again["package_manifest_sha256"])
+        self.assertEqual(doc["skill_md_sha256"], again["skill_md_sha256"])
+        with mock.patch.object(self.store, "get_payload", side_effect=AssertionError("discovery loaded body")):
+            projection = service.discover("tiny helper")
+            self.assertEqual(projection["candidates"][0]["skill_id"], skill_id)
+        self.assertNotIn("Instruction body", json.dumps(projection))
+
+    def test_skill_host_native_delegates_without_loading_body(self):
+        service, package = self._skill_service_and_package()
+        skill_id, doc = self._register_skill(service=service, package=package)
+        fallback_ref = "skill-fallback-placeholder"
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
+             mock.patch.object(self.store, "get_payload", side_effect=AssertionError("native resolution loaded body")):
+            result = service.resolve(
+                query="tiny helper", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+                classification_assertion_ref="unused-for-native", command_id="native-selection",
+                host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                    "adapter_id": "test-host", "inventory_complete": True,
+                    "skills": [{"name": "tiny-helper", "availability": "AVAILABLE",
+                    "provenance": "HOST_DECLARED", "revision_sha256": doc["package_manifest_sha256"]}],
+                }})(),
+            )
+        self.assertEqual(result["resolution"], "HOST_NATIVE")
+        self.assertEqual(result["instruction_load_status"], "NOT_LOADED")
+        self.assertEqual(result["model_visible_exposure"], "UNKNOWN")
+        self.assertEqual(result["host_inventory_provenance"], "HOST_DECLARED")
+        self.assertEqual(result["skill_id"], skill_id)
+
+    def test_skill_fallback_loads_only_integrity_bound_instruction_and_never_executes_scripts(self):
+        marker = Path(self.temp.name) / "must-not-exist"
+        service, package = self._skill_service_and_package(resources={
+            "scripts/never_run.py": f"from pathlib import Path\nPath({str(marker)!r}).touch()\n",
+        })
+        self._register_skill(service=service, package=package)
+        # Auxiliary resources are not hydrated by the portable instruction baseline.
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            result = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                     grant_id="ctx-grant", classification_assertion_ref="unused",
+                                     command_id="blocked-script-fallback",
+                                     host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                                         "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                                     }})())
+        self.assertEqual(result["resolution"], "UNSUPPORTED")
+        self.assertEqual(result["reason"], "PACKAGE_AUXILIARY_RESOURCES_NOT_HYDRATED")
+        self.assertFalse(marker.exists())
+
+    def test_skill_portable_fallback_creates_context_compatible_artifact_and_exact_bytes(self):
+        service, package = self._skill_service_and_package()
+        skill_id, package_doc = self._register_skill(service=service, package=package)
+        instruction = package_doc["files"]["SKILL.md"]
+        from kernel.skills.service import _canonical, _sha256
+        fallback_ref = "skill-fallback-" + _sha256(_canonical({
+            "command_id": "fallback-selection", "task_id": self.task_id, "run_id": self.run_id,
+            "skill_id": skill_id, "instruction_sha256": package_doc["skill_md_sha256"],
+        }))
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            self.authority.record_classification_assertion(
+                self._class("class-" + fallback_ref, "OBJECT", fallback_ref),
+                grant_id="ctx-grant", task_id=self.task_id, audience="nexus-runtime",
+                command_id="classify-" + fallback_ref,
+            )
+            result = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                     grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
+                                     command_id="fallback-selection",
+                                     host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                                         "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                                     }})())
+        self.assertEqual(result["resolution"], "NEXUS_FALLBACK")
+        self.assertEqual(result["instruction_object_ref"], fallback_ref)
+        self.assertEqual(result["instruction_byte_size"], len(instruction))
+        fallback_document = json.loads(self.store.get_payload(fallback_ref))
+        self.assertEqual(fallback_document["instruction_utf8"].encode("utf-8"), instruction)
+        self.assertEqual(fallback_document["instruction_sha256"], package_doc["skill_md_sha256"])
+        self.assertEqual(self.store.get_lineage(fallback_ref)["sources"], ["skill-src-" + _sha256(skill_id.encode())])
+        self.assertEqual(result["delivery_status"], "UNKNOWN")
+        self.assertEqual(result["model_visible_exposure"], "UNKNOWN")
+        with self.store._connection() as conn:
+            before = (conn.execute("SELECT COUNT(*) FROM skill_resolution_records").fetchone()[0],
+                      conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (fallback_ref,)).fetchone()[0])
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            replay = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                     grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
+                                     command_id="fallback-selection")
+            with self.assertRaisesRegex(RuntimeDenied, "SKILL_RESOLUTION_COMMAND_CONFLICT"):
+                service.resolve(query="different query", task_id=self.task_id, run_id=self.run_id,
+                                grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
+                                command_id="fallback-selection")
+        self.assertEqual(replay["selection_id"], result["selection_id"])
+        with self.store._connection() as conn:
+            after = (conn.execute("SELECT COUNT(*) FROM skill_resolution_records").fetchone()[0],
+                     conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (fallback_ref,)).fetchone()[0])
+        self.assertEqual(after, before)
+
+    def test_skill_stale_revision_and_participation_modes_fail_closed(self):
+        service, package = self._skill_service_and_package()
+        skill_id, _doc = self._register_skill(service=service, package=package)
+        (package / "SKILL.md").write_text("---\nname: tiny-helper\ndescription: revised helper\n---\nnew revision\n", encoding="utf-8")
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            stale = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                    grant_id="ctx-grant", classification_assertion_ref="unused",
+                                    command_id="stale-selection",
+                                    host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                                        "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                                    }})())
+        self.assertEqual(stale["result_status"], "UNSUPPORTED")
+        self.assertEqual(service.get(skill_id)["status"], "STALE")
+        for mode in ("OBSERVE", "BYPASS"):
+            with mock.patch.object(self.participation, "current", return_value={"mode": mode}):
+                result = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                         grant_id="ctx-grant", classification_assertion_ref="unused",
+                                         command_id="inactive-" + mode)
+            self.assertEqual(result["result_status"], "INACTIVE_MODE")
+            self.assertEqual(result["instruction_load_status"], "NOT_LOADED")
+
+    def test_skill_unknown_host_inventory_never_assumes_fallback_is_safe(self):
+        service, package = self._skill_service_and_package()
+        self._register_skill(service=service, package=package)
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
+             mock.patch.object(self.store, "get_payload", side_effect=AssertionError("unknown Host state loaded fallback")):
+            result = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                     grant_id="ctx-grant", classification_assertion_ref="unused",
+                                     command_id="unknown-host-selection")
+        self.assertEqual(result["resolution"], "UNSUPPORTED")
+        self.assertEqual(result["reason"], "HOST_NATIVE_AVAILABILITY_UNKNOWN")
+        self.assertEqual(result["instruction_load_status"], "NOT_LOADED")
+
+    def test_skill_same_name_packages_remain_distinct_and_tied_query_is_ambiguous(self):
+        service, package = self._skill_service_and_package()
+        first, _ = self._register_skill(service=service, package=package, namespace="source-one")
+        second, _ = self._register_skill(service=service, package=package, namespace="source-two")
+        self.assertNotEqual(first, second)
+        discovered = service.discover("tiny helper")
+        self.assertEqual(discovered["candidate_count"], 2)
+        self.assertEqual({item["skill_id"] for item in discovered["candidates"]}, {first, second})
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            result = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                     grant_id="ctx-grant", classification_assertion_ref="unused",
+                                     command_id="ambiguous-skill-selection",
+                                     host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                                         "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                                     }})())
+        self.assertEqual(result["result_status"], "AMBIGUOUS")
+        self.assertIsNone(result["skill_id"])
+        self.assertEqual(service.discover("term-not-present")["status"], "NO_MATCH")
+
+    def test_skill_frontmatter_path_traversal_symlink_and_academy_scope_rejected(self):
+        service, package = self._skill_service_and_package()
+        (package / "SKILL.md").write_text("---\nname: first\nname: second\ndescription: duplicate\n---\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeDenied, "SKILL_FRONTMATTER_DUPLICATE_KEY"):
+            service._read_package("EXPLICIT_IMPORT", "sample")
+        (package / "SKILL.md").write_text("---\nname: good\ndescription: good\n---\n", encoding="utf-8")
+        asset = package / "assets" / "icon.png"
+        asset.parent.mkdir()
+        asset.write_bytes(b"\x89PNG\x00synthetic binary asset")
+        package_doc = service._read_package("EXPLICIT_IMPORT", "sample")
+        self.assertTrue(any(item["path"] == "SKILL.md" for item in package_doc["manifest"]))
+        self.assertTrue(any(item["path"] == "assets/icon.png" for item in package_doc["manifest"]))
+        for bad_ref in ("../sample", f"{chr(67)}:/outside/package", ""):
+            with self.assertRaises(RuntimeDenied):
+                service._read_package("EXPLICIT_IMPORT", bad_ref)
+        with self.assertRaises(ValueError):
+            SkillRegistryService(store=self.store, authority=self.authority,
+                                 participation=self.participation, source_roots={"ACADEMY": package.parent})
+        outside = Path(self.temp.name) / "outside.txt"
+        outside.write_text("synthetic external target", encoding="utf-8")
+        escape = package / "escape.txt"
+        original_resolve = Path.resolve
+        original_is_symlink = Path.is_symlink
+
+        def resolve_with_escape(path, *args, **kwargs):
+            return outside.resolve() if path == escape else original_resolve(path, *args, **kwargs)
+
+        def mark_escape_symlink(path):
+            return True if path == escape else original_is_symlink(path)
+
+        entries = [
+            SimpleNamespace(name="SKILL.md", path=str(package / "SKILL.md"), is_symlink=lambda: False,
+                            is_dir=lambda **_kwargs: False),
+            SimpleNamespace(name="escape.txt", path=str(escape), is_symlink=lambda: True,
+                            is_dir=lambda **_kwargs: False),
+        ]
+        with mock.patch("kernel.skills.service.os.scandir", return_value=nullcontext(entries)), \
+             mock.patch.object(Path, "resolve", resolve_with_escape), \
+             mock.patch.object(Path, "is_symlink", mark_escape_symlink):
+            with self.assertRaisesRegex(RuntimeDenied, "SKILL_SYMLINK_ESCAPES_PACKAGE_ROOT"):
+                service._read_package("EXPLICIT_IMPORT", "sample")
 
 
 if __name__ == "__main__":

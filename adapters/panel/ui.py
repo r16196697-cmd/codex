@@ -112,6 +112,16 @@ def launch_panel(view_model) -> None:
                     f"Provenance: {content.get('provenance', 'UNAVAILABLE')}"
                 )
                 ttk.Label(pages[tab], text=summary, justify="left", wraplength=700).pack(anchor="w", pady=8)
+            if tab == "SKILLS":
+                latest = content.get("latest_selection") or {}
+                ttk.Label(pages[tab], text=(
+                    f"Registered: {content.get('registered_count', 'UNAVAILABLE')}  |  Eligible: {content.get('eligible_count', 'UNAVAILABLE')}  |  Stale/disabled: {content.get('stale_or_disabled_count', 'UNAVAILABLE')}\n"
+                    f"Latest resolution: {latest.get('resolution', 'NONE')}  |  Result: {latest.get('result_status', 'NONE')}\n"
+                    f"Selected skill: {latest.get('skill_name', 'NONE')}  |  Identity: {latest.get('skill_id', 'NONE')}\n"
+                    f"Package revision: {latest.get('package_revision', 'UNAVAILABLE')}\n"
+                    f"Instruction load: {latest.get('instruction_load_status', 'NOT_LOADED')}  |  Delivery: {latest.get('delivery_status', 'UNKNOWN')}  |  Model-visible: {latest.get('model_visible_exposure', 'UNKNOWN')}"
+                ), justify="left", wraplength=700).pack(anchor="w", pady=8)
+                fill_tree(pages[tab], ("name", "source_scope", "source_namespace", "status", "package_revision"), content.get("registered", []))
 
         for child in pages["VALUE"].winfo_children():
             child.destroy()

@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             from kernel.metering import MeteringService
             from kernel.participation import ParticipationModeService
             from kernel.runtime.panel import PanelQueryService
+            from kernel.skills import SkillRegistryService
 
             participation = ParticipationModeService(store)
             memory = MemoryService(store, authority, verifier=None)
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
                     memory=memory, metering=metering,
                 ),
                 "metering": metering,
+                "skills": SkillRegistryService(store=store, authority=authority, participation=participation),
             }
             application = open_panel_application(args.data_root, writer_services=writer_services)
             try:

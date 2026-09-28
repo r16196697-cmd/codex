@@ -24,13 +24,14 @@ def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observ
 class PanelViewModel:
     """Compose narrow Core projections; the presentation layer sees no store."""
 
-    def __init__(self, *, runtime, participation, panel_queries, memory, context_packs=None, metering=None):
+    def __init__(self, *, runtime, participation, panel_queries, memory, context_packs=None, metering=None, skills=None):
         self._runtime = runtime
         self._participation = participation
         self._panel_queries = panel_queries
         self._memory = memory
         self._context_packs = context_packs
         self._metering = metering
+        self._skills = skills
 
     def snapshot(self) -> dict:
         try:
@@ -123,6 +124,35 @@ class PanelViewModel:
             except Exception as exc:
                 value_metrics["metering_status"] = _metric(_reason(exc), provenance="OBSERVED",
                                                              observation_source="NEXUS_METERING_SERVICE")
+        skill_status = {"status": "NOT IMPLEMENTED", "detail": "Production Skill Registry is not available."}
+        if self._skills is not None:
+            try:
+                skill_status = self._skills.snapshot()
+                skill_status["detail"] = "Safe Registry metadata only; instruction bodies are hidden. Registered, selected, loaded, delivered, and used are distinct states."
+                latest = skill_status.get("latest_selection") or {}
+                value_metrics["skill_candidate_count"] = _metric(
+                    latest.get("candidate_count"),
+                    provenance="DERIVED" if latest else UNAVAILABLE,
+                    unit="candidates", observation_source="NEXUS_SKILL_REGISTRY",
+                )
+                value_metrics["skill_instruction_byte_size"] = _metric(
+                    latest.get("instruction_byte_size"),
+                    provenance="DERIVED" if latest.get("instruction_byte_size") is not None else UNAVAILABLE,
+                    unit="bytes", basis="Exact UTF-8 bytes in integrity-verified SKILL.md snapshot; not a token estimate.",
+                    observation_source="NEXUS_SKILL_REGISTRY",
+                )
+                value_metrics["skill_instruction_tokens"] = _metric(
+                    unit="tokens", observation_source="NEXUS_SKILL_REGISTRY",
+                )
+                value_metrics["skill_selection_latency"] = _metric(
+                    latest.get("selection_latency_ms"),
+                    provenance="OBSERVED" if latest else UNAVAILABLE,
+                    unit="milliseconds", observation_source="NEXUS_SKILL_REGISTRY",
+                )
+            except Exception as exc:
+                skill_status = {"status": "UNAVAILABLE", "detail": _reason(exc),
+                                "registered_count": None, "eligible_count": None,
+                                "stale_or_disabled_count": None, "registered": [], "latest_selection": None}
         return {
             "participation_mode": participation_mode,
             "participation_state": participation,
@@ -132,7 +162,7 @@ class PanelViewModel:
             "tasks": core["tasks"],
             "memory": memory,
             "context_status": context_status,
-            "skill_status": {"status": "NOT IMPLEMENTED", "detail": "Production Skill Registry/selection is not available."},
+            "skill_status": skill_status,
             "value_metrics": value_metrics,
             "metric_provenance_values": sorted(METRIC_PROVENANCE),
         }
