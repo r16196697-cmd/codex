@@ -136,12 +136,19 @@ class SkillRegistryService:
         if (next_status not in {"ENABLED", "DISABLED", "REJECTED"}
                 or not isinstance(command_id, str) or not _SAFE_COMMAND_ID.fullmatch(command_id)):
             raise RuntimeDenied("SKILL_REVIEW_REQUEST_INVALID")
-        run = self._bound_run(task_id, run_id, grant_id)
+        replay = self.replay_review_command(
+            skill_id=skill_id, next_status=next_status, task_id=task_id,
+            run_id=run_id, grant_id=grant_id, command_id=command_id,
+            approval_id=approval_id,
+        )
+        if replay is not None:
+            return replay
         with self.store._connection() as conn:
             row = conn.execute("SELECT * FROM skill_registry_entries WHERE skill_id=?", (skill_id,)).fetchone()
         if not row:
             raise RuntimeDenied("SKILL_REGISTRATION_NOT_FOUND")
         row = dict(row)
+        run = self._bound_run(task_id, run_id, grant_id)
         request = {
             "skill_id": skill_id, "next_status": next_status,
             "package_manifest_sha256": row["package_manifest_sha256"],
@@ -149,13 +156,6 @@ class SkillRegistryService:
             "grant_id": run["grant_id"],
         }
         request_hash = self.store._request_hash("review_skill", request)
-        # Replays are resolved from the canonical command ledger before checking
-        # mutable approval expiry or current registry state. They return the
-        # original result and never reapply an older transition.
-        with self.store._connection() as conn:
-            prior = self.store._replay_command(conn, command_id, "review_skill", request_hash)
-        if prior is not None:
-            return prior
         if row["status"] == "STALE":
             raise RuntimeDenied("SKILL_REVISION_STALE")
         chain = self.authority.validate_delegation_chain(run["grant_id"])
@@ -223,9 +223,45 @@ class SkillRegistryService:
                 conn.rollback()
                 raise
 
+    def replay_review_command(self, *, skill_id: str, next_status: str, task_id: str,
+                              run_id: str, grant_id: str, command_id: str,
+                              approval_id: str | None = None) -> dict | None:
+        """Return an exact committed review before mutable Run/authority gates."""
+        self.store._require_mode("core_read")
+        with self.store._connection() as conn:
+            ledger = conn.execute(
+                "SELECT operation,result_json FROM command_ledger WHERE command_id=?", (command_id,)
+            ).fetchone()
+            if not ledger:
+                return None
+            result = json.loads(ledger["result_json"])
+            row = conn.execute(
+                "SELECT package_manifest_sha256 FROM skill_registry_entries WHERE skill_id=?", (skill_id,)
+            ).fetchone()
+        revision = row["package_manifest_sha256"] if row else result.get("package_revision")
+        request = {
+            "skill_id": skill_id, "next_status": next_status,
+            "package_manifest_sha256": revision,
+            "approval_id": approval_id, "task_id": task_id, "run_id": run_id,
+            "grant_id": grant_id,
+        }
+        request_hash = self.store._request_hash("review_skill", request)
+        with self.store._connection() as conn:
+            return self.store._replay_command(conn, command_id, "review_skill", request_hash)
+
     @staticmethod
     def _review_approval_payload_hash(request: dict) -> str:
         return _sha256(_canonical({"operation": "review_skill", **request}))
+
+    @classmethod
+    def review_approval_payload_hash(cls, request: dict) -> str:
+        """Canonical payload commitment shared by the operator application boundary."""
+        return cls._review_approval_payload_hash(request)
+
+    def prepare_review(self, *, skill_id: str, task_id: str, run_id: str, grant_id: str) -> dict:
+        """Return safe revision metadata after validating a new review's Run binding."""
+        run = self._bound_run(task_id, run_id, grant_id)
+        return {"entry": self.get(skill_id), "governing_grant_id": run["grant_id"]}
 
     def discover(self, query: str, *, limit: int = 20) -> dict:
         """Search only safe persisted metadata; never read Skill instruction bodies."""
@@ -242,46 +278,38 @@ class SkillRegistryService:
     def resolve(self, *, query: str, task_id: str, run_id: str, grant_id: str,
                 classification_assertion_ref: str, command_id: str, host_inventory=None) -> dict:
         """Resolve one candidate in ACTIVE mode, delegating native activation to Host."""
+        self.store._require_mode("core_read")
         started = time.perf_counter_ns()
+        if (not isinstance(query, str) or not query.strip() or len(query) > 1024
+                or not isinstance(command_id, str) or not _SAFE_COMMAND_ID.fullmatch(command_id)
+                or not isinstance(classification_assertion_ref, str) or not classification_assertion_ref):
+            raise RuntimeDenied("SKILL_QUERY_INVALID")
+        query_sha256 = _sha256(query.encode("utf-8"))
+        classification_sha256 = _sha256(classification_assertion_ref.encode("utf-8"))
+        prior = self._resolution_replay(
+            command_id=command_id, task_id=task_id, run_id=run_id, grant_id=grant_id,
+            query_sha256=query_sha256, classification_sha256=classification_sha256,
+        )
+        if prior is not None:
+            return prior
         if self.participation.current()["mode"] != "ACTIVE":
             return {"result_status": "INACTIVE_MODE", "resolution": None,
                     "reason": "SKILL_RESOLUTION_REQUIRES_ACTIVE_PARTICIPATION",
                     "instruction_load_status": "NOT_LOADED", "delivery_status": "UNKNOWN",
                     "model_visible_exposure": "UNKNOWN"}
-        if (not isinstance(query, str) or not query.strip() or len(query) > 1024
-                or not isinstance(command_id, str) or not _SAFE_COMMAND_ID.fullmatch(command_id)
-                or not isinstance(classification_assertion_ref, str) or not classification_assertion_ref):
-            raise RuntimeDenied("SKILL_QUERY_INVALID")
         run = self._bound_run(task_id, run_id, grant_id)
         self.authority.evaluate_authorization(
             run["grant_id"], {"task": task_id, "resource": run_id,
                               "action": "TRACE_APPEND", "audience": "nexus-runtime"},
             command_id + "-authorize-resolution",
         )
-        query_sha256 = _sha256(query.encode("utf-8"))
         inventory, inventory_sha256 = self._host_inventory_snapshot(host_inventory)
-        with self.store._connection() as conn:
-            prior = conn.execute(
-                "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
-                "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
-                (command_id,),
-            ).fetchone()
-        if prior:
-            prior = dict(prior)
-            prior_basis = json.loads(prior["selection_basis_json"])
-            if (prior["task_id"] != task_id or prior["run_id"] != run_id
-                    or prior["query_sha256"] != query_sha256
-                    or prior_basis.get("classification_assertion_sha256") != _sha256(classification_assertion_ref.encode("utf-8"))
-                    or prior_basis.get("authority_grant_id") != run["grant_id"]
-                    or prior_basis.get("host_inventory_sha256") != inventory_sha256):
-                raise RuntimeDenied("SKILL_RESOLUTION_COMMAND_CONFLICT")
-            return self._public_resolution(prior)
         ranked = self._rank(query)
         basis = {"selection_policy": "SKILL_METADATA_TERM_OVERLAP_V1",
                  "tie_break": "SCORE_DESC_SKILL_ID_ASC; TOP_SCORE_TIE_RETURNS_AMBIGUOUS",
                  "metadata_fields": ["name", "description"], "instruction_bodies_read_for_search": False,
                  "candidate_limit": _MAX_CANDIDATES,
-                 "classification_assertion_sha256": _sha256(classification_assertion_ref.encode("utf-8")),
+                 "classification_assertion_sha256": classification_sha256,
                  "authority_grant_id": run["grant_id"],
                  "host_inventory_sha256": inventory_sha256}
         if len(ranked) > _MAX_CANDIDATES:
@@ -391,6 +419,25 @@ class SkillRegistryService:
             instruction_load_status="LOADED_TO_GOVERNED_ARTIFACT", instruction_object_ref=fallback_ref,
             instruction_sha256=row["skill_md_sha256"], instruction_byte_size=len(instruction))
 
+    def _resolution_replay(self, *, command_id: str, task_id: str, run_id: str,
+                           grant_id: str, query_sha256: str, classification_sha256: str) -> dict | None:
+        with self.store._connection() as conn:
+            prior = conn.execute(
+                "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
+                (command_id,),
+            ).fetchone()
+        if not prior:
+            return None
+        prior = dict(prior)
+        basis = json.loads(prior["selection_basis_json"])
+        if (prior["task_id"] != task_id or prior["run_id"] != run_id
+                or prior["query_sha256"] != query_sha256
+                or basis.get("classification_assertion_sha256") != classification_sha256
+                or basis.get("authority_grant_id") != grant_id):
+            raise CommandConflict("COMMAND_CONFLICT")
+        return self._public_resolution(prior)
+
     def snapshot(self) -> dict:
         """Panel-safe Registry projection; excludes every instruction body and path."""
         self.store._require_mode("core_read")
@@ -442,20 +489,6 @@ class SkillRegistryService:
         selection_basis = {**basis, "reason": reason, "top_candidates": [
             item["skill_id"] for item in (candidates or [])],
             "selected_skill_id": skill_id, "query_sha256": _sha256(query.encode("utf-8"))}
-        result = {
-            "selection_id": selection_id, "result_status": result_status,
-            "resolution": resolution, "reason": reason, "candidate_count": candidate_count,
-            "skill_id": skill_id, "selected_skill": self.get(skill_id) if skill_id else None,
-            "host_native_availability": host_availability,
-            "host_inventory_provenance": host_inventory_provenance,
-            "instruction_object_ref": instruction_object_ref,
-            "instruction_sha256": instruction_sha256,
-            "instruction_byte_size": instruction_byte_size,
-            "instruction_load_status": instruction_load_status,
-            "delivery_status": "UNKNOWN", "model_visible_exposure": "UNKNOWN",
-            "selection_latency_ms": elapsed_ms,
-            "selection_basis": selection_basis,
-        }
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -464,26 +497,13 @@ class SkillRegistryService:
                     "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
                     (command_id,),
                 ).fetchone()
-                expected = {
-                    "task_id": task_id, "run_id": run_id,
-                    "query_sha256": _sha256(query.encode("utf-8")),
-                    "candidate_count": candidate_count, "result_status": result_status,
-                    "resolution": resolution, "skill_id": skill_id,
-                    "host_inventory_provenance": host_inventory_provenance,
-                    "host_native_availability": host_availability,
-                    "instruction_object_ref": instruction_object_ref,
-                    "instruction_sha256": instruction_sha256,
-                    "instruction_byte_size": instruction_byte_size,
-                    "instruction_load_status": instruction_load_status,
-                    "delivery_status": "UNKNOWN", "model_visible_exposure": "UNKNOWN",
-                }
                 if prior:
                     prior = dict(prior)
                     prior_basis = json.loads(prior["selection_basis_json"])
-                    expected_basis = {**basis, "reason": reason, "top_candidates": [
-                        item["skill_id"] for item in (candidates or [])],
-                        "selected_skill_id": skill_id, "query_sha256": _sha256(query.encode("utf-8"))}
-                    if any(prior.get(key) != value for key, value in expected.items()) or prior_basis != expected_basis:
+                    if (prior["task_id"] != task_id or prior["run_id"] != run_id
+                            or prior["query_sha256"] != _sha256(query.encode("utf-8"))
+                            or prior_basis.get("classification_assertion_sha256") != basis.get("classification_assertion_sha256")
+                            or prior_basis.get("authority_grant_id") != basis.get("authority_grant_id")):
                         raise CommandConflict("COMMAND_CONFLICT")
                     conn.commit()
                     return self._public_resolution(prior)
@@ -498,8 +518,13 @@ class SkillRegistryService:
                  host_inventory_provenance, host_availability, instruction_object_ref, instruction_sha256,
                  instruction_byte_size, instruction_load_status, "UNKNOWN", "UNKNOWN", elapsed_ms, created_at),
                 )
+                saved = conn.execute(
+                    "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                    "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
+                    (command_id,),
+                ).fetchone()
                 conn.commit()
-                return result
+                return self._public_resolution(dict(saved))
             except Exception:
                 conn.rollback()
                 raise
@@ -579,8 +604,10 @@ class SkillRegistryService:
             return "UNKNOWN", matching[0]["provenance"]
         return "AVAILABLE", matching[0]["provenance"]
 
-    def _read_package(self, scope: str, source_ref: str) -> dict:
-        if scope not in _SCOPES or scope not in self.source_roots:
+    def _read_package(self, scope: str, source_ref: str, *, root_override: str | Path | None = None) -> dict:
+        if scope not in _SCOPES:
+            raise RuntimeDenied("SKILL_SOURCE_SCOPE_INVALID")
+        if root_override is None and scope not in self.source_roots:
             raise RuntimeDenied("SKILL_SOURCE_ROOT_UNCONFIGURED")
         if not isinstance(source_ref, str) or "\\" in source_ref or re.match(r"^[A-Za-z]:", source_ref):
             raise RuntimeDenied("SKILL_SOURCE_REF_INVALID")
@@ -588,7 +615,8 @@ class SkillRegistryService:
         if relative.is_absolute() or not relative.parts or any(part in {"", ".", ".."} or ":" in part for part in relative.parts):
             raise RuntimeDenied("SKILL_SOURCE_REF_INVALID")
         try:
-            base = self.source_roots[scope].resolve(strict=True)
+            configured_root = Path(root_override).expanduser() if root_override is not None else self.source_roots[scope]
+            base = configured_root.resolve(strict=True)
             package_root = (base.joinpath(*relative.parts)).resolve(strict=True)
         except OSError as exc:
             raise RuntimeDenied("SKILL_PACKAGE_PATH_UNAVAILABLE") from exc
@@ -684,6 +712,14 @@ class SkillRegistryService:
             "package_manifest_sha256": manifest_sha, "fallback_blockers": blockers,
         }
 
+    def inventory_package_metadata(self, scope: str, source_ref: str, *, root_override: str | Path | None = None) -> dict:
+        """Read a configured package for filesystem inventory without returning bodies."""
+        package = self._read_package(scope, source_ref, root_override=root_override)
+        return {
+            "name": package["name"], "manifest": package["manifest"],
+            "package_manifest_sha256": package["package_manifest_sha256"],
+        }
+
     def _mark_stale(self, skill_id: str) -> None:
         with self.store._lock, self.store._connection() as conn:
             conn.execute("UPDATE skill_registry_entries SET status='STALE' WHERE skill_id=? AND status IN ('REGISTERED','ENABLED','DISABLED','REJECTED')", (skill_id,))
@@ -710,6 +746,7 @@ class SkillRegistryService:
         return {
             "skill_id": row["skill_id"], "name": row["skill_name"], "description": row["description"],
             "source_scope": row["source_scope"], "source_namespace": row["source_namespace"],
+            "source_ref": row["source_ref"],
             "package_revision": row["package_manifest_sha256"],
             "skill_md_sha256": row["skill_md_sha256"], "package_manifest_sha256": row["package_manifest_sha256"],
             "status": status, "eligible": status == "ENABLED",
@@ -721,7 +758,8 @@ class SkillRegistryService:
     def _public_resolution(row: dict) -> dict:
         result = {
             "selection_id": row["selection_id"], "result_status": row["result_status"],
-            "resolution": row["resolution"], "candidate_count": row["candidate_count"],
+            "resolution": row["resolution"], "reason": json.loads(row["selection_basis_json"]).get("reason"),
+            "candidate_count": row["candidate_count"],
             "skill_id": row["skill_id"], "host_native_availability": row["host_native_availability"],
             "host_inventory_provenance": row["host_inventory_provenance"],
             "instruction_object_ref": row["instruction_object_ref"],

@@ -342,6 +342,38 @@ class AuthorityService:
                 conn.rollback()
                 raise
 
+    def active_human_for_grant(self, grant_id: str) -> str:
+        """Select an ACTIVE HUMAN identity already inside this grant's chain."""
+        chain = self.validate_delegation_chain(grant_id)
+        principals = []
+        for item in reversed(chain):
+            for principal_id in (item["granted_to"], item["issued_by"]):
+                if principal_id not in principals:
+                    principals.append(principal_id)
+        with self.store._connection() as conn:
+            for principal_id in principals:
+                row = conn.execute(
+                    "SELECT principal_type,status FROM principals WHERE principal_id=?", (principal_id,)
+                ).fetchone()
+                if row and row["principal_type"] == "HUMAN" and row["status"] == "ACTIVE":
+                    return principal_id
+        raise ApprovalDenied("ACTIVE_HUMAN_NOT_IN_AUTHORITY_CHAIN")
+
+    def get_approval_metadata(self, approval_id: str) -> dict[str, Any] | None:
+        """Return bounded approval metadata for trusted Core idempotency checks."""
+        self.store._require_mode("core_read")
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT a.*,p.principal_type,p.status AS approver_status FROM approval_decisions a "
+                "JOIN principals p ON p.principal_id=a.approver_principal_id WHERE a.approval_id=?",
+                (approval_id,),
+            ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["approved_scope"] = json.loads(result.pop("approved_scope_json"))
+        return result
+
     def _record_denial(self, grant_id: str, command_id: str, reason_code: str) -> None:
         operation = "authorization_denied"
         request = {"grant_id": grant_id, "reason_code": reason_code}

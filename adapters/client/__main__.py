@@ -15,6 +15,7 @@ from kernel.memory.service import MemoryService
 from kernel.purge.service import PurgeService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
+from kernel.skills import compose_skill_application, default_codex_skill_roots
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -22,6 +23,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-root", required=True, type=Path, help="Existing Nexus data root; the CLI never initializes a database")
     parser.add_argument("--policy", type=Path, help="Optional existing nexus.policy@1 JSON file; read-only and schema-validated")
     parser.add_argument("--independent-purge-journal", type=Path, help="Configured independent Purge Journal; defaults to NEXUS_INDEPENDENT_PURGE_JOURNAL or a sibling of --data-root")
+    parser.add_argument("--repo-skill-root", type=Path, default=Path(".agents/skills"),
+                        help="Configured project Agent Skills root (default: .agents/skills in the current directory)")
+    parser.add_argument("--codex-repo-skill-root", type=Path, default=Path(".codex/skills"),
+                        help="Project Codex-native Agent Skills root used for Host inventory (default: .codex/skills)")
+    parser.add_argument("--codex-skill-inventory-roots-exhaustive", action="store_true",
+                        help="Declare that configured project/user roots cover all relevant local Codex Skill packages")
+    parser.add_argument("--user-skill-root", type=Path,
+                        help="Optional configured user Agent Skills root (default: $CODEX_HOME/skills or ~/.codex/skills)")
+    parser.add_argument("--explicit-import-root", type=Path,
+                        help="Process-local root for explicitly imported Skill packages; never persisted")
     commands = parser.add_subparsers(dest="command", required=True)
 
     mode = commands.add_parser("mode")
@@ -55,6 +66,36 @@ def _parser() -> argparse.ArgumentParser:
     complete.add_argument("--command-id", required=True)
     complete.add_argument("--purge-ledger", required=True, type=Path, help="independent Purge Ledger path outside --data-root")
 
+    skill = commands.add_parser("skill", help="governed Agent Skills registration, review, and resolution")
+    skill_commands = skill.add_subparsers(dest="skill_action", required=True)
+    register = skill_commands.add_parser("register", help="register one explicit package; registration does not enable it")
+    register.add_argument("--source-scope", required=True, choices=("REPO", "USER", "EXPLICIT_IMPORT"))
+    register.add_argument("--source-namespace", required=True)
+    register.add_argument("--source-ref", required=True, help="relative package directory under the configured root")
+    register.add_argument("--task-id", required=True)
+    register.add_argument("--run-id", required=True)
+    register.add_argument("--grant-id", required=True)
+    register.add_argument("--classification-assertion-ref", required=True)
+    register.add_argument("--command-id", required=True)
+
+    for action in ("enable", "disable", "reject"):
+        review = skill_commands.add_parser(action, help=f"operator review: {action} one exact registered Skill")
+        review.add_argument("skill_id")
+        review.add_argument("--task-id", required=True)
+        review.add_argument("--run-id", required=True)
+        review.add_argument("--grant-id", required=True)
+        review.add_argument("--command-id", required=True)
+
+    resolve = skill_commands.add_parser("resolve", help="resolve using configured Codex native inventory then Nexus fallback")
+    resolve.add_argument("query")
+    resolve.add_argument("--task-id", required=True)
+    resolve.add_argument("--run-id", required=True)
+    resolve.add_argument("--grant-id", required=True)
+    resolve.add_argument("--classification-assertion-ref", required=True)
+    resolve.add_argument("--command-id", required=True)
+    discover = skill_commands.add_parser("discover", help="search safe Registry metadata only")
+    discover.add_argument("query")
+
     commands.add_parser("panel", help="open the native panel inside this writer-owned process")
     return parser
 
@@ -78,16 +119,30 @@ def main(argv: list[str] | None = None) -> int:
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
         store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
+        participation = None
+        skill_application = None
+        if args.command in {"skill", "panel"}:
+            from kernel.participation import ParticipationModeService
+            participation = ParticipationModeService(store)
+            roots = default_codex_skill_roots(
+                repo_root=args.repo_skill_root, user_root=args.user_skill_root,
+                explicit_import_root=args.explicit_import_root,
+            )
+            skill_application = compose_skill_application(
+                store=store, authority=authority, participation=participation, source_roots=roots,
+                host_roots={
+                    "REPO": [roots["REPO"], args.codex_repo_skill_root.expanduser().resolve()],
+                    "USER": roots["USER"],
+                },
+                host_inventory_roots_exhaustive=args.codex_skill_inventory_roots_exhaustive,
+            )
         if args.command == "panel":
             from adapters.panel.application import open_panel_application
             from adapters.panel.ui import launch_panel
             from kernel.context import ContextPackService
             from kernel.metering import MeteringService
-            from kernel.participation import ParticipationModeService
             from kernel.runtime.panel import PanelQueryService
-            from kernel.skills import SkillRegistryService
 
-            participation = ParticipationModeService(store)
             memory = MemoryService(store, authority, verifier=None)
             metering = MeteringService(store, authority, participation)
             writer_services = {
@@ -101,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                     memory=memory, metering=metering,
                 ),
                 "metering": metering,
-                "skills": SkillRegistryService(store=store, authority=authority, participation=participation),
+                "skills": skill_application,
             }
             application = open_panel_application(args.data_root, writer_services=writer_services)
             try:
@@ -111,7 +166,29 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         client = OperatorClient(runtime)
-        if args.command == "mode" and args.mode_action == "show":
+        if args.command == "skill" and args.skill_action == "register":
+            result = skill_application.register_package(
+                source_scope=args.source_scope, source_namespace=args.source_namespace,
+                source_ref=args.source_ref, task_id=args.task_id, run_id=args.run_id,
+                grant_id=args.grant_id, classification_assertion_ref=args.classification_assertion_ref,
+                command_id=args.command_id,
+            )
+        elif args.command == "skill" and args.skill_action in {"enable", "disable", "reject"}:
+            if args.skill_action == "enable":
+                result = skill_application.enable(skill_id=args.skill_id, task_id=args.task_id,
+                    run_id=args.run_id, grant_id=args.grant_id, command_id=args.command_id)
+            else:
+                result = skill_application.review(skill_id=args.skill_id,
+                    next_status="DISABLED" if args.skill_action == "disable" else "REJECTED",
+                    task_id=args.task_id, run_id=args.run_id, grant_id=args.grant_id,
+                    command_id=args.command_id)
+        elif args.command == "skill" and args.skill_action == "resolve":
+            result = skill_application.resolve(query=args.query, task_id=args.task_id, run_id=args.run_id,
+                grant_id=args.grant_id, classification_assertion_ref=args.classification_assertion_ref,
+                command_id=args.command_id)
+        elif args.command == "skill" and args.skill_action == "discover":
+            result = skill_application.discover(args.query)
+        elif args.command == "mode" and args.mode_action == "show":
             result = client.mode()
         elif args.command == "mode":
             result = client.set_mode(mode=args.mode, command_id=args.command_id, grant_id=args.grant_id, task_id=args.task_id, classification_assertion_ref=args.classification_assertion_ref)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import sqlite3
 import shutil
@@ -29,7 +30,7 @@ from kernel.runtime.errors import RuntimeDenied
 from kernel.object.errors import SchemaUnsupported
 from kernel.object.errors import CommandConflict
 from kernel.runtime.panel import PanelQueryService
-from kernel.skills import SkillRegistryService
+from kernel.skills import SkillRegistryService, compose_skill_application
 from kernel.object.errors import WriterAlreadyRunning
 
 
@@ -71,16 +72,17 @@ class ContextMeteringTests(unittest.TestCase):
         self.task_id, self.run_id = "ctx-task", "ctx-run"
         self.source_ids = ("ctx-source-z", "ctx-source-a")
         self.memory_id = "ctx-admitted-memory"
+        self.terminal_event_ref = "evt-ctx-run-terminal"
         self.pack_ids = ("ctx-pack-one", "ctx-pack-two", "ctx-pack-observe", "ctx-pack-bypass")
         all_sources = self.source_ids + (self.memory_id, "ctx-not-eligible-skill")
         resources = ["task:" + self.task_id, self.run_id, *all_sources,
                      *("object:" + object_id for object_id in all_sources), *self.pack_ids,
-                     "evt-ctx-run-create"]
+                     "evt-ctx-run-create", self.terminal_event_ref]
         self.authority.create_grant({
             "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": "ctx-grant",
             "issued_by": "human-root", "granted_to": "context-agent", "task_scope": [self.task_id],
             "resource_scope": resources,
-            "action_scope": ["RUN_CREATE", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY", "INSPECT", "MEMORY_SEARCH"],
+            "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY", "INSPECT", "MEMORY_SEARCH"],
             "audience_scope": ["nexus-runtime", "nexus-inspect"], "issued_at": now.isoformat(),
             "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
         }, "ctx-grant-create")
@@ -88,7 +90,8 @@ class ContextMeteringTests(unittest.TestCase):
                                 "requester_id": "human-root", "status": "CREATED", "created_at": now.isoformat(),
                                 "command_id": "ctx-task-create"})
         assertions = [self._class("ctx-run-class", "RUN", self.run_id),
-                      self._class("ctx-run-event-class", "TRACE_EVENT", "evt-ctx-run-create")]
+                      self._class("ctx-run-event-class", "TRACE_EVENT", "evt-ctx-run-create"),
+                      self._class("ctx-run-terminal-class", "TRACE_EVENT", self.terminal_event_ref)]
         for object_id in self.source_ids + (self.memory_id, "ctx-not-eligible-skill") + self.pack_ids:
             assertions.append(self._class("class-" + object_id, "OBJECT", object_id))
         for assertion in assertions:
@@ -723,6 +726,12 @@ class ContextMeteringTests(unittest.TestCase):
         replay = self._review_skill(service, skill_id, command_id="review-command-A", approval_id="approval-review-A")
         self.assertTrue(replay["eligible"], "replay returns original committed result")
         self.assertEqual(service.get(skill_id)["status"], "DISABLED", "historical replay must not reapply enable")
+        with mock.patch.object(service, "_bound_run", side_effect=AssertionError("replay rechecked terminal Run")), \
+             mock.patch.object(self.authority, "evaluate_authorization", side_effect=AssertionError("replay rechecked authority")), \
+             mock.patch.object(self.authority, "validate_delegation_chain", side_effect=AssertionError("replay rechecked Approval")):
+            replay_after_mutable_gates = self._review_skill(
+                service, skill_id, command_id="review-command-A", approval_id="approval-review-A")
+        self.assertEqual(replay_after_mutable_gates, replay)
         with self.assertRaises(CommandConflict):
             self._review_skill(service, skill_id, command_id="review-command-A", next_status="DISABLED")
         other_service, other_package = self._skill_service_and_package(name="second-helper")
@@ -748,23 +757,75 @@ class ContextMeteringTests(unittest.TestCase):
     def test_skill_host_native_delegates_without_loading_body(self):
         service, package = self._skill_service_and_package()
         skill_id, doc = self._register_skill(service=service, package=package)
-        fallback_ref = "skill-fallback-placeholder"
-        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
-             mock.patch.object(self.store, "get_payload", side_effect=AssertionError("native resolution loaded body")):
-            result = service.resolve(
+        adapter = type("Adapter", (), {"inventory": lambda _self: {
+            "adapter_id": "test-host", "inventory_complete": True,
+            "skills": [{"name": "tiny-helper", "availability": "AVAILABLE",
+            "provenance": "HOST_DECLARED", "revision_sha256": doc["package_manifest_sha256"]}],
+        }})()
+        request = dict(
                 query="tiny helper", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
                 classification_assertion_ref="unused-for-native", command_id="native-selection",
-                host_inventory=type("Adapter", (), {"inventory": lambda _self: {
-                    "adapter_id": "test-host", "inventory_complete": True,
-                    "skills": [{"name": "tiny-helper", "availability": "AVAILABLE",
-                    "provenance": "HOST_DECLARED", "revision_sha256": doc["package_manifest_sha256"]}],
-                }})(),
-            )
+                host_inventory=adapter,
+        )
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
+             mock.patch.object(self.store, "get_payload", side_effect=AssertionError("native resolution loaded body")):
+            result = service.resolve(**request)
         self.assertEqual(result["resolution"], "HOST_NATIVE")
         self.assertEqual(result["instruction_load_status"], "NOT_LOADED")
         self.assertEqual(result["model_visible_exposure"], "UNKNOWN")
         self.assertEqual(result["host_inventory_provenance"], "HOST_DECLARED")
         self.assertEqual(result["skill_id"], skill_id)
+        for mode in ("OBSERVE", "BYPASS"):
+            with mock.patch.object(self.participation, "current", return_value={"mode": mode}), \
+                 mock.patch.object(service, "_bound_run", side_effect=AssertionError("replay rechecked Run")), \
+                 mock.patch.object(self.authority, "evaluate_authorization", side_effect=AssertionError("replay rechecked grant")), \
+                 mock.patch.object(adapter, "inventory", side_effect=AssertionError("replay resampled Host inventory")):
+                replay = service.resolve(**request)
+                self.assertEqual(replay["selection_id"], result["selection_id"])
+                self.assertEqual(replay["resolution"], result["resolution"])
+                self.assertEqual(replay, result)
+        with self.assertRaises(CommandConflict):
+            service.resolve(**{**request, "query": "different query"})
+        for key, value in (("task_id", "other-task"), ("run_id", "other-run"),
+                           ("grant_id", "other-grant"), ("classification_assertion_ref", "different-class")):
+            with self.subTest(identity=key), self.assertRaises(CommandConflict):
+                service.resolve(**{**request, key: value})
+        self.trace.transition_run(
+            command_id="ctx-run-terminal", run_id=self.run_id, expected_state="CREATED",
+            next_state="CANCELLED", classification_assertion_ref="ctx-run-terminal-class",
+        )
+        with mock.patch.object(self.participation, "current", return_value={"mode": "BYPASS"}), \
+             mock.patch.object(service, "_bound_run", side_effect=AssertionError("terminal Run was rechecked")), \
+             mock.patch.object(self.authority, "evaluate_authorization", side_effect=AssertionError("revoked authority was rechecked")), \
+             mock.patch.object(adapter, "inventory", side_effect=AssertionError("Host inventory was resampled")):
+            self.assertEqual(service.resolve(**request), result)
+
+    def test_codex_filesystem_inventory_is_bounded_to_roots_and_conservative_about_completeness(self):
+        from kernel.skills.host import CodexAgentSkillsInventoryAdapter
+
+        service, package = self._skill_service_and_package(name="native-helper")
+        roots = {"REPO": package.parent}
+        partial = CodexAgentSkillsInventoryAdapter(
+            package_reader=service.inventory_package_metadata, roots=roots,
+        ).inventory()
+        self.assertFalse(partial["inventory_complete"])
+        self.assertEqual(partial["skills"][0]["name"], "native-helper")
+        self.assertEqual(partial["skills"][0]["availability"], "AVAILABLE")
+        self.assertEqual(partial["skills"][0]["provenance"], "ADAPTER_DISCOVERY")
+
+        complete = CodexAgentSkillsInventoryAdapter(
+            package_reader=service.inventory_package_metadata, roots=roots,
+            roots_are_exhaustive=True,
+        ).inventory()
+        self.assertTrue(complete["inventory_complete"])
+
+        (package.parent / "malformed").mkdir()
+        incomplete_after_bad_package = CodexAgentSkillsInventoryAdapter(
+            package_reader=service.inventory_package_metadata, roots=roots,
+            roots_are_exhaustive=True,
+        ).inventory()
+        self.assertFalse(incomplete_after_bad_package["inventory_complete"])
+        self.assertEqual([item["name"] for item in incomplete_after_bad_package["skills"]], ["native-helper"])
 
     def test_skill_fallback_loads_only_integrity_bound_instruction_and_never_executes_scripts(self):
         marker = Path(self.temp.name) / "must-not-exist"
@@ -825,7 +886,7 @@ class ContextMeteringTests(unittest.TestCase):
                                      host_inventory=type("Adapter", (), {"inventory": lambda _self: {
                                          "adapter_id": "test-host", "inventory_complete": True, "skills": [],
                                      }})())
-            with self.assertRaisesRegex(RuntimeDenied, "SKILL_RESOLUTION_COMMAND_CONFLICT"):
+            with self.assertRaises(CommandConflict):
                 service.resolve(query="different query", task_id=self.task_id, run_id=self.run_id,
                                 grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
                                 command_id="fallback-selection")
@@ -1023,6 +1084,215 @@ class ContextMeteringTests(unittest.TestCase):
              mock.patch.object(Path, "is_symlink", mark_escape_symlink):
             with self.assertRaisesRegex(RuntimeDenied, "SKILL_SYMLINK_ESCAPES_PACKAGE_ROOT"):
                 service._read_package("EXPLICIT_IMPORT", package.name)
+
+    def test_skill_real_cli_composition_register_approve_resolve_panel_and_reopen(self):
+        from adapters.client.__main__ import main as client_main
+        from kernel.skills.service import _canonical, _sha256
+
+        repo_root = Path(self.temp.name) / "repo-skills"
+        codex_repo_root = Path(self.temp.name) / "codex-repo-skills"
+        user_root = Path(self.temp.name) / "user-skills"
+        package = user_root / "tiny-helper"
+        repo_root.mkdir()
+        codex_repo_root.mkdir()
+        package.mkdir(parents=True)
+        (package / "SKILL.md").write_text(
+            "---\nname: tiny-helper\ndescription: A local deterministic helper.\n---\nUse the small helper instruction.\n",
+            encoding="utf-8",
+        )
+        roots = {"REPO": repo_root, "USER": user_root}
+        application = compose_skill_application(
+            store=self.store, authority=self.authority, participation=self.participation,
+            source_roots=roots,
+        )
+        package_doc = application.registry.inventory_package_metadata("USER", "tiny-helper")
+        identity = {
+            "name": package_doc["name"], "source_scope": "USER", "source_namespace": "local",
+            "source_ref": "tiny-helper", "package_manifest_sha256": package_doc["package_manifest_sha256"],
+        }
+        skill_id = "skill-" + _sha256(_canonical(identity))
+        instruction_object_ref = "skill-src-" + _sha256(skill_id.encode("utf-8"))
+
+        task_id, run_id, grant_id = "skill-product-task", "skill-product-run", "skill-product-grant"
+        run_event_ref = "evt-create-skill-product-run"
+        terminal_event_ref = "evt-cancel-skill-product-run"
+        now = datetime.now(timezone.utc)
+        resources = ["task:" + task_id, run_id, run_event_ref, terminal_event_ref, skill_id,
+                     instruction_object_ref, "object:" + instruction_object_ref]
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1,
+            "grant_id": grant_id, "issued_by": "human-root", "granted_to": "context-agent",
+            "task_scope": [task_id], "resource_scope": resources,
+            "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "OBJECT_WRITE", "CLASSIFY", "TRACE_APPEND"],
+            "audience_scope": ["nexus-runtime"], "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(days=1)).isoformat(), "status": "ACTIVE", "policy_version": "1",
+        }, "skill-product-grant-create")
+        self.trace.create_task({
+            "schema_id": "nexus.task", "schema_version": 1, "task_id": task_id,
+            "requester_id": "human-root", "status": "CREATED", "created_at": now.isoformat(),
+            "command_id": "skill-product-task-create",
+        })
+        assertions = [
+            self._class("skill-product-source-class", "OBJECT", instruction_object_ref),
+            self._class("skill-product-run-class", "RUN", run_id),
+            self._class("skill-product-event-class", "TRACE_EVENT", run_event_ref),
+            self._class("skill-product-terminal-event-class", "TRACE_EVENT", terminal_event_ref),
+        ]
+        for assertion in assertions:
+            self.authority.record_classification_assertion(
+                assertion, grant_id=grant_id, task_id=task_id, audience="nexus-runtime",
+                command_id="record-" + assertion["assertion_id"],
+            )
+        self.trace.create_run({
+            "schema_id": "nexus.run", "schema_version": 1, "run_id": run_id,
+            "task_id": task_id, "executor_kind": "ORCHESTRATOR", "status": "CREATED",
+            "grant_id": grant_id,
+            "data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": []},
+            "classification_assertion_ref": "skill-product-run-class", "created_at": now.isoformat(),
+        }, command_id="create-skill-product-run", event_classification_assertion_ref="skill-product-event-class")
+
+        policy_path = Path(self.temp.name) / "operator-policy.json"
+        policy_path.write_text(json.dumps(self.policy), encoding="utf-8")
+        common = ["--data-root", str(self.root), "--policy", str(policy_path),
+                  "--repo-skill-root", str(repo_root), "--codex-repo-skill-root", str(codex_repo_root),
+                  "--user-skill-root", str(user_root), "--codex-skill-inventory-roots-exhaustive"]
+
+        class CliOutput(io.StringIO):
+            def __init__(self, interactive=False):
+                super().__init__()
+                self.interactive = interactive
+
+            def isatty(self):
+                return self.interactive
+
+        def invoke(parts, *, stdin=None):
+            output, errors = CliOutput(interactive=stdin is not None), io.StringIO()
+            input_stream = stdin if stdin is not None else io.StringIO()
+            with mock.patch("sys.stdin", input_stream), mock.patch("sys.stdout", output), mock.patch("sys.stderr", errors):
+                code = client_main([*common, *parts])
+            return code, output.getvalue(), errors.getvalue()
+
+        self.store.close()
+        code, register_output, _errors = invoke([
+            "skill", "register", "--source-scope", "USER", "--source-namespace", "local",
+            "--source-ref", "tiny-helper", "--task-id", task_id, "--run-id", run_id,
+            "--grant-id", grant_id, "--classification-assertion-ref", "skill-product-source-class",
+            "--command-id", "skill-product-register",
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(register_output)["skill_id"], skill_id)
+
+        enable_args = ["skill", "enable", skill_id, "--task-id", task_id, "--run-id", run_id,
+                       "--grant-id", grant_id, "--command-id", "skill-product-enable"]
+        code, _output, errors = invoke(enable_args)
+        self.assertEqual(code, 2)
+        self.assertIn("SKILL_OPERATOR_CONFIRMATION_REQUIRES_TTY", errors)
+        approval_id = "skill-approval-" + hashlib.sha256(b"skill-product-enable").hexdigest()
+        probe = ObjectStore(self.root, policy=self.policy)
+        try:
+            self.assertIsNone(AuthorityService(probe, self.policy).get_approval_metadata(approval_id))
+        finally:
+            probe.close()
+
+        class TestTtyInput(io.StringIO):
+            def isatty(self):
+                return True
+
+        code, enable_output, _errors = invoke(enable_args, stdin=TestTtyInput("ENABLE\n"))
+        self.assertEqual(code, 0, enable_output)
+        enable_result = json.loads(enable_output[enable_output.index("{"):])
+        self.assertEqual(enable_result["status"], "ENABLED")
+        self.assertIn("tiny-helper", enable_output)
+        self.assertIn(task_id, enable_output)
+
+        code, resolve_output, errors = invoke([
+            "skill", "resolve", "tiny helper", "--task-id", task_id, "--run-id", run_id,
+            "--grant-id", grant_id, "--classification-assertion-ref", "unused-native-classification",
+            "--command-id", "skill-product-resolve",
+        ])
+        self.assertEqual(code, 0, errors)
+        resolution = json.loads(resolve_output)
+        self.assertEqual(resolution["resolution"], "HOST_NATIVE")
+        self.assertEqual(resolution["host_inventory_provenance"], "ADAPTER_DISCOVERY")
+        self.assertEqual(resolution["instruction_load_status"], "NOT_LOADED")
+
+        from adapters.panel import application as panel_application_module
+        panel_runtime = {}
+        open_panel = panel_application_module.open_panel_application
+
+        def exercise_production_panel(view_model):
+            panel_app = panel_runtime["panel"]
+            self.assertFalse(panel_app._owns_store)
+            self.assertIs(panel_app.store, panel_runtime["store"])
+            self.assertIs(view_model._skills, panel_runtime["skills"])
+            panel_projection = view_model.snapshot()["skill_status"]
+            self.assertEqual(panel_projection["eligible_count"], 1)
+            self.assertEqual(panel_projection["latest_selection"]["resolution"], "HOST_NATIVE")
+            self.assertNotIn("Use the small helper instruction", json.dumps(panel_projection))
+            with self.assertRaises(WriterAlreadyRunning):
+                ObjectStore(self.root, policy=self.policy)
+
+        def capture_production_panel(*args, **kwargs):
+            panel_app = open_panel(*args, **kwargs)
+            writer_services = kwargs["writer_services"]
+            panel_runtime["store"] = writer_services["store"]
+            panel_runtime["skills"] = writer_services["skills"]
+            panel_runtime["panel"] = panel_app
+            original_close = panel_app.close
+
+            def close_panel_only():
+                original_close()
+                self.assertEqual(writer_services["skills"].snapshot()["eligible_count"], 1)
+                with self.assertRaises(WriterAlreadyRunning):
+                    ObjectStore(self.root, policy=self.policy)
+
+            panel_app.close = close_panel_only
+            return panel_app
+
+        with mock.patch.object(panel_application_module, "open_panel_application", side_effect=capture_production_panel), \
+             mock.patch("adapters.panel.ui.launch_panel", side_effect=exercise_production_panel):
+            code, _panel_output, panel_errors = invoke(["panel"])
+        self.assertEqual(code, 0, panel_errors)
+
+        code, disable_output, errors = invoke([
+            "skill", "disable", skill_id, "--task-id", task_id, "--run-id", run_id,
+            "--grant-id", grant_id, "--command-id", "skill-product-disable",
+        ])
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(disable_output)["status"], "DISABLED")
+        code, reject_output, errors = invoke([
+            "skill", "reject", skill_id, "--task-id", task_id, "--run-id", run_id,
+            "--grant-id", grant_id, "--command-id", "skill-product-reject",
+        ])
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(reject_output)["status"], "REJECTED")
+        transition_store = ObjectStore(self.root, policy=self.policy)
+        try:
+            transition_trace = TraceRuntime(transition_store, AuthorityService(transition_store, self.policy))
+            transition_trace.transition_run(
+                command_id="cancel-skill-product-run", run_id=run_id, expected_state="CREATED",
+                next_state="CANCELLED", classification_assertion_ref="skill-product-terminal-event-class",
+            )
+        finally:
+            transition_store.close()
+        code, replay_output, errors = invoke(enable_args)
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(replay_output)["status"], "ENABLED")
+        self.assertNotIn("Type ENABLE to confirm", replay_output)
+
+        reopened = ObjectStore(self.root, policy=self.policy)
+        try:
+            reopened_app = compose_skill_application(
+                store=reopened, authority=AuthorityService(reopened, self.policy),
+                participation=ParticipationModeService(reopened), source_roots=roots,
+            )
+            persisted = reopened_app.snapshot()
+            self.assertEqual(persisted["eligible_count"], 0)
+            self.assertEqual(persisted["registered"][0]["status"], "REJECTED")
+            self.assertEqual(persisted["latest_selection"]["resolution"], "HOST_NATIVE")
+            self.assertNotIn(str(user_root.resolve()), json.dumps(persisted))
+        finally:
+            reopened.close()
 
 
 if __name__ == "__main__":
