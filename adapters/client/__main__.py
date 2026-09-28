@@ -27,8 +27,6 @@ def _parser() -> argparse.ArgumentParser:
                         help="Configured project Agent Skills root (default: .agents/skills in the current directory)")
     parser.add_argument("--codex-repo-skill-root", type=Path, default=Path(".codex/skills"),
                         help="Project Codex-native Agent Skills root used for Host inventory (default: .codex/skills)")
-    parser.add_argument("--codex-skill-inventory-roots-exhaustive", action="store_true",
-                        help="Declare that configured project/user roots cover all relevant local Codex Skill packages")
     parser.add_argument("--user-skill-root", type=Path,
                         help="Optional configured user Agent Skills root (default: $CODEX_HOME/skills or ~/.codex/skills)")
     parser.add_argument("--explicit-import-root", type=Path,
@@ -86,7 +84,7 @@ def _parser() -> argparse.ArgumentParser:
         review.add_argument("--grant-id", required=True)
         review.add_argument("--command-id", required=True)
 
-    resolve = skill_commands.add_parser("resolve", help="resolve using configured Codex native inventory then Nexus fallback")
+    resolve = skill_commands.add_parser("resolve", help="resolve using positive Codex inventory evidence and governed Nexus fallback")
     resolve.add_argument("query")
     resolve.add_argument("--task-id", required=True)
     resolve.add_argument("--run-id", required=True)
@@ -134,7 +132,6 @@ def main(argv: list[str] | None = None) -> int:
                     "REPO": [roots["REPO"], args.codex_repo_skill_root.expanduser().resolve()],
                     "USER": roots["USER"],
                 },
-                host_inventory_roots_exhaustive=args.codex_skill_inventory_roots_exhaustive,
             )
         if args.command == "panel":
             from adapters.panel.application import open_panel_application

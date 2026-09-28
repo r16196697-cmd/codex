@@ -61,7 +61,26 @@ class SkillApplicationService:
         return self.registry.register_package(**request)
 
     def snapshot(self) -> dict:
-        return self.registry.snapshot()
+        projection = self.registry.snapshot()
+        try:
+            inventory = self.host_inventory.inventory()
+            skills = inventory.get("skills") if isinstance(inventory, dict) else None
+            complete = inventory.get("inventory_complete") if isinstance(inventory, dict) else None
+            if (not isinstance(skills, list) or len(skills) > 256 or type(complete) is not bool
+                    or any(not isinstance(item, dict) for item in skills)):
+                raise ValueError("invalid Host inventory projection")
+            projection["host_inventory"] = {
+                "status": "COMPLETE" if complete else "PARTIAL",
+                "discovered_count": len(skills),
+                "completeness": "COMPLETE" if complete else "UNKNOWN",
+            }
+        except Exception:
+            # Do not expose adapter errors that may contain local filesystem details.
+            projection["host_inventory"] = {
+                "status": "UNAVAILABLE", "discovered_count": None,
+                "completeness": "UNKNOWN",
+            }
+        return projection
 
     def discover(self, query: str, *, limit: int = 20) -> dict:
         return self.registry.discover(query, limit=limit)
@@ -143,7 +162,6 @@ class SkillApplicationService:
 def compose_skill_application(*, store, authority, participation,
                               source_roots: dict[str, str | Path] | None = None,
                               host_roots: dict[str, str | Path | list[str | Path] | tuple[str | Path, ...]] | None = None,
-                              host_inventory_roots_exhaustive: bool = False,
                               operator_confirmation: OperatorConfirmation | None = None,
                               host_inventory=None) -> SkillApplicationService:
     roots = ({scope: Path(path).expanduser().resolve() for scope, path in source_roots.items()}
@@ -153,7 +171,6 @@ def compose_skill_application(*, store, authority, participation,
     native = host_inventory or CodexAgentSkillsInventoryAdapter(
         package_reader=registry.inventory_package_metadata,
         roots=host_roots or {scope: path for scope, path in roots.items() if scope in {"REPO", "USER"}},
-        roots_are_exhaustive=host_inventory_roots_exhaustive,
     )
     return SkillApplicationService(
         registry=registry, host_inventory=native, authority=authority,

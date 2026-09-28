@@ -812,20 +812,55 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertEqual(partial["skills"][0]["name"], "native-helper")
         self.assertEqual(partial["skills"][0]["availability"], "AVAILABLE")
         self.assertEqual(partial["skills"][0]["provenance"], "ADAPTER_DISCOVERY")
+        self.assertFalse(partial["inventory_complete"])
 
-        complete = CodexAgentSkillsInventoryAdapter(
-            package_reader=service.inventory_package_metadata, roots=roots,
-            roots_are_exhaustive=True,
-        ).inventory()
-        self.assertTrue(complete["inventory_complete"])
+        with self.assertRaises(TypeError):
+            CodexAgentSkillsInventoryAdapter(
+                package_reader=service.inventory_package_metadata, roots=roots,
+                roots_are_exhaustive=True,
+            )
 
         (package.parent / "malformed").mkdir()
         incomplete_after_bad_package = CodexAgentSkillsInventoryAdapter(
             package_reader=service.inventory_package_metadata, roots=roots,
-            roots_are_exhaustive=True,
         ).inventory()
         self.assertFalse(incomplete_after_bad_package["inventory_complete"])
         self.assertEqual([item["name"] for item in incomplete_after_bad_package["skills"]], ["native-helper"])
+
+        from adapters.client.__main__ import _parser
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                _parser().parse_args([
+                    "--data-root", str(self.root), "--codex-skill-inventory-roots-exhaustive",
+                    "skill", "discover", "helper",
+                ])
+
+    def test_partial_codex_inventory_absence_stays_unknown_and_projection_separates_counts(self):
+        service, package = self._skill_service_and_package()
+        self._register_skill(service=service, package=package, namespace="projection")
+        host_root = Path(self.temp.name) / "codex-visible-skills"
+        host_root.mkdir()
+        application = compose_skill_application(
+            store=self.store, authority=self.authority, participation=self.participation,
+            source_roots={"EXPLICIT_IMPORT": package.parent}, host_roots={"REPO": host_root},
+        )
+
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
+             mock.patch.object(self.store, "get_payload", side_effect=AssertionError("unknown inventory loaded fallback")):
+            result = application.resolve(
+                query="tiny helper", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+                classification_assertion_ref="unused", command_id="partial-inventory-absence",
+            )
+        self.assertEqual(result["resolution"], "UNSUPPORTED")
+        self.assertEqual(result["reason"], "HOST_NATIVE_AVAILABILITY_UNKNOWN")
+        self.assertEqual(result["instruction_load_status"], "NOT_LOADED")
+
+        projection = application.snapshot()
+        self.assertEqual(projection["registered_count"], 1)
+        self.assertEqual(projection["host_inventory"], {
+            "status": "PARTIAL", "discovered_count": 0, "completeness": "UNKNOWN",
+        })
+        self.assertNotIn(str(self.temp.name), json.dumps(projection))
 
     def test_skill_fallback_loads_only_integrity_bound_instruction_and_never_executes_scripts(self):
         marker = Path(self.temp.name) / "must-not-exist"
@@ -1155,7 +1190,7 @@ class ContextMeteringTests(unittest.TestCase):
         policy_path.write_text(json.dumps(self.policy), encoding="utf-8")
         common = ["--data-root", str(self.root), "--policy", str(policy_path),
                   "--repo-skill-root", str(repo_root), "--codex-repo-skill-root", str(codex_repo_root),
-                  "--user-skill-root", str(user_root), "--codex-skill-inventory-roots-exhaustive"]
+                  "--user-skill-root", str(user_root)]
 
         class CliOutput(io.StringIO):
             def __init__(self, interactive=False):
@@ -1227,6 +1262,10 @@ class ContextMeteringTests(unittest.TestCase):
             self.assertIs(view_model._skills, panel_runtime["skills"])
             panel_projection = view_model.snapshot()["skill_status"]
             self.assertEqual(panel_projection["eligible_count"], 1)
+            self.assertEqual(panel_projection["registered_count"], 1)
+            self.assertEqual(panel_projection["host_inventory"], {
+                "status": "PARTIAL", "discovered_count": 1, "completeness": "UNKNOWN",
+            })
             self.assertEqual(panel_projection["latest_selection"]["resolution"], "HOST_NATIVE")
             self.assertNotIn("Use the small helper instruction", json.dumps(panel_projection))
             with self.assertRaises(WriterAlreadyRunning):
