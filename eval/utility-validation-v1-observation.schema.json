@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.invalid/schemas/utility-validation-v1-observation-event.schema.json",
+  "title": "Nexus Utility Validation v1 neutral observation event",
+  "description": "Sanitized evaluation-only JSONL event; not Nexus canonical execution state.",
+  "type": "object",
+  "required": ["schema_id", "schema_version", "event_id", "study_id", "pair_id", "trial_id", "sequence", "event_type", "recorded_at", "provenance", "payload", "previous_event_sha256", "event_sha256"],
+  "properties": {
+    "schema_id": {"const": "nexus.utility_observation_event"},
+    "schema_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "study_id": {"$ref": "#/$defs/id"},
+    "pair_id": {"$ref": "#/$defs/id"},
+    "trial_id": {"$ref": "#/$defs/id"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "event_type": {"enum": ["TRIAL_OPENED", "INTERVENTION_PREPARED", "HOST_INVOCATION_STARTED", "HOST_INVOCATION_COMPLETED", "ACCEPTANCE_RECORDED", "TRIAL_COMPLETED", "TRIAL_INCONCLUSIVE", "TRIAL_EXCLUDED", "TRIAL_INVALIDATED"]},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "provenance": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/provenance"}},
+    "payload": {"type": "object"},
+    "previous_event_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "event_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {"if": {"properties": {"event_type": {"const": "TRIAL_OPENED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/trial_opened"}}}},
+    {"if": {"properties": {"event_type": {"const": "INTERVENTION_PREPARED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/intervention_prepared"}}}},
+    {"if": {"properties": {"event_type": {"const": "HOST_INVOCATION_STARTED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/host_started"}}}},
+    {"if": {"properties": {"event_type": {"const": "HOST_INVOCATION_COMPLETED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/host_completed"}}}},
+    {"if": {"properties": {"event_type": {"const": "ACCEPTANCE_RECORDED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/acceptance"}}}},
+    {"if": {"properties": {"event_type": {"const": "TRIAL_COMPLETED"}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/trial_completed"}}}},
+    {"if": {"properties": {"event_type": {"enum": ["TRIAL_INCONCLUSIVE", "TRIAL_EXCLUDED", "TRIAL_INVALIDATED"]}}, "required": ["event_type"]}, "then": {"properties": {"payload": {"$ref": "#/$defs/terminal"}}}}
+  ],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"]},
+    "nullable_ref": {"oneOf": [{"$ref": "#/$defs/ref"}, {"type": "null"}]},
+    "nullable_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "unknown_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9_-]{0,127}$"}},
+    "trial_opened": {
+      "type": "object",
+      "required": ["assigned_condition", "task_card_sha256", "task_variant_sha256", "task_payload_sha256", "starting_commit", "environment_snapshot_ref", "environment_snapshot_sha256", "host_surface", "acceptance_rubric_ref", "acceptance_rubric_sha256", "nexus_task_id", "nexus_run_id", "unknowns"],
+      "properties": {
+        "assigned_condition": {"enum": ["HOST_NATIVE_BYPASS", "NEXUS_ACTIVE"]},
+        "task_card_sha256": {"$ref": "#/$defs/sha256"}, "task_variant_sha256": {"$ref": "#/$defs/sha256"}, "task_payload_sha256": {"$ref": "#/$defs/sha256"},
+        "starting_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "environment_snapshot_ref": {"$ref": "#/$defs/nullable_ref"}, "environment_snapshot_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "host_surface": {"const": "CODEX_CLI"}, "acceptance_rubric_ref": {"$ref": "#/$defs/ref"}, "acceptance_rubric_sha256": {"$ref": "#/$defs/sha256"},
+        "nexus_task_id": {"$ref": "#/$defs/nullable_ref"}, "nexus_run_id": {"$ref": "#/$defs/nullable_ref"}, "unknowns": {"$ref": "#/$defs/unknown_codes"}
+      }, "additionalProperties": false
+    },
+    "intervention_prepared": {
+      "type": "object",
+      "required": ["controller_invocation_id", "preparation_status", "boundary", "composition_version", "task_payload_sha256", "final_cli_input_sha256", "final_cli_input_bytes", "context_payload_sha256", "context_pack_refs", "context_pack_byte_size", "skill_payload_sha256", "skill_resolution_ref", "skill_resolution_status", "skill_resolution", "skill_candidate_count", "selected_skill_ref", "host_skill_availability", "host_inventory_provenance", "skill_instruction_load_status", "skill_instruction_byte_size", "skill_selection_latency_ms", "skill_instruction_object_ref", "nexus_task_id", "nexus_run_id", "provenance"],
+      "properties": {
+        "controller_invocation_id": {"$ref": "#/$defs/id"}, "preparation_status": {"enum": ["PREPARED_NOT_SUBMITTED", "NONE_INCOMPLETE"]},
+        "boundary": {"const": "CODEX_CLI_INPUT"}, "composition_version": {"const": "UTILITY_INTERVENTION_ENVELOPE_V1"},
+        "task_payload_sha256": {"$ref": "#/$defs/sha256"}, "final_cli_input_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "final_cli_input_bytes": {"type": "integer", "minimum": 0}, "context_payload_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "context_pack_refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}}, "context_pack_byte_size": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "skill_payload_sha256": {"$ref": "#/$defs/nullable_sha256"}, "skill_resolution_ref": {"$ref": "#/$defs/nullable_ref"},
+        "skill_resolution_status": {"oneOf": [{"enum": ["RESOLVED", "NO_MATCH", "AMBIGUOUS", "UNSUPPORTED", "INACTIVE_MODE"]}, {"type": "null"}]},
+        "skill_resolution": {"oneOf": [{"enum": ["HOST_NATIVE", "NEXUS_FALLBACK", "UNSUPPORTED"]}, {"type": "null"}]},
+        "skill_candidate_count": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "selected_skill_ref": {"$ref": "#/$defs/nullable_ref"},
+        "host_skill_availability": {"oneOf": [{"enum": ["AVAILABLE", "UNAVAILABLE", "UNKNOWN"]}, {"type": "null"}]},
+        "host_inventory_provenance": {"oneOf": [{"enum": ["ADAPTER_DISCOVERY", "HOST_DECLARED"]}, {"type": "null"}]},
+        "skill_instruction_load_status": {"oneOf": [{"enum": ["NOT_LOADED", "LOADED_TO_GOVERNED_ARTIFACT"]}, {"type": "null"}]},
+        "skill_instruction_byte_size": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "skill_selection_latency_ms": {"oneOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "skill_instruction_object_ref": {"$ref": "#/$defs/nullable_ref"}, "nexus_task_id": {"$ref": "#/$defs/nullable_ref"},
+        "nexus_run_id": {"$ref": "#/$defs/nullable_ref"}, "provenance": {"type": "object", "additionalProperties": {"$ref": "#/$defs/provenance"}}
+      }, "additionalProperties": false
+    },
+    "host_started": {
+      "type": "object",
+      "required": ["controller_invocation_id", "attempt_number", "sanitized_argv", "sanitized_argv_sha256", "cli_version", "cli_version_provenance", "input_sha256", "input_bytes", "subprocess_shell", "cwd_policy", "host_surface"],
+      "properties": {
+        "controller_invocation_id": {"$ref": "#/$defs/id"}, "attempt_number": {"type": "integer", "minimum": 1},
+        "sanitized_argv": {"type": "array", "items": {"type": "string"}}, "sanitized_argv_sha256": {"$ref": "#/$defs/sha256"},
+        "cli_version": {"oneOf": [{"type": "string", "maxLength": 64}, {"type": "null"}]}, "cli_version_provenance": {"$ref": "#/$defs/provenance"},
+        "input_sha256": {"$ref": "#/$defs/sha256"}, "input_bytes": {"type": "integer", "minimum": 0}, "subprocess_shell": {"const": false},
+        "cwd_policy": {"const": "FRESH_EMPTY_REPO_EXTERNAL"}, "host_surface": {"const": "CODEX_CLI"}
+      }, "additionalProperties": false
+    },
+    "host_metric": {"type": "object", "required": ["value", "provenance"], "properties": {"value": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "provenance": {"$ref": "#/$defs/provenance"}}, "additionalProperties": false},
+    "host_completed": {
+      "type": "object",
+      "required": ["controller_invocation_id", "attempt_number", "exit_code", "timed_out", "thread_started", "thread_id", "turn_completed", "agent_output_sha256", "agent_output_bytes", "host_process_elapsed_ms", "event_parse_status", "malformed_line_count", "unknown_event_count", "thread_id_reused", "tool_activity", "usage", "usage_basis", "stderr_bytes", "stderr_content_status", "input_submission_status", "submitted_input_sha256", "submitted_input_bytes", "received_intervention"],
+      "properties": {
+        "controller_invocation_id": {"$ref": "#/$defs/id"}, "attempt_number": {"type": "integer", "minimum": 1},
+        "exit_code": {"oneOf": [{"type": "integer"}, {"type": "null"}]}, "timed_out": {"type": "boolean"}, "thread_started": {"type": "boolean"},
+        "thread_id": {"$ref": "#/$defs/nullable_ref"}, "turn_completed": {"type": "boolean"}, "agent_output_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "agent_output_bytes": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "host_process_elapsed_ms": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "event_parse_status": {"enum": ["COMPLETE", "INCOMPLETE"]}, "malformed_line_count": {"type": "integer", "minimum": 0}, "unknown_event_count": {"type": "integer", "minimum": 0},
+        "thread_id_reused": {"type": "boolean"}, "tool_activity": {"type": "array", "items": {"type": "object", "required": ["event_type", "count"], "properties": {"event_type": {"enum": ["command_execution", "mcp_tool_call", "web_search_call", "file_search_call", "computer_call", "unknown_tool_event"]}, "count": {"type": "integer", "minimum": 0}}, "additionalProperties": false}},
+        "usage": {"type": "object", "required": ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"], "properties": {"input_tokens": {"$ref": "#/$defs/host_metric"}, "cached_input_tokens": {"$ref": "#/$defs/host_metric"}, "cache_write_input_tokens": {"$ref": "#/$defs/host_metric"}, "output_tokens": {"$ref": "#/$defs/host_metric"}, "reasoning_output_tokens": {"$ref": "#/$defs/host_metric"}}, "additionalProperties": false},
+        "usage_basis": {"enum": ["HOST_REPORTED_TOTAL_TURN_TOKEN_TELEMETRY", "UNAVAILABLE"]}, "stderr_bytes": {"type": "integer", "minimum": 0},
+        "stderr_content_status": {"enum": ["EMPTY", "NONEMPTY", "UNAVAILABLE"]},
+        "input_submission_status": {"enum": ["CONTROLLER_SUBMITTED_TO_CODEX_CLI", "SUBMISSION_UNCONFIRMED"]},
+        "submitted_input_sha256": {"$ref": "#/$defs/nullable_sha256"},
+        "submitted_input_bytes": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "received_intervention": {"enum": ["EVAL_INTERVENTION_TRANSPORT", "NONE", "UNCONFIRMED"]}
+      }, "additionalProperties": false
+    },
+    "acceptance": {
+      "type": "object",
+      "required": ["rubric_ref", "rubric_sha256", "evaluator_kind", "evaluated_output_sha256", "verdict", "evidence_refs", "evidence_sha256", "first_pass", "retry_count", "inconclusive_reason"],
+      "properties": {
+        "rubric_ref": {"$ref": "#/$defs/ref"}, "rubric_sha256": {"$ref": "#/$defs/sha256"},
+        "evaluator_kind": {"enum": ["DETERMINISTIC", "BLINDED_HUMAN", "INDEPENDENT_REVIEWER"]}, "evaluated_output_sha256": {"$ref": "#/$defs/sha256"},
+        "verdict": {"enum": ["PASS", "FAIL", "INCONCLUSIVE"]}, "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}},
+        "evidence_sha256": {"type": "array", "items": {"$ref": "#/$defs/sha256"}}, "first_pass": {"oneOf": [{"type": "boolean"}, {"type": "null"}]},
+        "retry_count": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "inconclusive_reason": {"oneOf": [{"enum": ["INPUT_MISMATCH", "START_STATE_MISMATCH", "HOST_INVOCATION_ID_MISSING", "HOST_EVENT_PARSE_INCOMPLETE", "B_INTERVENTION_NOT_SUBMITTED", "CROSS_CONDITION_CONTAMINATION", "UNAUTHORIZED_SOURCE", "UNAUTHORIZED_TOOL_OR_NETWORK", "ACCEPTANCE_INCOMPLETE", "CONTROLLER_FAILURE", "PROVENANCE_AMBIGUOUS"]}, {"type": "null"}]}
+      }, "additionalProperties": false
+    },
+    "trial_completed": {
+      "type": "object", "required": ["verdict", "first_pass", "retry_count", "trial_wall_elapsed_ms", "host_process_elapsed_ms", "telemetry_refs", "unknowns"],
+      "properties": {"verdict": {"enum": ["PASS", "FAIL"]}, "first_pass": {"type": "boolean"}, "retry_count": {"type": "integer", "minimum": 0}, "trial_wall_elapsed_ms": {"type": "integer", "minimum": 0}, "host_process_elapsed_ms": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "telemetry_refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}}, "unknowns": {"$ref": "#/$defs/unknown_codes"}},
+      "additionalProperties": false
+    },
+    "terminal": {
+      "type": "object", "required": ["reason_code", "trial_wall_elapsed_ms", "host_process_elapsed_ms", "evidence_refs"],
+      "properties": {"reason_code": {"enum": ["INPUT_MISMATCH", "START_STATE_MISMATCH", "HOST_INVOCATION_ID_MISSING", "HOST_EVENT_PARSE_INCOMPLETE", "B_INTERVENTION_NOT_SUBMITTED", "CROSS_CONDITION_CONTAMINATION", "UNAUTHORIZED_SOURCE", "UNAUTHORIZED_TOOL_OR_NETWORK", "ACCEPTANCE_INCOMPLETE", "CONTROLLER_FAILURE", "PROVENANCE_AMBIGUOUS"]}, "trial_wall_elapsed_ms": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "host_process_elapsed_ms": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "evidence_refs": {"type": "array", "items": {"$ref": "#/$defs/ref"}}},
+      "additionalProperties": false
+    }
+  }
+}
