@@ -524,7 +524,7 @@ class ObjectStore:
                     + f"\nINSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES({version},'{migration_name}','{checksum}','{applied_at}');"
                     + f"\nPRAGMA user_version = {version};\nCOMMIT;"
                 )
-                rebuilding_tables = version == 17
+                rebuilding_tables = version in {17, 27}
                 try:
                     if rebuilding_tables:
                         conn.execute("PRAGMA foreign_keys = OFF")
@@ -540,7 +540,14 @@ class ObjectStore:
                     if rebuilding_tables:
                         conn.execute("PRAGMA legacy_alter_table = OFF")
                         conn.execute("PRAGMA foreign_keys = ON")
-                        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                        if version == 17:
+                            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                        else:
+                            violations = [
+                                violation
+                                for table in ("skill_registry_entries", "skill_resolution_records")
+                                for violation in conn.execute(f"PRAGMA foreign_key_check({table})")
+                            ]
                         if violations:
                             raise MigrationError("Purge redaction migration produced a foreign-key violation.")
                 except Exception:

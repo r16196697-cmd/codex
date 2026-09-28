@@ -27,6 +27,7 @@ from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
 from kernel.runtime.errors import RuntimeDenied
 from kernel.object.errors import SchemaUnsupported
+from kernel.object.errors import CommandConflict
 from kernel.runtime.panel import PanelQueryService
 from kernel.skills import SkillRegistryService
 from kernel.object.errors import WriterAlreadyRunning
@@ -341,6 +342,7 @@ class ContextMeteringTests(unittest.TestCase):
             )
             conn.execute("DELETE FROM schema_migrations WHERE version=25")
             conn.execute("DELETE FROM schema_migrations WHERE version=26")
+            conn.execute("DELETE FROM schema_migrations WHERE version=27")
             conn.execute("PRAGMA user_version=24")
         self.store.close()
         migration_dir = Path(self.temp.name) / "migration-25-only"
@@ -597,7 +599,7 @@ class ContextMeteringTests(unittest.TestCase):
 
     def _skill_service_and_package(self, *, name="tiny-helper", description="A tiny deterministic helper.", resources=None):
         package_root = Path(self.temp.name) / "skill-packages"
-        package = package_root / "sample"
+        package = package_root / name
         package.mkdir(parents=True, exist_ok=True)
         body = f"---\nname: {name}\ndescription: {description}\n---\n\nInstruction body for {name}.\n"
         (package / "SKILL.md").write_text(body, encoding="utf-8")
@@ -610,11 +612,11 @@ class ContextMeteringTests(unittest.TestCase):
                                       source_roots={"EXPLICIT_IMPORT": package_root})
         return service, package
 
-    def _register_skill(self, *, service, package, namespace="test", name="tiny-helper"):
+    def _register_skill(self, *, service, package, namespace="test", name="tiny-helper", enable=True):
         from kernel.skills.service import _canonical, _sha256
-        package_doc = service._read_package("EXPLICIT_IMPORT", "sample")
+        package_doc = service._read_package("EXPLICIT_IMPORT", package.name)
         identity = {"name": package_doc["name"], "source_scope": "EXPLICIT_IMPORT",
-                    "source_namespace": namespace, "source_ref": "sample",
+                    "source_namespace": namespace, "source_ref": package.name,
                     "package_manifest_sha256": package_doc["package_manifest_sha256"]}
         skill_id = "skill-" + _sha256(_canonical(identity))
         source_object_ref = "skill-src-" + _sha256(skill_id.encode("utf-8"))
@@ -625,28 +627,123 @@ class ContextMeteringTests(unittest.TestCase):
                 command_id="classify-" + source_object_ref,
             )
             registered = service.register_package(
-                source_scope="EXPLICIT_IMPORT", source_namespace=namespace, source_ref="sample",
+                source_scope="EXPLICIT_IMPORT", source_namespace=namespace, source_ref=package.name,
                 task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
                 classification_assertion_ref="class-" + source_object_ref,
                 command_id="register-" + namespace,
             )
         self.assertEqual(registered["skill_id"], skill_id)
-        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+        if not enable:
+            return skill_id, package_doc
+        approval_id = "skill-approval-" + namespace
+        self._create_skill_approval(service, skill_id, package_doc["package_manifest_sha256"], approval_id)
+        with mock.patch.object(self.authority, "compute_effective_authority", return_value={
+            "task_scope": {self.task_id}, "resource_scope": {skill_id},
+            "action_scope": {"OBJECT_WRITE"}, "audience_scope": {"nexus-runtime"},
+        }):
             enabled = service.review(skill_id=skill_id, next_status="ENABLED", task_id=self.task_id,
-                                     run_id=self.run_id, grant_id="ctx-grant", command_id="review-" + namespace)
+                                     run_id=self.run_id, grant_id="ctx-grant", command_id="review-" + namespace,
+                                     approval_id=approval_id)
         self.assertTrue(enabled["eligible"])
         return skill_id, package_doc
+
+    def _create_skill_approval(self, service, skill_id, revision, approval_id, *, decision="APPROVE",
+                               target_skill_id=None, payload_revision=None, expires_at=None):
+        target_skill_id = target_skill_id or skill_id
+        request = {
+            "skill_id": skill_id, "next_status": "ENABLED",
+            "package_manifest_sha256": payload_revision or revision,
+            "approval_id": approval_id, "task_id": self.task_id,
+            "run_id": self.run_id, "grant_id": "ctx-grant",
+        }
+        now = datetime.now(timezone.utc)
+        approval = {
+            "schema_id": "nexus.approval_decision", "schema_version": 1,
+            "approval_id": approval_id, "approver_principal_id": "human-root",
+            "target_type": "OBJECT_WRITE", "target_ref": target_skill_id,
+            "payload_integrity_hash": service._review_approval_payload_hash(request),
+            "decision": decision, "approved_scope": ["OBJECT_WRITE", target_skill_id],
+            "policy_version": "1", "issued_at": (now - timedelta(days=2) if expires_at else now).isoformat(),
+        }
+        if expires_at:
+            approval["expires_at"] = expires_at
+        self.authority.create_approval(approval, "create-" + approval_id)
+
+    def _review_skill(self, service, skill_id, *, command_id, approval_id=None, next_status="ENABLED"):
+        effective_authority = {
+            "task_scope": {self.task_id}, "resource_scope": {skill_id},
+            "action_scope": {"OBJECT_WRITE"}, "audience_scope": {"nexus-runtime"},
+        }
+        with mock.patch.object(self.authority, "compute_effective_authority", return_value=effective_authority):
+            return service.review(skill_id=skill_id, next_status=next_status, task_id=self.task_id,
+                                  run_id=self.run_id, grant_id="ctx-grant", command_id=command_id,
+                                  approval_id=approval_id)
 
     def test_skill_package_validation_hashes_and_metadata_only_discovery(self):
         service, package = self._skill_service_and_package()
         skill_id, doc = self._register_skill(service=service, package=package)
-        again = service._read_package("EXPLICIT_IMPORT", "sample")
+        again = service._read_package("EXPLICIT_IMPORT", package.name)
         self.assertEqual(doc["package_manifest_sha256"], again["package_manifest_sha256"])
         self.assertEqual(doc["skill_md_sha256"], again["skill_md_sha256"])
         with mock.patch.object(self.store, "get_payload", side_effect=AssertionError("discovery loaded body")):
             projection = service.discover("tiny helper")
             self.assertEqual(projection["candidates"][0]["skill_id"], skill_id)
         self.assertNotIn("Instruction body", json.dumps(projection))
+
+    def test_skill_enable_requires_revision_bound_human_approval(self):
+        service, package = self._skill_service_and_package()
+        skill_id, package_doc = self._register_skill(service=service, package=package, enable=False)
+        revision = package_doc["package_manifest_sha256"]
+        with self.assertRaisesRegex(RuntimeDenied, "SKILL_ENABLE_APPROVAL_REQUIRED"):
+            self._review_skill(service, skill_id, command_id="enable-without-approval")
+        cases = (
+            ("wrong-skill", {"target_skill_id": "another-skill"}, "APPROVAL_TARGET_MISMATCH"),
+            ("old-revision", {"payload_revision": "0" * 64}, "APPROVAL_PAYLOAD_HASH_MISMATCH"),
+            ("expired", {"expires_at": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()}, "APPROVAL_EXPIRED"),
+            ("denied", {"decision": "DENY"}, "APPROVAL_DENIED"),
+        )
+        for suffix, options, reason in cases:
+            approval_id = "approval-" + suffix
+            self._create_skill_approval(service, skill_id, revision, approval_id, **options)
+            with self.subTest(reason=reason), self.assertRaisesRegex(AuthorizationDenied, reason):
+                self._review_skill(service, skill_id, command_id="review-" + suffix, approval_id=approval_id)
+        self.assertEqual(service.get(skill_id)["status"], "REGISTERED")
+        self._create_skill_approval(service, skill_id, revision, "approval-valid")
+        enabled = self._review_skill(service, skill_id, command_id="review-valid", approval_id="approval-valid")
+        self.assertTrue(enabled["eligible"])
+
+    def test_skill_review_command_ledger_prevents_old_enable_replay(self):
+        service, package = self._skill_service_and_package()
+        skill_id, package_doc = self._register_skill(service=service, package=package, namespace="replay", enable=False)
+        self._create_skill_approval(service, skill_id, package_doc["package_manifest_sha256"], "approval-review-A")
+        first = self._review_skill(service, skill_id, command_id="review-command-A", approval_id="approval-review-A")
+        self.assertTrue(first["eligible"])
+        disabled = self._review_skill(service, skill_id, command_id="review-command-B", next_status="DISABLED")
+        self.assertEqual(disabled["status"], "DISABLED")
+        replay = self._review_skill(service, skill_id, command_id="review-command-A", approval_id="approval-review-A")
+        self.assertTrue(replay["eligible"], "replay returns original committed result")
+        self.assertEqual(service.get(skill_id)["status"], "DISABLED", "historical replay must not reapply enable")
+        with self.assertRaises(CommandConflict):
+            self._review_skill(service, skill_id, command_id="review-command-A", next_status="DISABLED")
+        other_service, other_package = self._skill_service_and_package(name="second-helper")
+        other_skill_id, _ = self._register_skill(service=other_service, package=other_package,
+                                                  namespace="replay-other", enable=False)
+        with self.assertRaises(CommandConflict):
+            self._review_skill(other_service, other_skill_id, command_id="review-command-A",
+                               next_status="ENABLED", approval_id="approval-review-A")
+
+    def test_skill_package_directory_name_and_optional_frontmatter_compliance(self):
+        service, package = self._skill_service_and_package(name="matching-helper")
+        valid = "---\nname: matching-helper\ndescription: Small helper.\nlicense: MIT\ncompatibility: Python 3.12\nmetadata:\n  author: test\n  version: '1'\nallowed-tools: Read Search\n---\nbody\n"
+        (package / "SKILL.md").write_text(valid, encoding="utf-8")
+        self.assertEqual(service._read_package("EXPLICIT_IMPORT", package.name)["name"], package.name)
+        (package / "SKILL.md").write_text(valid.replace("name: matching-helper", "name: other-helper"), encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeDenied, "SKILL_NAME_DIRECTORY_MISMATCH"):
+            service._read_package("EXPLICIT_IMPORT", package.name)
+        malformed_optional = valid.replace("compatibility: Python 3.12", "compatibility: " + "x" * 501)
+        (package / "SKILL.md").write_text(malformed_optional, encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeDenied, "SKILL_COMPATIBILITY_INVALID"):
+            service._read_package("EXPLICIT_IMPORT", package.name)
 
     def test_skill_host_native_delegates_without_loading_body(self):
         service, package = self._skill_service_and_package()
@@ -712,6 +809,7 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertEqual(result["instruction_object_ref"], fallback_ref)
         self.assertEqual(result["instruction_byte_size"], len(instruction))
         fallback_document = json.loads(self.store.get_payload(fallback_ref))
+        self.assertNotIn("loaded_at", fallback_document)
         self.assertEqual(fallback_document["instruction_utf8"].encode("utf-8"), instruction)
         self.assertEqual(fallback_document["instruction_sha256"], package_doc["skill_md_sha256"])
         self.assertEqual(self.store.get_lineage(fallback_ref)["sources"], ["skill-src-" + _sha256(skill_id.encode())])
@@ -723,7 +821,10 @@ class ContextMeteringTests(unittest.TestCase):
         with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
             replay = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
                                      grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
-                                     command_id="fallback-selection")
+                                     command_id="fallback-selection",
+                                     host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                                         "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                                     }})())
             with self.assertRaisesRegex(RuntimeDenied, "SKILL_RESOLUTION_COMMAND_CONFLICT"):
                 service.resolve(query="different query", task_id=self.task_id, run_id=self.run_id,
                                 grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
@@ -733,6 +834,93 @@ class ContextMeteringTests(unittest.TestCase):
             after = (conn.execute("SELECT COUNT(*) FROM skill_resolution_records").fetchone()[0],
                      conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (fallback_ref,)).fetchone()[0])
         self.assertEqual(after, before)
+
+    def test_skill_fallback_artifact_commit_crash_retries_exactly(self):
+        service, package = self._skill_service_and_package()
+        skill_id, package_doc = self._register_skill(service=service, package=package, namespace="crash-retry")
+        from kernel.skills.service import _canonical, _sha256
+        command_id = "fallback-crash-retry"
+        fallback_ref = "skill-fallback-" + _sha256(_canonical({
+            "command_id": command_id, "task_id": self.task_id, "run_id": self.run_id,
+            "skill_id": skill_id, "instruction_sha256": package_doc["skill_md_sha256"],
+        }))
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            self.authority.record_classification_assertion(
+                self._class("class-" + fallback_ref, "OBJECT", fallback_ref),
+                grant_id="ctx-grant", task_id=self.task_id, audience="nexus-runtime",
+                command_id="classify-" + fallback_ref,
+            )
+        inventory = type("Adapter", (), {"inventory": lambda _self: {
+            "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+        }})()
+        request = dict(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                       grant_id="ctx-grant", classification_assertion_ref="class-" + fallback_ref,
+                       command_id=command_id, host_inventory=inventory)
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True), \
+             mock.patch.object(service, "_record_resolution", side_effect=RuntimeError("simulated process loss")):
+            with self.assertRaisesRegex(RuntimeError, "simulated process loss"):
+                service.resolve(**request)
+        committed_hash = hashlib.sha256(self.store.get_payload(fallback_ref)).hexdigest()
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            result = service.resolve(**request)
+        self.assertEqual(result["resolution"], "NEXUS_FALLBACK")
+        self.assertEqual(hashlib.sha256(self.store.get_payload(fallback_ref)).hexdigest(), committed_hash)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (fallback_ref,)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM skill_resolution_records WHERE command_id=?", (command_id,)).fetchone()[0], 1)
+
+    def test_skill_purge_redacts_instruction_snapshot_and_fallback_references(self):
+        from kernel.purge import PurgeService
+        from kernel.skills.service import _canonical, _sha256
+        service, package = self._skill_service_and_package()
+        skill_id, package_doc = self._register_skill(service=service, package=package, namespace="purge-source")
+        with self.store._connection() as conn:
+            source_ref = conn.execute("SELECT instruction_object_ref FROM skill_registry_entries WHERE skill_id=?", (skill_id,)).fetchone()[0]
+        purge = PurgeService(self.store, self.authority, self.memory,
+                             independent_journal_path=self.store.independent_purge_journal_path)
+        purge._purge_payloads_and_indexes([source_ref])
+        projection = service.get(skill_id)
+        self.assertEqual(projection["status"], "STALE")
+        self.assertEqual(projection["stale_reason"], "INSTRUCTION_SNAPSHOT_PURGED")
+        self.assertEqual(service.discover("tiny helper")["status"], "NO_MATCH")
+        self.assertNotIn("Instruction body", json.dumps(service.snapshot()))
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            no_source = service.resolve(query="tiny helper", task_id=self.task_id, run_id=self.run_id,
+                                        grant_id="ctx-grant", classification_assertion_ref="unused",
+                                        command_id="after-source-purge")
+        self.assertEqual(no_source["result_status"], "NO_MATCH")
+        self.assertEqual(self.store.get_object_metadata(source_ref)["payload_state"], "PURGED")
+
+        second_service, second_package = self._skill_service_and_package(name="purge-helper")
+        second_skill, second_doc = self._register_skill(service=second_service, package=second_package,
+                                                        namespace="purge-fallback")
+        fallback_ref = "skill-fallback-" + _sha256(_canonical({
+            "command_id": "purge-fallback-selection", "task_id": self.task_id, "run_id": self.run_id,
+            "skill_id": second_skill, "instruction_sha256": second_doc["skill_md_sha256"],
+        }))
+        with mock.patch.object(self.authority, "evaluate_authorization", return_value=True):
+            self.authority.record_classification_assertion(
+                self._class("class-" + fallback_ref, "OBJECT", fallback_ref),
+                grant_id="ctx-grant", task_id=self.task_id, audience="nexus-runtime",
+                command_id="classify-" + fallback_ref,
+            )
+            loaded = second_service.resolve(
+                query="purge helper", task_id=self.task_id, run_id=self.run_id, grant_id="ctx-grant",
+                classification_assertion_ref="class-" + fallback_ref,
+                command_id="purge-fallback-selection",
+                host_inventory=type("Adapter", (), {"inventory": lambda _self: {
+                    "adapter_id": "test-host", "inventory_complete": True, "skills": [],
+                }})(),
+            )
+        self.assertEqual(loaded["resolution"], "NEXUS_FALLBACK")
+        purge._purge_payloads_and_indexes([fallback_ref])
+        latest = second_service.latest_resolution()
+        self.assertIsNone(latest["instruction_object_ref"])
+        self.assertEqual(latest["instruction_load_status"], "LOADED_TO_GOVERNED_ARTIFACT")
+        self.assertEqual(latest["instruction_payload_availability"], "UNAVAILABLE")
+        self.assertNotIn("Instruction body", json.dumps(second_service.snapshot()))
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_skill_stale_revision_and_participation_modes_fail_closed(self):
         service, package = self._skill_service_and_package()
@@ -790,14 +978,22 @@ class ContextMeteringTests(unittest.TestCase):
         service, package = self._skill_service_and_package()
         (package / "SKILL.md").write_text("---\nname: first\nname: second\ndescription: duplicate\n---\n", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeDenied, "SKILL_FRONTMATTER_DUPLICATE_KEY"):
-            service._read_package("EXPLICIT_IMPORT", "sample")
-        (package / "SKILL.md").write_text("---\nname: good\ndescription: good\n---\n", encoding="utf-8")
+            service._read_package("EXPLICIT_IMPORT", package.name)
+        (package / "SKILL.md").write_text(
+            "---\nname: tiny-helper\ndescription: good\nlicense: MIT\n"
+            "compatibility: Python 3.12\nmetadata:\n  author: test\nallowed-tools: Read Search\n---\n",
+            encoding="utf-8")
         asset = package / "assets" / "icon.png"
         asset.parent.mkdir()
         asset.write_bytes(b"\x89PNG\x00synthetic binary asset")
-        package_doc = service._read_package("EXPLICIT_IMPORT", "sample")
+        package_doc = service._read_package("EXPLICIT_IMPORT", package.name)
         self.assertTrue(any(item["path"] == "SKILL.md" for item in package_doc["manifest"]))
         self.assertTrue(any(item["path"] == "assets/icon.png" for item in package_doc["manifest"]))
+        (package / "SKILL.md").write_text(
+            "---\nname: tiny-helper\ndescription: good\ncompatibility: " + ("x" * 501) + "\n---\n",
+            encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeDenied, "SKILL_COMPATIBILITY_INVALID"):
+            service._read_package("EXPLICIT_IMPORT", package.name)
         for bad_ref in ("../sample", f"{chr(67)}:/outside/package", ""):
             with self.assertRaises(RuntimeDenied):
                 service._read_package("EXPLICIT_IMPORT", bad_ref)
@@ -826,7 +1022,7 @@ class ContextMeteringTests(unittest.TestCase):
              mock.patch.object(Path, "resolve", resolve_with_escape), \
              mock.patch.object(Path, "is_symlink", mark_escape_symlink):
             with self.assertRaisesRegex(RuntimeDenied, "SKILL_SYMLINK_ESCAPES_PACKAGE_ROOT"):
-                service._read_package("EXPLICIT_IMPORT", "sample")
+                service._read_package("EXPLICIT_IMPORT", package.name)
 
 
 if __name__ == "__main__":

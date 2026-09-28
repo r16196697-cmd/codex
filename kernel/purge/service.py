@@ -398,6 +398,20 @@ class PurgeService:
                         self.store._payload_path(row["payload_uri"]).unlink(missing_ok=True)
                     self.memory.purge_refs(conn, [ref])
                     conn.execute("UPDATE object_states SET payload_state='PURGED',validity='INVALIDATED',lifecycle='RETIRED' WHERE object_id=?", (ref,))
+                    # These Skill projections hold foreign keys to Object
+                    # envelopes, so detach them under the same narrow Purge
+                    # redaction authority before deleting the envelope.
+                    with self.store._allow_purge_redaction([ref]):
+                        conn.execute(
+                            "UPDATE skill_registry_entries SET instruction_object_ref=NULL,status='STALE' "
+                            "WHERE instruction_object_ref=?",
+                            (ref,),
+                        )
+                        conn.execute(
+                            "UPDATE skill_resolution_records SET instruction_object_ref=NULL "
+                            "WHERE instruction_object_ref=?",
+                            (ref,),
+                        )
                     conn.execute("DELETE FROM object_envelopes WHERE object_id=?", (ref,))
                 # This is a rebuildable manifest-input projection, not an
                 # immutable audit record. Remove rows only after the referenced
@@ -466,6 +480,22 @@ class PurgeService:
                     "UPDATE value_metering_records SET context_pack_ref='REDACTED_PURGED' WHERE record_id=?",
                     (row["record_id"],),
                 )
+
+        # Skill registration and resolution are durable projections over
+        # governed instruction Objects. Preserve only historical metadata;
+        # detach exact purged Object references before their envelopes vanish.
+        for row in conn.execute(
+            "SELECT skill_id,instruction_object_ref FROM skill_registry_entries "
+            "WHERE instruction_object_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
+        ).fetchall():
+            conn.execute(
+                "UPDATE skill_registry_entries SET instruction_object_ref=NULL,status='STALE' WHERE skill_id=?",
+                (row["skill_id"],),
+            )
+        conn.execute(
+            "UPDATE skill_resolution_records SET instruction_object_ref=NULL "
+            "WHERE instruction_object_ref IN (SELECT object_id FROM object_states WHERE payload_state='PURGED')"
+        )
 
         # Immutable audit records retain their non-identifying verdict/state,
         # while every exact object-ID value is replaced before any read/replay.

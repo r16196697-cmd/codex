@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 from kernel.runtime.errors import RuntimeDenied
+from kernel.object.errors import CommandConflict
 
 
 _SCOPES = frozenset({"REPO", "USER", "EXPLICIT_IMPORT"})
@@ -130,36 +131,54 @@ class SkillRegistryService:
         return self.get(skill_id)
 
     def review(self, *, skill_id: str, next_status: str, task_id: str, run_id: str,
-               grant_id: str, command_id: str) -> dict:
-        """Explicit human-authorized review; import itself never enables a Skill."""
+               grant_id: str, command_id: str, approval_id: str | None = None) -> dict:
+        """Review one exact package revision; enabling requires a bound Human Approval."""
         if (next_status not in {"ENABLED", "DISABLED", "REJECTED"}
                 or not isinstance(command_id, str) or not _SAFE_COMMAND_ID.fullmatch(command_id)):
             raise RuntimeDenied("SKILL_REVIEW_REQUEST_INVALID")
         run = self._bound_run(task_id, run_id, grant_id)
-        self.authority.evaluate_authorization(
-            run["grant_id"], {"task": task_id, "resource": skill_id,
-                              "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
-            command_id + "-authorize-review",
-        )
         with self.store._connection() as conn:
             row = conn.execute("SELECT * FROM skill_registry_entries WHERE skill_id=?", (skill_id,)).fetchone()
-            prior = conn.execute("SELECT skill_id,status FROM skill_registry_entries WHERE review_command_id=?",
-                                 (command_id,)).fetchone()
-        if prior:
-            if prior["skill_id"] == skill_id and prior["status"] == next_status:
-                return self.get(skill_id)
-            raise RuntimeDenied("SKILL_REVIEW_COMMAND_CONFLICT")
         if not row:
             raise RuntimeDenied("SKILL_REGISTRATION_NOT_FOUND")
+        row = dict(row)
+        request = {
+            "skill_id": skill_id, "next_status": next_status,
+            "package_manifest_sha256": row["package_manifest_sha256"],
+            "approval_id": approval_id, "task_id": task_id, "run_id": run_id,
+            "grant_id": run["grant_id"],
+        }
+        request_hash = self.store._request_hash("review_skill", request)
+        # Replays are resolved from the canonical command ledger before checking
+        # mutable approval expiry or current registry state. They return the
+        # original result and never reapply an older transition.
+        with self.store._connection() as conn:
+            prior = self.store._replay_command(conn, command_id, "review_skill", request_hash)
+        if prior is not None:
+            return prior
         if row["status"] == "STALE":
             raise RuntimeDenied("SKILL_REVISION_STALE")
         chain = self.authority.validate_delegation_chain(run["grant_id"])
-        reviewer = chain[0]["issued_by"]
-        with self.store._connection() as conn:
-            principal = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id=?", (reviewer,)).fetchone()
-        if not principal or principal["principal_type"] != "HUMAN" or principal["status"] != "ACTIVE":
-            raise RuntimeDenied("SKILL_REVIEW_REQUIRES_ACTIVE_HUMAN")
+        reviewer = chain[-1]["granted_to"]
         if next_status == "ENABLED":
+            if not approval_id:
+                raise RuntimeDenied("SKILL_ENABLE_APPROVAL_REQUIRED")
+            payload_hash = self._review_approval_payload_hash(request)
+            self.authority.evaluate_authorization(
+                run["grant_id"], {"task": task_id, "resource": skill_id,
+                                  "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
+                command_id + "-authorize-review", approval_id=approval_id,
+                payload_integrity_hash=payload_hash,
+            )
+            with self.store._connection() as conn:
+                approval = conn.execute(
+                    "SELECT a.approver_principal_id,p.principal_type,p.status FROM approval_decisions a "
+                    "JOIN principals p ON p.principal_id=a.approver_principal_id WHERE a.approval_id=?",
+                    (approval_id,),
+                ).fetchone()
+            if not approval or approval["principal_type"] != "HUMAN" or approval["status"] != "ACTIVE":
+                raise RuntimeDenied("SKILL_ENABLE_REQUIRES_ACTIVE_HUMAN_APPROVAL")
+            reviewer = approval["approver_principal_id"]
             package = self._read_package(row["source_scope"], row["source_ref"])
             if package["package_manifest_sha256"] != row["package_manifest_sha256"]:
                 self._mark_stale(skill_id)
@@ -168,16 +187,45 @@ class SkillRegistryService:
             if source_metadata.get("payload_state") != "AVAILABLE":
                 self._mark_stale(skill_id)
                 raise RuntimeDenied("SKILL_INSTRUCTION_SNAPSHOT_UNAVAILABLE")
+        else:
+            self.authority.evaluate_authorization(
+                run["grant_id"], {"task": task_id, "resource": skill_id,
+                                  "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
+                command_id + "-authorize-review",
+            )
         reviewed_at = _now()
         with self.store._lock, self.store._connection() as conn:
-            changed = conn.execute(
-                "UPDATE skill_registry_entries SET status=?,review_command_id=?,reviewed_by=?,reviewed_at=? "
-                "WHERE skill_id=? AND status=?",
-                (next_status, command_id, reviewer, reviewed_at, skill_id, row["status"]),
-            ).rowcount
-            if changed != 1:
-                raise RuntimeDenied("SKILL_REVIEW_STATE_CONFLICT")
-        return self.get(skill_id)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                prior = self.store._replay_command(conn, command_id, "review_skill", request_hash)
+                if prior is not None:
+                    conn.commit()
+                    return prior
+                current = conn.execute("SELECT status,package_manifest_sha256 FROM skill_registry_entries WHERE skill_id=?",
+                                       (skill_id,)).fetchone()
+                if not current or current["status"] != row["status"] or current["package_manifest_sha256"] != row["package_manifest_sha256"]:
+                    raise RuntimeDenied("SKILL_REVIEW_STATE_CONFLICT")
+                changed = conn.execute(
+                    "UPDATE skill_registry_entries SET status=?,review_command_id=?,reviewed_by=?,reviewed_at=? "
+                    "WHERE skill_id=? AND status=?",
+                    (next_status, command_id, reviewer, reviewed_at, skill_id, row["status"]),
+                ).rowcount
+                if changed != 1:
+                    raise RuntimeDenied("SKILL_REVIEW_STATE_CONFLICT")
+                updated = conn.execute("SELECT e.*,s.payload_state FROM skill_registry_entries e "
+                                       "LEFT JOIN object_states s ON s.object_id=e.instruction_object_ref WHERE e.skill_id=?",
+                                       (skill_id,)).fetchone()
+                result = self._public_entry(dict(updated), source_available=updated["payload_state"] == "AVAILABLE")
+                self.store._record_command(conn, command_id, "review_skill", request_hash, result)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _review_approval_payload_hash(request: dict) -> str:
+        return _sha256(_canonical({"operation": "review_skill", **request}))
 
     def discover(self, query: str, *, limit: int = 20) -> dict:
         """Search only safe persisted metadata; never read Skill instruction bodies."""
@@ -211,14 +259,21 @@ class SkillRegistryService:
             command_id + "-authorize-resolution",
         )
         query_sha256 = _sha256(query.encode("utf-8"))
+        inventory, inventory_sha256 = self._host_inventory_snapshot(host_inventory)
         with self.store._connection() as conn:
-            prior = conn.execute("SELECT * FROM skill_resolution_records WHERE command_id=?", (command_id,)).fetchone()
+            prior = conn.execute(
+                "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
+                (command_id,),
+            ).fetchone()
         if prior:
             prior = dict(prior)
             prior_basis = json.loads(prior["selection_basis_json"])
             if (prior["task_id"] != task_id or prior["run_id"] != run_id
                     or prior["query_sha256"] != query_sha256
-                    or prior_basis.get("classification_assertion_sha256") != _sha256(classification_assertion_ref.encode("utf-8"))):
+                    or prior_basis.get("classification_assertion_sha256") != _sha256(classification_assertion_ref.encode("utf-8"))
+                    or prior_basis.get("authority_grant_id") != run["grant_id"]
+                    or prior_basis.get("host_inventory_sha256") != inventory_sha256):
                 raise RuntimeDenied("SKILL_RESOLUTION_COMMAND_CONFLICT")
             return self._public_resolution(prior)
         ranked = self._rank(query)
@@ -226,7 +281,9 @@ class SkillRegistryService:
                  "tie_break": "SCORE_DESC_SKILL_ID_ASC; TOP_SCORE_TIE_RETURNS_AMBIGUOUS",
                  "metadata_fields": ["name", "description"], "instruction_bodies_read_for_search": False,
                  "candidate_limit": _MAX_CANDIDATES,
-                 "classification_assertion_sha256": _sha256(classification_assertion_ref.encode("utf-8"))}
+                 "classification_assertion_sha256": _sha256(classification_assertion_ref.encode("utf-8")),
+                 "authority_grant_id": run["grant_id"],
+                 "host_inventory_sha256": inventory_sha256}
         if len(ranked) > _MAX_CANDIDATES:
             return self._record_resolution(command_id=command_id, task_id=task_id, run_id=run_id,
                 query=query, candidate_count=len(ranked), basis=basis, result_status="UNSUPPORTED",
@@ -241,7 +298,7 @@ class SkillRegistryService:
                 resolution=None, reason="TOP_CANDIDATES_TIED", started=started,
                 candidates=[self._public_entry(row, source_available=True) for _score, row in ranked[:_MAX_CANDIDATES]])
         score, row = ranked[0]
-        native, inventory_provenance = self._native_available(host_inventory, row["skill_name"], row["package_manifest_sha256"])
+        native, inventory_provenance = self._native_available(inventory, row["skill_name"], row["package_manifest_sha256"])
         if native == "INVALID":
             return self._record_resolution(command_id=command_id, task_id=task_id, run_id=run_id,
                 query=query, candidate_count=len(ranked), basis=basis, result_status="UNSUPPORTED",
@@ -319,7 +376,7 @@ class SkillRegistryService:
                 "schema_id": "nexus.skill_instruction_artifact", "schema_version": 1,
                 "skill_id": row["skill_id"], "package_revision": row["package_manifest_sha256"],
                 "instruction_sha256": row["skill_md_sha256"], "source_scope": row["source_scope"],
-                "source_namespace": row["source_namespace"], "loaded_at": _now(),
+                "source_namespace": row["source_namespace"],
                 "task_id": task_id, "run_id": run_id,
                 "instruction_utf8": instruction.decode("utf-8"),
             }), object_type="artifact", created_by_run=run_id,
@@ -343,7 +400,11 @@ class SkillRegistryService:
                 "LEFT JOIN object_states s ON s.object_id=e.instruction_object_ref "
                 "ORDER BY e.skill_name,e.source_scope,e.source_namespace,e.package_manifest_sha256,e.skill_id"
             )]
-            latest = conn.execute("SELECT * FROM skill_resolution_records ORDER BY created_at DESC,selection_id DESC LIMIT 1").fetchone()
+            latest = conn.execute(
+                "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref "
+                "ORDER BY r.created_at DESC,r.selection_id DESC LIMIT 1"
+            ).fetchone()
         projected = [self._public_entry(row, source_available=row.get("payload_state") == "AVAILABLE") for row in rows]
         statuses = [entry["status"] for entry in projected]
         latest_projection = self._public_resolution(dict(latest)) if latest else None
@@ -363,7 +424,11 @@ class SkillRegistryService:
     def latest_resolution(self) -> dict | None:
         self.store._require_mode("core_read")
         with self.store._connection() as conn:
-            row = conn.execute("SELECT * FROM skill_resolution_records ORDER BY created_at DESC,selection_id DESC LIMIT 1").fetchone()
+            row = conn.execute(
+                "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref "
+                "ORDER BY r.created_at DESC,r.selection_id DESC LIMIT 1"
+            ).fetchone()
         return self._public_resolution(dict(row)) if row else None
 
     def _record_resolution(self, *, command_id, task_id, run_id, query, candidate_count, basis,
@@ -392,10 +457,37 @@ class SkillRegistryService:
             "selection_basis": selection_basis,
         }
         with self.store._lock, self.store._connection() as conn:
-            prior = conn.execute("SELECT * FROM skill_resolution_records WHERE command_id=?", (command_id,)).fetchone()
-            if prior:
-                return self._public_resolution(dict(prior))
-            conn.execute(
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                prior = conn.execute(
+                    "SELECT r.*,s.payload_state AS instruction_payload_state FROM skill_resolution_records r "
+                    "LEFT JOIN object_states s ON s.object_id=r.instruction_object_ref WHERE r.command_id=?",
+                    (command_id,),
+                ).fetchone()
+                expected = {
+                    "task_id": task_id, "run_id": run_id,
+                    "query_sha256": _sha256(query.encode("utf-8")),
+                    "candidate_count": candidate_count, "result_status": result_status,
+                    "resolution": resolution, "skill_id": skill_id,
+                    "host_inventory_provenance": host_inventory_provenance,
+                    "host_native_availability": host_availability,
+                    "instruction_object_ref": instruction_object_ref,
+                    "instruction_sha256": instruction_sha256,
+                    "instruction_byte_size": instruction_byte_size,
+                    "instruction_load_status": instruction_load_status,
+                    "delivery_status": "UNKNOWN", "model_visible_exposure": "UNKNOWN",
+                }
+                if prior:
+                    prior = dict(prior)
+                    prior_basis = json.loads(prior["selection_basis_json"])
+                    expected_basis = {**basis, "reason": reason, "top_candidates": [
+                        item["skill_id"] for item in (candidates or [])],
+                        "selected_skill_id": skill_id, "query_sha256": _sha256(query.encode("utf-8"))}
+                    if any(prior.get(key) != value for key, value in expected.items()) or prior_basis != expected_basis:
+                        raise CommandConflict("COMMAND_CONFLICT")
+                    conn.commit()
+                    return self._public_resolution(prior)
+                conn.execute(
                 "INSERT INTO skill_resolution_records(selection_id,command_id,task_id,run_id,query_sha256,"
                 "candidate_count,selection_basis_json,result_status,resolution,skill_id,host_inventory_provenance,"
                 "host_native_availability,instruction_object_ref,instruction_sha256,instruction_byte_size,"
@@ -405,9 +497,12 @@ class SkillRegistryService:
                  _canonical(selection_basis).decode("utf-8"), result_status, resolution, skill_id,
                  host_inventory_provenance, host_availability, instruction_object_ref, instruction_sha256,
                  instruction_byte_size, instruction_load_status, "UNKNOWN", "UNKNOWN", elapsed_ms, created_at),
-            )
-            conn.commit()
-        return result
+                )
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
 
     def _bound_run(self, task_id: str, run_id: str, grant_id: str) -> dict:
         with self.store._connection() as conn:
@@ -439,13 +534,20 @@ class SkillRegistryService:
         ranked.sort(key=lambda pair: (-pair[0], pair[1]["skill_id"]))
         return ranked
 
-    def _native_available(self, adapter, name: str, revision: str) -> tuple[str, str | None]:
+    @staticmethod
+    def _host_inventory_snapshot(adapter) -> tuple[dict | None, str]:
         if adapter is None:
-            return "UNKNOWN", None
+            return None, _sha256(b"NO_HOST_INVENTORY")
         try:
             inventory = adapter.inventory()
+            digest = _sha256(_canonical(inventory))
         except Exception:
-            return "INVALID", None
+            return {"_invalid_inventory": True}, _sha256(b"INVALID_HOST_INVENTORY")
+        return inventory, digest
+
+    def _native_available(self, inventory, name: str, revision: str) -> tuple[str, str | None]:
+        if inventory is None:
+            return "UNKNOWN", None
         if not isinstance(inventory, dict) or set(inventory) != {"adapter_id", "inventory_complete", "skills"}:
             return "INVALID", None
         if not isinstance(inventory["adapter_id"], str) or not _SAFE_NAMESPACE.fullmatch(inventory["adapter_id"]):
@@ -565,6 +667,8 @@ class SkillRegistryService:
         name = metadata["name"]
         if len(name) > 64 or not _SAFE_SKILL_NAME.fullmatch(name):
             raise RuntimeDenied("SKILL_NAME_INVALID")
+        if name != package_root.name:
+            raise RuntimeDenied("SKILL_NAME_DIRECTORY_MISMATCH")
         if len(metadata["description"]) > 1024:
             raise RuntimeDenied("SKILL_DESCRIPTION_TOO_LONG")
         if re.search(r"(?i)(?:[a-z]:[\\/]|/users/|/home/|/root/|\\\\[^\\]+\\)", metadata["description"]):
@@ -599,6 +703,8 @@ class SkillRegistryService:
     def _public_entry(row: dict, *, source_available: bool) -> dict:
         status = row["status"]
         stale_reason = None
+        if row.get("instruction_object_ref") is None:
+            status, stale_reason = "STALE", "INSTRUCTION_SNAPSHOT_PURGED"
         if not source_available and status != "STALE":
             status, stale_reason = "STALE", "INSTRUCTION_SNAPSHOT_UNAVAILABLE"
         return {
@@ -622,6 +728,11 @@ class SkillRegistryService:
             "instruction_sha256": row["instruction_sha256"],
             "instruction_byte_size": row["instruction_byte_size"],
             "instruction_load_status": row["instruction_load_status"],
+            "instruction_payload_availability": (
+                "AVAILABLE" if row.get("instruction_payload_state") == "AVAILABLE"
+                else "UNAVAILABLE" if row.get("instruction_object_ref") is None
+                or row.get("instruction_payload_state") == "PURGED" else "UNKNOWN"
+            ),
             "delivery_status": row["delivery_status"], "model_visible_exposure": row["model_visible_exposure"],
             "selection_latency_ms": row["selection_latency_ms"],
             "selection_basis": json.loads(row["selection_basis_json"]),
@@ -671,6 +782,22 @@ def _parse_frontmatter(raw: bytes) -> dict[str, str]:
     for field in ("name", "description"):
         if not isinstance(frontmatter.get(field), str) or not frontmatter[field].strip():
             raise RuntimeDenied("SKILL_FRONTMATTER_FIELDS_REQUIRED")
+    for field in ("license",):
+        if field in frontmatter and (not isinstance(frontmatter[field], str) or not frontmatter[field].strip()):
+            raise RuntimeDenied("SKILL_FRONTMATTER_OPTIONAL_FIELD_INVALID")
+    if "compatibility" in frontmatter:
+        compatibility = frontmatter["compatibility"]
+        if not isinstance(compatibility, str) or not compatibility.strip() or len(compatibility) > 500:
+            raise RuntimeDenied("SKILL_COMPATIBILITY_INVALID")
+    if "metadata" in frontmatter:
+        metadata = frontmatter["metadata"]
+        if not isinstance(metadata, dict) or any(not isinstance(key, str) or not isinstance(value, str)
+                                                 for key, value in metadata.items()):
+            raise RuntimeDenied("SKILL_METADATA_INVALID")
+    if "allowed-tools" in frontmatter:
+        allowed_tools = frontmatter["allowed-tools"]
+        if not isinstance(allowed_tools, str) or (allowed_tools and not allowed_tools.split()):
+            raise RuntimeDenied("SKILL_ALLOWED_TOOLS_INVALID")
     return {"name": frontmatter["name"].strip(), "description": frontmatter["description"].strip()}
 
 
