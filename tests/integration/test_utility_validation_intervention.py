@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest import mock
 from adapters.client.utility_validation import UtilityInterventionComposer
 from kernel.skills.application import SkillApplicationService
 from kernel.skills.host import CodexAgentSkillsInventoryAdapter
-from scripts.eval.run_utility_validation_v1 import CodexCliController
+from scripts.eval.run_utility_validation_v1 import CodexCliController, inspect_frozen_workspace
 from scripts.eval.utility_validation_observation import UtilityObservationLedger, sha256_bytes
 
 
@@ -43,6 +44,22 @@ class UtilityInterventionIntegrationTests(unittest.TestCase):
         self.fixture = self.core_fixture
         self.repo = Path(__file__).resolve().parents[2]
         self.tick = Tick()
+        self.workspace = Path(self.fixture.temp.name) / "utility-frozen-source"
+        self.workspace.mkdir()
+        subprocess.run(["git", "init", "--quiet", str(self.workspace)], check=True, shell=False, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workspace), "config", "user.name", "Utility Fixture"], check=True, shell=False, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workspace), "config", "user.email", "utility-fixture@example.invalid"], check=True, shell=False, capture_output=True)
+        (self.workspace / "shared-source.txt").write_text("shared source baseline\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.workspace), "add", "shared-source.txt"], check=True, shell=False, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workspace), "commit", "--quiet", "-m", "Frozen shared source"], check=True, shell=False, capture_output=True)
+        self.starting_commit = subprocess.run(
+            ["git", "-C", str(self.workspace), "rev-parse", "HEAD"], check=True,
+            shell=False, capture_output=True, text=True,
+        ).stdout.strip()
+        self.workspace_identity = inspect_frozen_workspace(
+            self.workspace, repository_root=self.repo,
+            expected_starting_commit=self.starting_commit,
+        ).identity_sha256
 
     def _ledger_session(self, trial_id, task_input):
         ledger_root = Path(self.fixture.temp.name) / "private-utility-observations"
@@ -54,7 +71,8 @@ class UtilityInterventionIntegrationTests(unittest.TestCase):
             study_id="utility-instrumentation", pair_id="pair-context-1", trial_id=trial_id,
             assigned_condition="NEXUS_ACTIVE", task_card_sha256="a" * 64,
             task_variant_sha256="b" * 64, task_payload_sha256=sha256_bytes(task_input),
-            starting_commit="c" * 40, environment_snapshot_ref="env:snapshot-1",
+            starting_commit=self.starting_commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref="env:snapshot-1",
             environment_snapshot_sha256="d" * 64, acceptance_rubric_ref="rubric:v1",
             acceptance_rubric_sha256="e" * 64, nexus_task_id=self.fixture.task_id,
             nexus_run_id=self.fixture.run_id,
@@ -116,13 +134,14 @@ class UtilityInterventionIntegrationTests(unittest.TestCase):
 
         def runner(argv, **kwargs):
             self.assertEqual(kwargs["input"], prepared.payload)
+            self.assertEqual(Path(kwargs["cwd"]).resolve(), self.workspace.resolve())
             return SimpleNamespace(returncode=0, stdout=self._cli_output("thread-native"), stderr=b"")
 
         controller = CodexCliController(ledger, repository_root=self.repo,
-                                        temp_root=Path(self.fixture.temp.name),
                                         subprocess_runner=runner, monotonic_ns=self.tick)
         invocation = controller.invoke(
-            session, prepared.payload, controller_invocation_id=invocation_id,
+            session, prepared.payload, workspace=self.workspace,
+            controller_invocation_id=invocation_id,
             acceptance_evaluator=lambda **_kwargs: {
                 "verdict": "PASS", "evidence_refs": ["acceptance:fixture"],
                 "evidence_sha256": ["f" * 64], "inconclusive_reason": None,
@@ -142,6 +161,10 @@ class UtilityInterventionIntegrationTests(unittest.TestCase):
         self.assertEqual(intervention["payload"]["boundary"], "CODEX_CLI_INPUT")
         self.assertEqual(intervention["payload"]["controller_invocation_id"], submitted["payload"]["controller_invocation_id"])
         self.assertEqual(submitted["payload"]["input_sha256"], sha256_bytes(prepared.payload))
+        self.assertEqual(submitted["payload"]["cwd_policy"], "FROZEN_REPO_SNAPSHOT")
+        self.assertEqual(submitted["payload"]["workspace_starting_commit"], self.starting_commit)
+        self.assertEqual(submitted["payload"]["workspace_identity_sha256"], self.workspace_identity)
+        self.assertTrue(submitted["payload"]["workspace_clean_observed"])
         completed = next(event for event in events if event["event_type"] == "HOST_INVOCATION_COMPLETED")
         self.assertEqual(completed["payload"]["input_submission_status"], "CONTROLLER_SUBMITTED_TO_CODEX_CLI")
         self.assertEqual(completed["payload"]["received_intervention"], "EVAL_INTERVENTION_TRANSPORT")

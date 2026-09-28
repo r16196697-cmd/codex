@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +13,7 @@ from scripts.eval.run_utility_validation_v1 import (
     SANITIZED_ARGV,
     SANITIZED_ARGV_SHA256,
     parse_codex_jsonl,
+    inspect_frozen_workspace,
 )
 from scripts.eval.utility_validation_observation import (
     ObservationLedgerError,
@@ -25,7 +26,6 @@ from scripts.eval.utility_validation_observation import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHA = "a" * 64
-COMMIT = "b" * 40
 THREAD = "fixture-thread-0001"
 OUTPUT = "Acceptance output marker that must not be persisted"
 
@@ -54,11 +54,36 @@ def host_jsonl(*, thread_id=THREAD, output=OUTPUT, usage=None, tool=False):
     return b"".join(json.dumps(event, separators=(",", ":")).encode("utf-8") + b"\n" for event in events)
 
 
+def create_frozen_repo(path: Path, *, content="shared source baseline\n"):
+    path.mkdir(parents=True)
+    commands = (
+        ["git", "init", "--quiet", str(path)],
+        ["git", "-C", str(path), "config", "user.name", "Utility Fixture"],
+        ["git", "-C", str(path), "config", "user.email", "utility-fixture@example.invalid"],
+    )
+    for command in commands:
+        subprocess.run(command, check=True, shell=False, capture_output=True)
+    (path / "shared-source.txt").write_text(content, encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "shared-source.txt"], check=True, shell=False, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "--quiet", "-m", "Frozen shared source"],
+        check=True, shell=False, capture_output=True,
+    )
+    commit = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"], check=True, shell=False,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    binding = inspect_frozen_workspace(path, repository_root=REPO_ROOT, expected_starting_commit=commit)
+    return commit, binding.identity_sha256
+
+
 class UtilityObservationLedgerTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-utility-ledger-")
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)
+        self.workspace = self.base / "frozen-snapshot"
+        self.commit, self.workspace_identity = create_frozen_repo(self.workspace)
         self.ledger = UtilityObservationLedger(
             self.base / "private" / "observations.jsonl",
             repository_root=REPO_ROOT,
@@ -73,7 +98,8 @@ class UtilityObservationLedgerTests(unittest.TestCase):
             "assigned_condition": condition,
             "task_card_sha256": SHA, "task_variant_sha256": "c" * 64,
             "task_payload_sha256": sha256_bytes(self.task_input),
-            "starting_commit": COMMIT,
+            "starting_commit": self.commit,
+            "workspace_identity_sha256": self.workspace_identity,
             "environment_snapshot_ref": "env:sha256", "environment_snapshot_sha256": "d" * 64,
             "acceptance_rubric_ref": "rubric:shared-v1", "acceptance_rubric_sha256": "e" * 64,
         }
@@ -125,6 +151,14 @@ class UtilityObservationLedgerTests(unittest.TestCase):
             self._open()
         with self.assertRaisesRegex(ObservationLedgerError, "LEDGER_DUPLICATE_PAIR_CONDITION"):
             self._open(trial_id="trial-a2")
+
+    def test_matched_pair_rejects_different_frozen_source_identity(self):
+        self._open(trial_id="pair-a", pair_id="pair-source", condition="HOST_NATIVE_BYPASS")
+        with self.assertRaisesRegex(ObservationLedgerError, "LEDGER_MATCHED_PAIR_IDENTITY_MISMATCH"):
+            self._open(
+                trial_id="pair-b", pair_id="pair-source", condition="NEXUS_ACTIVE",
+                workspace_identity_sha256="0" * 64, nexus_task_id="task-1", nexus_run_id="run-1",
+            )
 
     def test_illegal_transition_and_partial_sequence_are_preserved(self):
         session = self._open()
@@ -205,6 +239,8 @@ class UtilityControllerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.repo = REPO_ROOT
+        self.workspace = self.root / "frozen-snapshot"
+        self.commit, self.workspace_identity = create_frozen_repo(self.workspace)
         self.tick = Tick()
         self.ledger = UtilityObservationLedger(self.root / "ledger.jsonl", repository_root=self.repo,
                                                clock=lambda: "2026-09-28T00:00:00Z",
@@ -214,7 +250,8 @@ class UtilityControllerTests(unittest.TestCase):
             study_id="study-1", pair_id="pair-1", trial_id="trial-a",
             assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
             task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
-            starting_commit=COMMIT, environment_snapshot_ref=None,
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None,
             environment_snapshot_sha256=None, acceptance_rubric_ref="rubric:v1",
             acceptance_rubric_sha256="d" * 64,
         )
@@ -235,17 +272,19 @@ class UtilityControllerTests(unittest.TestCase):
             self.assertEqual(list(argv), list(SANITIZED_ARGV))
             self.assertFalse(kwargs["shell"])
             self.assertEqual(kwargs["input"], self.task_input)
-            self.assertEqual(list(Path(kwargs["cwd"]).iterdir()), [])
-            self.assertFalse(Path(kwargs["cwd"]).is_relative_to(self.repo))
+            self.assertEqual(Path(kwargs["cwd"]).resolve(), self.workspace.resolve())
+            self.assertTrue((Path(kwargs["cwd"]) / "shared-source.txt").is_file())
+            self.assertFalse(Path(kwargs["cwd"]).resolve().is_relative_to(self.repo.resolve()))
             return SimpleNamespace(returncode=0, stdout=host_jsonl(usage={
                 "input_tokens": 41, "cached_input_tokens": 9, "output_tokens": 5,
                 "reasoning_output_tokens": 2,
             }), stderr=b"")
 
         controller = CodexCliController(self.ledger, repository_root=self.repo,
-                                        temp_root=self.root, subprocess_runner=runner,
+                                        subprocess_runner=runner,
                                         monotonic_ns=self.tick)
-        result = controller.invoke(self.session, self.task_input, controller_invocation_id="invocation-1")
+        result = controller.invoke(self.session, self.task_input, workspace=self.workspace,
+                                   controller_invocation_id="invocation-1")
         self.assertEqual(result["sanitized_argv_sha256"], SANITIZED_ARGV_SHA256)
         self.assertEqual(result["input_sha256"], sha256_bytes(self.task_input))
         self.assertEqual(result["thread_id"], THREAD)
@@ -258,6 +297,12 @@ class UtilityControllerTests(unittest.TestCase):
         self.assertEqual(started["payload"]["sanitized_argv"], list(SANITIZED_ARGV))
         self.assertEqual(started["payload"]["sanitized_argv_sha256"], SANITIZED_ARGV_SHA256)
         self.assertEqual(started["payload"]["input_sha256"], sha256_bytes(self.task_input))
+        self.assertEqual(started["payload"]["cwd_policy"], "FROZEN_REPO_SNAPSHOT")
+        self.assertEqual(started["payload"]["workspace_starting_commit"], self.commit)
+        self.assertEqual(started["payload"]["workspace_identity_sha256"], self.workspace_identity)
+        self.assertTrue(started["payload"]["workspace_clean_observed"])
+        self.assertNotIn(str(self.workspace.resolve()), self.ledger.path.read_text(encoding="utf-8"))
+        self.assertNotIn(str(self.workspace.resolve()), json.dumps(result))
         self.assertEqual(persisted[-1]["event_type"], "HOST_INVOCATION_COMPLETED")
         self.assertEqual(persisted[-1]["payload"]["input_submission_status"], "CONTROLLER_SUBMITTED_TO_CODEX_CLI")
         self.assertEqual(persisted[-1]["payload"]["submitted_input_sha256"], sha256_bytes(self.task_input))
@@ -271,6 +316,105 @@ class UtilityControllerTests(unittest.TestCase):
         terminal = self.session.complete()
         self.assertGreaterEqual(terminal["payload"]["trial_wall_elapsed_ms"], result["host_process_elapsed_ms"])
         self.assertNotIn(OUTPUT, self.ledger.path.read_text(encoding="utf-8"))
+
+    def test_workspace_head_dirty_or_source_checkout_fail_closed_before_cli(self):
+        other_workspace = self.root / "wrong-commit"
+        create_frozen_repo(other_workspace, content="different frozen baseline\n")
+        dirty_workspace = self.root / "dirty-snapshot"
+        dirty_commit, _ = create_frozen_repo(dirty_workspace)
+        # Bind a separate trial to the dirty workspace's committed identity,
+        # then mutate it after TRIAL_OPENED to exercise the controller check.
+        dirty_binding = inspect_frozen_workspace(
+            dirty_workspace, repository_root=self.repo, expected_starting_commit=dirty_commit,
+        )
+        dirty_input = b"frozen input\n"
+        dirty_session = self.ledger.open_trial(
+            study_id="study-1", pair_id="pair-dirty", trial_id="trial-dirty",
+            assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
+            task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(dirty_input),
+            starting_commit=dirty_commit, workspace_identity_sha256=dirty_binding.identity_sha256,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
+        )
+        inside_session = self.ledger.open_trial(
+            study_id="study-1", pair_id="pair-inside", trial_id="trial-inside",
+            assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
+            task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
+        )
+        identity_mismatch_session = self.ledger.open_trial(
+            study_id="study-1", pair_id="pair-identity", trial_id="trial-identity",
+            assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
+            task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
+            starting_commit=self.commit, workspace_identity_sha256="0" * 64,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
+        )
+        (dirty_workspace / "shared-source.txt").write_text("changed after open\n", encoding="utf-8")
+
+        calls = []
+
+        def runner(*_args, **_kwargs):
+            calls.append("host")
+            return SimpleNamespace(returncode=0, stdout=host_jsonl(), stderr=b"")
+
+        controller = CodexCliController(
+            self.ledger, repository_root=self.repo, subprocess_runner=runner,
+            monotonic_ns=self.tick,
+        )
+        cases = (
+            (self.session, self.task_input, other_workspace, "trial-a"),
+            (dirty_session, dirty_input, dirty_workspace, "trial-dirty"),
+            (inside_session, self.task_input, self.repo / "tests", "trial-inside"),
+            (identity_mismatch_session, self.task_input, self.workspace, "trial-identity"),
+            (self._open_not_available(), self.task_input, self.root / "missing-snapshot", "trial-missing"),
+        )
+        for session, input_bytes, workspace, trial_id in cases:
+            result = controller.invoke(session, input_bytes, workspace=workspace)
+            self.assertEqual(result["inconclusive_reason"], "START_STATE_MISMATCH")
+            self.assertEqual(result["workspace_validation_status"], "FAILED")
+            events = self.ledger.trial_events("study-1", trial_id)
+            self.assertEqual(events[-1]["event_type"], "TRIAL_INCONCLUSIVE")
+            self.assertEqual(events[-1]["payload"]["reason_code"], "START_STATE_MISMATCH")
+            self.assertFalse(any(item["event_type"] == "HOST_INVOCATION_STARTED" for item in events))
+        self.assertEqual(calls, [])
+
+    def _open_not_available(self):
+        return self.ledger.open_trial(
+            study_id="study-1", pair_id="pair-missing", trial_id="trial-missing",
+            assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
+            task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
+        )
+
+    def test_workspace_validation_time_is_inside_trial_wall_time(self):
+        task_input = self.task_input
+        validation_calls = []
+
+        def git_runner(*args, **kwargs):
+            validation_calls.append(1)
+            self.tick()
+            return subprocess.run(*args, **kwargs)
+
+        controller = CodexCliController(
+            self.ledger, repository_root=self.repo,
+            subprocess_runner=lambda *_args, **_kwargs: SimpleNamespace(
+                returncode=0, stdout=host_jsonl(), stderr=b""),
+            git_runner=git_runner, monotonic_ns=self.tick,
+        )
+        result = controller.invoke(
+            self.session, task_input, workspace=self.workspace,
+            acceptance_evaluator=lambda **_kwargs: {
+                "verdict": "PASS", "evidence_refs": [], "evidence_sha256": [],
+                "inconclusive_reason": None,
+            },
+        )
+        self.assertEqual(len(validation_calls), 4)
+        self.assertGreater(result["trial_wall_elapsed_ms"], result["host_process_elapsed_ms"] + 3000)
 
     def test_blinded_acceptance_receives_no_condition_and_is_bound_to_output_hash(self):
         from scripts.eval.run_utility_validation_v1 import evaluate_blind
@@ -324,9 +468,9 @@ class UtilityControllerTests(unittest.TestCase):
             return SimpleNamespace(returncode=17, stdout=host_jsonl(), stderr=b"do not infer from this text")
 
         ledger = self.ledger
-        controller = CodexCliController(ledger, repository_root=self.repo, temp_root=self.root,
+        controller = CodexCliController(ledger, repository_root=self.repo,
                                         subprocess_runner=failed_runner, monotonic_ns=self.tick)
-        result = controller.invoke(self.session, self.task_input)
+        result = controller.invoke(self.session, self.task_input, workspace=self.workspace)
         self.assertEqual(result["exit_code"], 17)
         self.assertFalse(result["retry_performed"])
         self.assertEqual(len(called), 1)
@@ -340,7 +484,8 @@ class UtilityControllerTests(unittest.TestCase):
         session2 = ledger2.open_trial(
             study_id="study-1", pair_id="pair-2", trial_id="trial-timeout", assigned_condition="HOST_NATIVE_BYPASS",
             task_card_sha256=SHA, task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
-            starting_commit=COMMIT, environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
             acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
         )
         timeout_calls = []
@@ -349,9 +494,9 @@ class UtilityControllerTests(unittest.TestCase):
             timeout_calls.append(1)
             raise __import__("subprocess").TimeoutExpired(args[0], kwargs["timeout"], output=host_jsonl())
 
-        timeout_controller = CodexCliController(ledger2, repository_root=self.repo, temp_root=self.root,
+        timeout_controller = CodexCliController(ledger2, repository_root=self.repo,
                                                 subprocess_runner=timeout_runner, monotonic_ns=self.tick)
-        timeout_result = timeout_controller.invoke(session2, self.task_input)
+        timeout_result = timeout_controller.invoke(session2, self.task_input, workspace=self.workspace)
         self.assertTrue(timeout_result["timed_out"])
         self.assertEqual(len(timeout_calls), 1)
         self.assertEqual(ledger2.trial_events("study-1", "trial-timeout")[-1]["event_type"], "TRIAL_INCONCLUSIVE")
@@ -362,18 +507,20 @@ class UtilityControllerTests(unittest.TestCase):
             study_id="study-1", pair_id="pair-3", trial_id="trial-missing-thread",
             assigned_condition="HOST_NATIVE_BYPASS", task_card_sha256=SHA,
             task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
-            starting_commit=COMMIT, environment_snapshot_ref=None, environment_snapshot_sha256=None,
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None, environment_snapshot_sha256=None,
             acceptance_rubric_ref="rubric:v1", acceptance_rubric_sha256="d" * 64,
         )
         missing_thread_stdout = (b'{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
                                  b'{"type":"turn.completed"}\n')
         missing_thread_controller = CodexCliController(
-            ledger3, repository_root=self.repo, temp_root=self.root,
+            ledger3, repository_root=self.repo,
             subprocess_runner=lambda *_args, **_kwargs: SimpleNamespace(
                 returncode=0, stdout=missing_thread_stdout, stderr=b""),
             monotonic_ns=self.tick,
         )
-        missing_thread_controller.invoke(session3, self.task_input, controller_invocation_id="missing-thread-call")
+        missing_thread_controller.invoke(session3, self.task_input, workspace=self.workspace,
+                                         controller_invocation_id="missing-thread-call")
         terminal = ledger3.trial_events("study-1", "trial-missing-thread")[-1]
         self.assertEqual(terminal["event_type"], "TRIAL_INCONCLUSIVE")
         self.assertEqual(terminal["payload"]["reason_code"], "HOST_INVOCATION_ID_MISSING")
@@ -390,15 +537,17 @@ class UtilityControllerTests(unittest.TestCase):
             )
 
         controller = CodexCliController(
-            self.ledger, repository_root=self.repo, temp_root=self.root,
+            self.ledger, repository_root=self.repo,
             subprocess_runner=runner, monotonic_ns=self.tick,
         )
-        first = controller.invoke(self.session, self.task_input, controller_invocation_id="invocation-first")
+        first = controller.invoke(self.session, self.task_input, workspace=self.workspace,
+                                  controller_invocation_id="invocation-first")
         # Represents real operator/evaluator work between attempts; it is on
         # the neutral trial clock even though no Host process is running.
         for _ in range(5):
             self.tick()
-        second = controller.invoke(self.session, self.task_input, controller_invocation_id="invocation-retry")
+        second = controller.invoke(self.session, self.task_input, workspace=self.workspace,
+                                   controller_invocation_id="invocation-retry")
         self.assertEqual(first["attempt_number"], 1)
         self.assertEqual(second["attempt_number"], 2)
         self.assertEqual(calls, [1, 2], "controller never retries by itself")
@@ -421,7 +570,8 @@ class UtilityControllerTests(unittest.TestCase):
             study_id="study-1", pair_id="pair-prepared", trial_id="trial-b-prepared",
             assigned_condition="NEXUS_ACTIVE", task_card_sha256=SHA,
             task_variant_sha256="c" * 64, task_payload_sha256=sha256_bytes(self.task_input),
-            starting_commit=COMMIT, environment_snapshot_ref=None,
+            starting_commit=self.commit, workspace_identity_sha256=self.workspace_identity,
+            environment_snapshot_ref=None,
             environment_snapshot_sha256=None, acceptance_rubric_ref="rubric:v1",
             acceptance_rubric_sha256="d" * 64, nexus_task_id="task-1", nexus_run_id="run-1",
         )
@@ -448,7 +598,7 @@ class UtilityControllerTests(unittest.TestCase):
 
     def test_controller_can_record_shared_blind_acceptance_without_persisting_output(self):
         controller = CodexCliController(
-            self.ledger, repository_root=self.repo, temp_root=self.root,
+            self.ledger, repository_root=self.repo,
             subprocess_runner=lambda *_args, **_kwargs: SimpleNamespace(
                 returncode=0, stdout=host_jsonl(), stderr=b""),
             monotonic_ns=self.tick,
@@ -463,7 +613,8 @@ class UtilityControllerTests(unittest.TestCase):
             }
 
         result = controller.invoke(
-            self.session, self.task_input, controller_invocation_id="invocation-accepted",
+            self.session, self.task_input, workspace=self.workspace,
+            controller_invocation_id="invocation-accepted",
             acceptance_evaluator=evaluator, evaluator_kind="DETERMINISTIC",
         )
         self.assertEqual(set(evaluator_inputs), {"output_bytes", "rubric_ref", "rubric_sha256"})

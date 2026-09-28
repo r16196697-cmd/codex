@@ -7,10 +7,9 @@ No command is executed unless a future caller explicitly invokes the controller.
 
 from __future__ import annotations
 
-import hashlib
 import json
+import os
 import subprocess
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from scripts.eval.utility_validation_observation import (
     canonical_json,
     sha256_bytes,
     unavailable_host_usage,
+    WORKSPACE_POLICY,
 )
 
 
@@ -232,43 +232,101 @@ def evaluate_blind(evaluator: Callable, *, output_bytes: bytes, rubric_ref: str,
     }
 
 
-def _external_empty_cwd(temp_root: str | Path | None, repository_root: Path):
-    """Yield a fresh empty cwd and never persist its local path."""
-    class _Cwd:
-        def __init__(self):
-            self._manager = tempfile.TemporaryDirectory(prefix="nexus-utility-v1-", dir=temp_root)
-            self.path = Path(self._manager.name).resolve()
+class FrozenWorkspaceError(ValueError):
+    """A sanitized fail-closed reason for an invalid frozen source snapshot."""
 
-        def __enter__(self):
-            try:
-                self.path.relative_to(repository_root.resolve())
-            except ValueError:
-                pass
-            else:
-                self._manager.cleanup()
-                raise RuntimeError("CONTROLLER_CWD_MUST_BE_REPO_EXTERNAL")
-            if any(self.path.iterdir()):
-                self._manager.cleanup()
-                raise RuntimeError("CONTROLLER_CWD_MUST_BE_EMPTY")
-            return self.path
 
-        def __exit__(self, exc_type, exc, tb):
-            self._manager.cleanup()
+@dataclass(frozen=True)
+class FrozenWorkspaceBinding:
+    # The path is process-local and must never be copied into ledger/report data.
+    path: Path
+    starting_commit: str
+    identity_sha256: str
+    clean_observed: bool
 
-    return _Cwd()
+
+def workspace_identity_sha256(starting_commit: str, tree_oid: str) -> str:
+    """Hash only Git content identities, never the local snapshot path."""
+    if not isinstance(starting_commit, str) or not isinstance(tree_oid, str):
+        raise FrozenWorkspaceError("START_STATE_MISMATCH")
+    if len(starting_commit) not in {40, 64} or len(tree_oid) not in {40, 64}:
+        raise FrozenWorkspaceError("START_STATE_MISMATCH")
+    if any(char not in "0123456789abcdef" for char in starting_commit + tree_oid):
+        raise FrozenWorkspaceError("START_STATE_MISMATCH")
+    return sha256_bytes(canonical_json({"git_commit": starting_commit, "git_tree_oid": tree_oid}))
+
+
+def inspect_frozen_workspace(workspace: str | Path, *, repository_root: str | Path,
+                             expected_starting_commit: str | None = None,
+                             expected_identity_sha256: str | None = None,
+                             git_runner: Callable | None = None) -> FrozenWorkspaceBinding:
+    """Validate an operator-prepared, repo-external snapshot without changing it.
+
+    Git status is strict: tracked, untracked, ignored, and submodule changes all
+    invalidate the snapshot. Git's optional index refresh is disabled.
+    """
+    try:
+        path = Path(workspace).resolve(strict=True)
+        source = Path(repository_root).resolve(strict=True)
+        if not path.is_dir():
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+        # Reject both nesting directions: the snapshot may neither be inside
+        # the source checkout nor contain/alias the source checkout.
+        if path == source or path in source.parents or source in path.parents:
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+
+        runner = git_runner or subprocess.run
+        env = os.environ.copy()
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        env["GIT_TERMINAL_PROMPT"] = "0"
+
+        def git_text(*args: str) -> str:
+            completed = runner(
+                ["git", "-C", str(path), *args], cwd=str(path), env=env,
+                shell=False, capture_output=True, text=True, timeout=15, check=False,
+            )
+            if getattr(completed, "returncode", None) != 0:
+                raise FrozenWorkspaceError("START_STATE_MISMATCH")
+            value = getattr(completed, "stdout", None)
+            if not isinstance(value, str):
+                raise FrozenWorkspaceError("START_STATE_MISMATCH")
+            return value.strip()
+
+        top_level = Path(git_text("rev-parse", "--show-toplevel")).resolve(strict=True)
+        if top_level != path:
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+        commit = git_text("rev-parse", "HEAD")
+        tree_oid = git_text("rev-parse", "HEAD^{tree}")
+        status = git_text(
+            "status", "--porcelain=v1", "--untracked-files=all",
+            "--ignored=matching", "--ignore-submodules=none", "--no-renames",
+        )
+        if status:
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+        identity = workspace_identity_sha256(commit, tree_oid)
+        if expected_starting_commit is not None and commit != expected_starting_commit:
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+        if expected_identity_sha256 is not None and identity != expected_identity_sha256:
+            raise FrozenWorkspaceError("START_STATE_MISMATCH")
+        return FrozenWorkspaceBinding(path, commit, identity, True)
+    except FrozenWorkspaceError:
+        raise
+    except Exception as exc:
+        # Never return or persist exception text: it may contain local paths.
+        raise FrozenWorkspaceError("START_STATE_MISMATCH") from None
 
 
 class CodexCliController:
     """One fresh CLI invocation, with exact input/argv provenance and no retry."""
 
     def __init__(self, ledger: UtilityObservationLedger, *, repository_root: str | Path,
-                 temp_root: str | Path | None = None,
                  subprocess_runner: Callable | None = None,
+                 git_runner: Callable | None = None,
                  monotonic_ns: Callable[[], int] = time.monotonic_ns):
         self.ledger = ledger
         self.repository_root = Path(repository_root).resolve()
-        self.temp_root = temp_root
         self.subprocess_runner = subprocess_runner
+        self.git_runner = git_runner
         self.monotonic_ns = monotonic_ns
 
     @staticmethod
@@ -276,6 +334,7 @@ class CodexCliController:
         return str(uuid.uuid4())
 
     def invoke(self, session: TrialSession, input_bytes: bytes, *,
+               workspace: str | Path,
                controller_invocation_id: str | None = None,
                cli_version: str | None = None, timeout_seconds: int = 180,
                acceptance_evaluator: Callable | None = None,
@@ -288,6 +347,37 @@ class CodexCliController:
         argv = list(SANITIZED_ARGV)
         input_sha = sha256_bytes(input_bytes)
         prior_events = self.ledger.trial_events(session.study_id, session.trial_id)
+        opened = next((item["payload"] for item in prior_events if item["event_type"] == "TRIAL_OPENED"), None)
+        if opened is None:
+            raise RuntimeError("LEDGER_TRIAL_NOT_OPEN")
+        try:
+            workspace_binding = inspect_frozen_workspace(
+                workspace, repository_root=self.repository_root,
+                expected_starting_commit=opened["starting_commit"],
+                expected_identity_sha256=opened["workspace_identity_sha256"],
+                git_runner=self.git_runner,
+            )
+        except FrozenWorkspaceError:
+            terminal = session.inconclusive("START_STATE_MISMATCH")
+            return {
+                "controller_invocation_id": invocation_id,
+                "invocation_spec_id": INVOCATION_SPEC_ID,
+                "execution_harness_version": CONTROLLER_VERSION,
+                "cwd_policy": WORKSPACE_POLICY,
+                "workspace_validation_status": "FAILED",
+                "workspace_identity_sha256": None,
+                "sanitized_argv": list(SANITIZED_ARGV),
+                "sanitized_argv_sha256": SANITIZED_ARGV_SHA256,
+                "input_sha256": input_sha, "input_bytes": len(input_bytes),
+                "exit_code": None, "timed_out": False, "thread_started": False,
+                "thread_id": None, "turn_completed": False,
+                "host_process_elapsed_ms": None,
+                "input_submission_status": "SUBMISSION_UNCONFIRMED",
+                "received_intervention": "UNCONFIRMED",
+                "inconclusive_reason": "START_STATE_MISMATCH",
+                "retry_performed": False,
+                "trial_wall_elapsed_ms": terminal["payload"]["trial_wall_elapsed_ms"],
+            }
         attempt_number = 1 + sum(item["event_type"] == "HOST_INVOCATION_STARTED" for item in prior_events)
         self.ledger.append_event(
             study_id=session.study_id, pair_id=session.pair_id, trial_id=session.trial_id,
@@ -300,7 +390,11 @@ class CodexCliController:
                 "cli_version_provenance": "HOST_DECLARED" if cli_version is not None else "UNAVAILABLE",
                 "input_sha256": input_sha, "input_bytes": len(input_bytes),
                 "subprocess_shell": False,
-                "cwd_policy": "FRESH_EMPTY_REPO_EXTERNAL", "host_surface": "CODEX_CLI",
+                "cwd_policy": WORKSPACE_POLICY,
+                "workspace_starting_commit": workspace_binding.starting_commit,
+                "workspace_identity_sha256": workspace_binding.identity_sha256,
+                "workspace_clean_observed": workspace_binding.clean_observed,
+                "host_surface": "CODEX_CLI",
             },
         )
         runner = self.subprocess_runner or subprocess.run
@@ -312,21 +406,20 @@ class CodexCliController:
         controller_failure = False
         input_submission_confirmed = False
         try:
-            with _external_empty_cwd(self.temp_root, self.repository_root) as cwd:
-                process_start_ns = self.monotonic_ns()
-                try:
-                    completed = runner(
-                        argv, input=input_bytes, cwd=str(cwd), shell=False,
-                        capture_output=True, timeout=timeout_seconds, check=False,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    elapsed_ms = max(0, (self.monotonic_ns() - process_start_ns) // 1_000_000)
-                    raise exc
+            process_start_ns = self.monotonic_ns()
+            try:
+                completed = runner(
+                    argv, input=input_bytes, cwd=str(workspace_binding.path), shell=False,
+                    capture_output=True, timeout=timeout_seconds, check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
                 elapsed_ms = max(0, (self.monotonic_ns() - process_start_ns) // 1_000_000)
-                # Returning from the direct subprocess API proves only that
-                # these exact bytes were submitted to the CLI stdin boundary.
-                # It does not prove model visibility or use.
-                input_submission_confirmed = True
+                raise exc
+            elapsed_ms = max(0, (self.monotonic_ns() - process_start_ns) // 1_000_000)
+            # Returning from the direct subprocess API proves only that
+            # these exact bytes were submitted to the CLI stdin boundary.
+            # It does not prove model visibility or use.
+            input_submission_confirmed = True
             stdout = _bytes(getattr(completed, "stdout", b""))
             stderr = _bytes(getattr(completed, "stderr", b""))
             exit_code = getattr(completed, "returncode", None)
@@ -433,6 +526,11 @@ class CodexCliController:
             "execution_harness_version": CONTROLLER_VERSION,
             "sanitized_argv": list(SANITIZED_ARGV),
             "sanitized_argv_sha256": SANITIZED_ARGV_SHA256,
+            "cwd_policy": WORKSPACE_POLICY,
+            "workspace_validation_status": "VALIDATED",
+            "workspace_starting_commit": workspace_binding.starting_commit,
+            "workspace_identity_sha256": workspace_binding.identity_sha256,
+            "workspace_clean_observed": workspace_binding.clean_observed,
             "input_sha256": input_sha, "input_bytes": len(input_bytes),
             "exit_code": exit_code, "timed_out": timed_out,
             "thread_started": parsed.thread_started, "thread_id": parsed.thread_id,

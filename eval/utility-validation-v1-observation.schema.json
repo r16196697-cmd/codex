@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.invalid/schemas/utility-validation-v1-observation-event.schema.json",
   "title": "Nexus Utility Validation v1 neutral observation event",
-  "description": "Sanitized evaluation-only JSONL event; not Nexus canonical execution state.",
+  "description": "Version 2 sanitized evaluation-only JSONL event for Utility Validation v1; not Nexus canonical execution state.",
   "type": "object",
   "required": ["schema_id", "schema_version", "event_id", "study_id", "pair_id", "trial_id", "sequence", "event_type", "recorded_at", "provenance", "payload", "previous_event_sha256", "event_sha256"],
   "properties": {
     "schema_id": {"const": "nexus.utility_observation_event"},
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "event_id": {"type": "string", "minLength": 1, "maxLength": 256},
     "study_id": {"$ref": "#/$defs/id"},
     "pair_id": {"$ref": "#/$defs/id"},
@@ -40,11 +40,13 @@
     "unknown_codes": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9_-]{0,127}$"}},
     "trial_opened": {
       "type": "object",
-      "required": ["assigned_condition", "task_card_sha256", "task_variant_sha256", "task_payload_sha256", "starting_commit", "environment_snapshot_ref", "environment_snapshot_sha256", "host_surface", "acceptance_rubric_ref", "acceptance_rubric_sha256", "nexus_task_id", "nexus_run_id", "unknowns"],
+      "required": ["assigned_condition", "task_card_sha256", "task_variant_sha256", "task_payload_sha256", "starting_commit", "workspace_policy", "workspace_identity_sha256", "environment_snapshot_ref", "environment_snapshot_sha256", "host_surface", "acceptance_rubric_ref", "acceptance_rubric_sha256", "nexus_task_id", "nexus_run_id", "unknowns"],
       "properties": {
         "assigned_condition": {"enum": ["HOST_NATIVE_BYPASS", "NEXUS_ACTIVE"]},
         "task_card_sha256": {"$ref": "#/$defs/sha256"}, "task_variant_sha256": {"$ref": "#/$defs/sha256"}, "task_payload_sha256": {"$ref": "#/$defs/sha256"},
         "starting_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "workspace_policy": {"const": "FROZEN_REPO_SNAPSHOT"},
+        "workspace_identity_sha256": {"$ref": "#/$defs/sha256"},
         "environment_snapshot_ref": {"$ref": "#/$defs/nullable_ref"}, "environment_snapshot_sha256": {"$ref": "#/$defs/nullable_sha256"},
         "host_surface": {"const": "CODEX_CLI"}, "acceptance_rubric_ref": {"$ref": "#/$defs/ref"}, "acceptance_rubric_sha256": {"$ref": "#/$defs/sha256"},
         "nexus_task_id": {"$ref": "#/$defs/nullable_ref"}, "nexus_run_id": {"$ref": "#/$defs/nullable_ref"}, "unknowns": {"$ref": "#/$defs/unknown_codes"}
@@ -75,13 +77,16 @@
     },
     "host_started": {
       "type": "object",
-      "required": ["controller_invocation_id", "attempt_number", "sanitized_argv", "sanitized_argv_sha256", "cli_version", "cli_version_provenance", "input_sha256", "input_bytes", "subprocess_shell", "cwd_policy", "host_surface"],
+      "required": ["controller_invocation_id", "attempt_number", "sanitized_argv", "sanitized_argv_sha256", "cli_version", "cli_version_provenance", "input_sha256", "input_bytes", "subprocess_shell", "cwd_policy", "workspace_starting_commit", "workspace_identity_sha256", "workspace_clean_observed", "host_surface"],
       "properties": {
         "controller_invocation_id": {"$ref": "#/$defs/id"}, "attempt_number": {"type": "integer", "minimum": 1},
         "sanitized_argv": {"type": "array", "items": {"type": "string"}}, "sanitized_argv_sha256": {"$ref": "#/$defs/sha256"},
         "cli_version": {"oneOf": [{"type": "string", "maxLength": 64}, {"type": "null"}]}, "cli_version_provenance": {"$ref": "#/$defs/provenance"},
         "input_sha256": {"$ref": "#/$defs/sha256"}, "input_bytes": {"type": "integer", "minimum": 0}, "subprocess_shell": {"const": false},
-        "cwd_policy": {"const": "FRESH_EMPTY_REPO_EXTERNAL"}, "host_surface": {"const": "CODEX_CLI"}
+        "cwd_policy": {"const": "FROZEN_REPO_SNAPSHOT"},
+        "workspace_starting_commit": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "workspace_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "workspace_clean_observed": {"const": true}, "host_surface": {"const": "CODEX_CLI"}
       }, "additionalProperties": false
     },
     "host_metric": {"type": "object", "required": ["value", "provenance"], "properties": {"value": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]}, "provenance": {"$ref": "#/$defs/provenance"}}, "additionalProperties": false},

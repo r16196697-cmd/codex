@@ -23,7 +23,7 @@ from jsonschema import Draft202012Validator
 
 
 SCHEMA_ID = "nexus.utility_observation_event"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FROZEN_SANITIZED_CODEX_ARGV = (
     "codex", "exec", "--ephemeral", "--json", "--color", "never",
     "--sandbox", "read-only", "--skip-git-repo-check", "-",
@@ -55,6 +55,7 @@ _ENUM_RE = re.compile(r"^[A-Z0-9][A-Z0-9_-]{0,127}$")
 _ARGV_TOKEN_RE = re.compile(r"^[A-Za-z0-9-][A-Za-z0-9._:/-]{0,127}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+WORKSPACE_POLICY = "FROZEN_REPO_SNAPSHOT"
 _EVENT_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "eval" / "utility-validation-v1-observation.schema.json"
 
 
@@ -292,6 +293,7 @@ class UtilityObservationLedger:
                    starting_commit: str, environment_snapshot_ref: str | None,
                    environment_snapshot_sha256: str | None,
                    acceptance_rubric_ref: str, acceptance_rubric_sha256: str,
+                   workspace_identity_sha256: str,
                    nexus_task_id: str | None = None, nexus_run_id: str | None = None,
                    unknowns: list[str] | None = None) -> TrialSession:
         opened_ns = self._monotonic_ns()
@@ -301,6 +303,8 @@ class UtilityObservationLedger:
             "task_variant_sha256": task_variant_sha256,
             "task_payload_sha256": task_payload_sha256,
             "starting_commit": starting_commit,
+            "workspace_policy": WORKSPACE_POLICY,
+            "workspace_identity_sha256": workspace_identity_sha256,
             "environment_snapshot_ref": environment_snapshot_ref,
             "environment_snapshot_sha256": environment_snapshot_sha256,
             "host_surface": "CODEX_CLI",
@@ -358,7 +362,8 @@ class UtilityObservationLedger:
                             and event["event_type"] == "TRIAL_OPENED"]
             if any(event["payload"]["assigned_condition"] == payload.get("assigned_condition") for event in opened_pairs):
                 raise ObservationLedgerError("LEDGER_DUPLICATE_PAIR_CONDITION")
-            pair_fields = ("task_card_sha256", "starting_commit", "environment_snapshot_ref",
+            pair_fields = ("task_card_sha256", "starting_commit", "workspace_policy",
+                           "workspace_identity_sha256", "environment_snapshot_ref",
                            "environment_snapshot_sha256", "acceptance_rubric_ref", "acceptance_rubric_sha256")
             for paired in opened_pairs:
                 if any(paired["payload"].get(field) != payload.get(field) for field in pair_fields):
@@ -429,6 +434,11 @@ class UtilityObservationLedger:
         elif event_type == "INTERVENTION_PREPARED":
             raise ObservationLedgerError("LEDGER_A_CONDITION_CANNOT_PREPARE_NEXUS_INTERVENTION")
         if event_type == "HOST_INVOCATION_STARTED":
+            if (payload["cwd_policy"] != opened["workspace_policy"]
+                    or payload["workspace_starting_commit"] != opened["starting_commit"]
+                    or payload["workspace_identity_sha256"] != opened["workspace_identity_sha256"]
+                    or payload["workspace_clean_observed"] is not True):
+                raise ObservationLedgerError("LEDGER_HOST_WORKSPACE_BINDING_MISMATCH")
             if payload["input_sha256"] != (history[-1]["payload"].get("final_cli_input_sha256")
                                            if previous_type == "INTERVENTION_PREPARED"
                                            else opened["task_payload_sha256"]):
@@ -505,7 +515,8 @@ class UtilityObservationLedger:
                     raise ObservationLedgerError("LEDGER_DUPLICATE_PAIR_CONDITION")
                 same_pair = [prior for prior in events if prior["study_id"] == event["study_id"]
                              and prior["pair_id"] == event["pair_id"] and prior["event_type"] == "TRIAL_OPENED"]
-                pair_fields = ("task_card_sha256", "starting_commit", "environment_snapshot_ref",
+                pair_fields = ("task_card_sha256", "starting_commit", "workspace_policy",
+                               "workspace_identity_sha256", "environment_snapshot_ref",
                                "environment_snapshot_sha256", "acceptance_rubric_ref", "acceptance_rubric_sha256")
                 if any(any(prior["payload"].get(field) != event["payload"].get(field) for field in pair_fields)
                        for prior in same_pair):
@@ -529,6 +540,8 @@ def _event_provenance(event_type: str, payload: dict) -> dict:
     if event_type == "HOST_INVOCATION_STARTED":
         base["cli_version"] = payload["cli_version_provenance"]
         base["cli_input_boundary"] = "OBSERVED"
+        base["workspace_content_identity"] = "DERIVED"
+        base["workspace_clean_state"] = "OBSERVED"
     if event_type == "HOST_INVOCATION_COMPLETED":
         base["host_usage"] = "HOST_DECLARED" if any(value["provenance"] == "HOST_DECLARED" for value in payload["usage"].values()) else "UNAVAILABLE"
         base["host_model_identity"] = "UNAVAILABLE"
@@ -554,7 +567,8 @@ def _validate_payload(event_type: str, payload: dict) -> None:
     # free-form prompt, response, paths, or tool-argument fields.
     if event_type == "TRIAL_OPENED":
         required = {"assigned_condition", "task_card_sha256", "task_variant_sha256", "task_payload_sha256",
-                    "starting_commit", "environment_snapshot_ref", "environment_snapshot_sha256", "host_surface",
+                    "starting_commit", "workspace_policy", "workspace_identity_sha256",
+                    "environment_snapshot_ref", "environment_snapshot_sha256", "host_surface",
                     "acceptance_rubric_ref", "acceptance_rubric_sha256", "nexus_task_id", "nexus_run_id", "unknowns"}
         if set(payload) != required or payload["assigned_condition"] not in CONDITIONS or payload["host_surface"] != "CODEX_CLI":
             raise ObservationLedgerError("LEDGER_TRIAL_OPENED_PAYLOAD_INVALID")
@@ -563,6 +577,10 @@ def _validate_payload(event_type: str, payload: dict) -> None:
                 raise ObservationLedgerError("LEDGER_SHA256_INVALID")
         if not _COMMIT_RE.fullmatch(payload["starting_commit"]):
             raise ObservationLedgerError("LEDGER_STARTING_COMMIT_INVALID")
+        if payload["workspace_policy"] != WORKSPACE_POLICY:
+            raise ObservationLedgerError("LEDGER_WORKSPACE_POLICY_INVALID")
+        if not isinstance(payload["workspace_identity_sha256"], str) or not _SHA_RE.fullmatch(payload["workspace_identity_sha256"]):
+            raise ObservationLedgerError("LEDGER_WORKSPACE_IDENTITY_INVALID")
         if payload["environment_snapshot_sha256"] is not None and not _SHA_RE.fullmatch(payload["environment_snapshot_sha256"]):
             raise ObservationLedgerError("LEDGER_ENVIRONMENT_HASH_INVALID")
         for key in ("environment_snapshot_ref", "acceptance_rubric_ref", "nexus_task_id", "nexus_run_id"):
@@ -621,9 +639,16 @@ def _validate_payload(event_type: str, payload: dict) -> None:
         _provenance_map(payload["provenance"])
     elif event_type == "HOST_INVOCATION_STARTED":
         required = {"controller_invocation_id", "attempt_number", "sanitized_argv", "sanitized_argv_sha256", "cli_version",
-                    "cli_version_provenance", "input_sha256", "input_bytes", "subprocess_shell", "cwd_policy", "host_surface"}
-        if set(payload) != required or payload["host_surface"] != "CODEX_CLI" or payload["subprocess_shell"] is not False or payload["cwd_policy"] != "FRESH_EMPTY_REPO_EXTERNAL":
+                    "cli_version_provenance", "input_sha256", "input_bytes", "subprocess_shell", "cwd_policy",
+                    "workspace_starting_commit", "workspace_identity_sha256", "workspace_clean_observed", "host_surface"}
+        if (set(payload) != required or payload["host_surface"] != "CODEX_CLI"
+                or payload["subprocess_shell"] is not False or payload["cwd_policy"] != WORKSPACE_POLICY
+                or payload["workspace_clean_observed"] is not True):
             raise ObservationLedgerError("LEDGER_HOST_STARTED_PAYLOAD_INVALID")
+        if not isinstance(payload["workspace_starting_commit"], str) or not _COMMIT_RE.fullmatch(payload["workspace_starting_commit"]):
+            raise ObservationLedgerError("LEDGER_STARTING_COMMIT_INVALID")
+        if not isinstance(payload["workspace_identity_sha256"], str) or not _SHA_RE.fullmatch(payload["workspace_identity_sha256"]):
+            raise ObservationLedgerError("LEDGER_WORKSPACE_IDENTITY_INVALID")
         for key in ("sanitized_argv_sha256", "input_sha256"):
             if not _SHA_RE.fullmatch(payload[key]):
                 raise ObservationLedgerError("LEDGER_SHA256_INVALID")
