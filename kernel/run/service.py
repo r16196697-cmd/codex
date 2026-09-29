@@ -838,6 +838,34 @@ class TraceRuntime:
             raise TraceAdmissionDenied("TRACE_REPLAY_PROJECTION_MISMATCH")
         return {"run_id": run_id, "status": state, "last_seq": expected_seq - 1, "event_count": len(rows)}
 
+    def inspect_run_binding(self, run_id: str) -> dict[str, Any]:
+        """Return the exact authorization and data-boundary binding for an existing Run."""
+        self.modes.require("core_read")
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT run_id,task_id,status,grant_id,data_boundary_json FROM runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+        if not row:
+            raise TraceAdmissionDenied("RUN_NOT_FOUND")
+        try:
+            boundary = json.loads(row["data_boundary_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise TraceAdmissionDenied("RUN_DATA_BOUNDARY_INVALID") from exc
+        if (
+            not isinstance(boundary, dict)
+            or not isinstance(boundary.get("allowed_classifications"), list)
+            or not isinstance(boundary.get("handling_tags"), list)
+        ):
+            raise TraceAdmissionDenied("RUN_DATA_BOUNDARY_INVALID")
+        return {
+            "run_id": row["run_id"],
+            "task_id": row["task_id"],
+            "status": row["status"],
+            "grant_id": row["grant_id"],
+            "data_boundary": boundary,
+        }
+
     def replay_task(self, task_id: str) -> dict[str, Any]:
         self.modes.require("core_read")
         with self.store._connection() as conn:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 from adapters.storage import ObjectStore
@@ -94,8 +95,43 @@ def _parser() -> argparse.ArgumentParser:
     discover = skill_commands.add_parser("discover", help="search safe Registry metadata only")
     discover.add_argument("query")
 
+    git_source = commands.add_parser("import-git-source", help="import one exact local Git blob as governed Artifact and Evidence")
+    git_source.add_argument("--repo", required=True, type=Path, help="process-local path to an existing local Git worktree; never persisted")
+    git_source.add_argument("--plan", required=True, type=Path, help="process-local JSON import plan with logical IDs and exact commit/path")
+
     commands.add_parser("panel", help="open the native panel inside this writer-owned process")
     return parser
+
+
+def _strict_object_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("GIT_SOURCE_PLAN_INVALID")
+        result[key] = value
+    return result
+
+
+def _read_git_source_plan(path: Path) -> dict:
+    from adapters.source.git import GitSourceImportError
+
+    try:
+        value = json.loads(path.expanduser().read_text(encoding="utf-8"), object_pairs_hook=_strict_object_pairs)
+    except Exception:
+        raise GitSourceImportError("GIT_SOURCE_PLAN_INVALID") from None
+    if not isinstance(value, dict):
+        raise GitSourceImportError("GIT_SOURCE_PLAN_INVALID")
+    return value
+
+
+def _safe_import_error_reason(exc: Exception) -> str:
+    reason = getattr(exc, "reason_code", None)
+    if not isinstance(reason, str):
+        args = getattr(exc, "args", ())
+        reason = args[0] if args else None
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason):
+        return reason
+    return type(exc).__name__
 
 
 def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
@@ -116,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
-        store, authority, _budget, _trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
+        store, authority, _budget, trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
         participation = None
         skill_application = None
         if args.command in {"skill", "panel"}:
@@ -163,7 +199,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         client = OperatorClient(runtime)
-        if args.command == "skill" and args.skill_action == "register":
+        if args.command == "import-git-source":
+            from adapters.source.git import import_git_source
+            result = import_git_source(
+                store=store, authority=authority, trace=trace,
+                repository_path=args.repo, plan=_read_git_source_plan(args.plan),
+            )
+        elif args.command == "skill" and args.skill_action == "register":
             result = skill_application.register_package(
                 source_scope=args.source_scope, source_namespace=args.source_namespace,
                 source_ref=args.source_ref, task_id=args.task_id, run_id=args.run_id,
@@ -214,8 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        code = getattr(exc, "args", [None])[0]
-        print(json.dumps({"status": "DENIED_OR_FAILED", "reason": str(code or type(exc).__name__)}, ensure_ascii=False), file=sys.stderr)
+        reason = _safe_import_error_reason(exc) if args.command == "import-git-source" else str(getattr(exc, "args", [None])[0] or type(exc).__name__)
+        print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
         return 2
     finally:
         if store is not None:

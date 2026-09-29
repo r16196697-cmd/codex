@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.git_source_evidence@1",
+  "title": "Nexus Git Source Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "schema_version",
+    "repository_id",
+    "git_object_format",
+    "commit_oid",
+    "path",
+    "blob_oid",
+    "artifact_ref",
+    "artifact_sha256",
+    "byte_size",
+    "provenance"
+  ],
+  "properties": {
+    "schema_id": {"const": "nexus.git_source_evidence"},
+    "schema_version": {"const": 1},
+    "repository_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "git_object_format": {"enum": ["sha1", "sha256"]},
+    "commit_oid": {"type": "string", "pattern": "^[0-9a-f]+$"},
+    "path": {"type": "string", "minLength": 1},
+    "blob_oid": {"type": "string", "pattern": "^[0-9a-f]+$"},
+    "artifact_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "byte_size": {"type": "integer", "minimum": 0},
+    "provenance": {"const": "IMPORTED_FROM_PRE_NEXUS_HISTORY"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"git_object_format": {"const": "sha1"}}},
+      "then": {
+        "properties": {
+          "commit_oid": {"pattern": "^[0-9a-f]{40}$"},
+          "blob_oid": {"pattern": "^[0-9a-f]{40}$"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"git_object_format": {"const": "sha256"}}},
+      "then": {
+        "properties": {
+          "commit_oid": {"pattern": "^[0-9a-f]{64}$"},
+          "blob_oid": {"pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  ]
+}
