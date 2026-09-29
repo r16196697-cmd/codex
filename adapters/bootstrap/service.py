@@ -94,6 +94,24 @@ def _safe_root_and_journal(data_root: str | Path, journal_path: str | Path, *, f
         raise MigrationError("PURGE_JOURNAL_MUST_BE_ROOT_EXTERNAL")
     if journal == root or root == journal:
         raise MigrationError("BOOTSTRAP_ROOT_JOURNAL_ALIAS")
+    # A fresh bootstrap can only start against a journal with no history.
+    # Check this before creating the root directory or durable intent so an
+    # invalid journal cannot strand the target as a partial initialization.
+    if journal.exists() and not journal.is_file():
+        raise MigrationError("PURGE_JOURNAL_PATH_INVALID")
+    if journal.exists():
+        try:
+            journal_stat = journal.stat()
+            if journal_stat.st_nlink > 1:
+                raise MigrationError("PURGE_JOURNAL_PATH_ALIAS_DENIED")
+            if root.exists():
+                for candidate in (root / "nexus.sqlite", root / FRESH_INTENT_NAME, root / ADOPTION_INTENT_NAME):
+                    if candidate.exists() and journal.samefile(candidate):
+                        raise MigrationError("PURGE_JOURNAL_PATH_ALIAS_DENIED")
+            if fresh and journal_stat.st_size > 0:
+                raise MigrationError("FRESH_PURGE_JOURNAL_CONFLICT")
+        except OSError as exc:
+            raise MigrationError("PURGE_JOURNAL_PATH_UNRESOLVED") from exc
     if fresh:
         if root.exists() and not root.is_dir():
             raise MigrationError("FRESH_INSTANCE_ROOT_NOT_DIRECTORY")
@@ -127,18 +145,6 @@ def _safe_root_and_journal(data_root: str | Path, journal_path: str | Path, *, f
     else:
         if not (root / "nexus.sqlite").is_file():
             raise MigrationError("LEGACY_INSTANCE_REQUIRED")
-    if journal.exists() and not journal.is_file():
-        raise MigrationError("PURGE_JOURNAL_PATH_INVALID")
-    if journal.exists():
-        try:
-            if journal.stat().st_nlink > 1:
-                raise MigrationError("PURGE_JOURNAL_PATH_ALIAS_DENIED")
-            if root.exists():
-                for candidate in (root / "nexus.sqlite", root / FRESH_INTENT_NAME, root / ADOPTION_INTENT_NAME):
-                    if candidate.exists() and journal.samefile(candidate):
-                        raise MigrationError("PURGE_JOURNAL_PATH_ALIAS_DENIED")
-        except OSError as exc:
-            raise MigrationError("PURGE_JOURNAL_PATH_UNRESOLVED") from exc
     return root, journal
 
 
@@ -423,9 +429,47 @@ def authority_bootstrap(
             if prior != body | {"created_at": prior.get("created_at")}:
                 raise MigrationError("AUTHORITY_BOOTSTRAP_INTENT_CONFLICT")
             body = prior
-        else:
-            if _parse_timestamp(normalized["expires_at"]) <= datetime.now(timezone.utc):
-                raise MigrationError("AUTHORITY_BOOTSTRAP_EXPIRY_INVALID")
+
+        prefix = normalized["command_id_prefix"]
+        human_id = normalized["operator_principal_id"]
+        service_id = normalized["runtime_principal_id"]
+        grant = {
+            "schema_id": "nexus.delegation_grant", "schema_version": 1,
+            "grant_id": normalized["grant_id"], "issued_by": human_id, "granted_to": service_id,
+            "task_scope": [normalized["task_id"]],
+            "resource_scope": normalized["resource_scope"],
+            "action_scope": normalized["action_scope"],
+            "audience_scope": normalized["audience_scope"],
+            "issued_at": normalized["issued_at"], "expires_at": normalized["expires_at"],
+            "status": "ACTIVE", "policy_version": policy["policy_version"],
+        }
+        grant_command_id = prefix + ":grant"
+        grant_request_hash = store._request_hash("create_grant", grant)
+        # A committed Grant is an immutable historical result. Replay it
+        # before mutable time/authority gates so natural expiry never causes
+        # this bootstrap plan to issue a replacement Grant.
+        with store._connection() as conn:
+            committed_grant = store._replay_command(
+                conn, grant_command_id, "create_grant", grant_request_hash
+            )
+        if committed_grant is not None:
+            return {
+                "status": "AUTHORITY_BOOTSTRAP_COMPLETE",
+                "instance_id": binding["instance_id"],
+                "operator_principal_id": human_id,
+                "runtime_principal_id": service_id,
+                "trust_anchor_id": normalized["anchor_id"],
+                "grant_id": normalized["grant_id"],
+                "task_scope": [normalized["task_id"]],
+                "expires_at": normalized["expires_at"],
+            }
+
+        now = datetime.now(timezone.utc)
+        issued = _parse_timestamp(normalized["issued_at"])
+        expires = _parse_timestamp(normalized["expires_at"])
+        if not issued <= now < expires:
+            raise MigrationError("AUTHORITY_BOOTSTRAP_PLAN_NOT_CURRENT")
+        if prior is None:
             body["created_at"] = _utc_now()
         expected = "BOOTSTRAP " + binding["instance_id"][-12:]
         _require_confirmation("authority-bootstrap", {"status": "BOUND", "plan": normalized}, expected, confirmation)
@@ -439,9 +483,6 @@ def authority_bootstrap(
                 body = stored
 
         authority = AuthorityService(store, policy)
-        prefix = normalized["command_id_prefix"]
-        human_id = normalized["operator_principal_id"]
-        service_id = normalized["runtime_principal_id"]
         authority.register_principal({
             "schema_id": "nexus.principal", "schema_version": 1,
             "principal_id": human_id, "principal_type": "HUMAN", "status": "ACTIVE",
@@ -455,17 +496,12 @@ def authority_bootstrap(
             "anchor_id": normalized["anchor_id"], "principal_id": human_id,
             "policy_ref": policy["policy_version"],
         }, prefix + ":anchor")
-        grant = {
-            "schema_id": "nexus.delegation_grant", "schema_version": 1,
-            "grant_id": normalized["grant_id"], "issued_by": human_id, "granted_to": service_id,
-            "task_scope": [normalized["task_id"]],
-            "resource_scope": normalized["resource_scope"],
-            "action_scope": normalized["action_scope"],
-            "audience_scope": normalized["audience_scope"],
-            "issued_at": normalized["issued_at"], "expires_at": normalized["expires_at"],
-            "status": "ACTIVE", "policy_version": policy["policy_version"],
-        }
-        authority.create_grant(grant, prefix + ":grant")
+        # The prefix above can take time or resume after a crash. Recheck
+        # immediately before the first possible Grant commit.
+        now = datetime.now(timezone.utc)
+        if not issued <= now < expires:
+            raise MigrationError("AUTHORITY_BOOTSTRAP_PLAN_NOT_CURRENT")
+        authority.create_grant(grant, grant_command_id)
         return {
             "status": "AUTHORITY_BOOTSTRAP_COMPLETE",
             "instance_id": binding["instance_id"],

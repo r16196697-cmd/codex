@@ -42,7 +42,7 @@ expires_at
 command_id_prefix
 ```
 
-The HUMAN operator ID must already be listed in the bound policy. Use one exact reserved Task ID, a finite list of safe logical resource IDs, allowlisted non-effect actions, and an explicit finite expiry. Wildcards, local paths, recovery identity, delegation, egress, Effect authority, and unrelated runtime authority are rejected.
+The HUMAN operator ID must already be listed in the bound policy. Use one exact reserved Task ID, a finite list of safe logical resource IDs, allowlisted non-effect actions, and an explicit finite expiry. For a Grant not yet committed, `issued_at <= now < expires_at` must hold both when the request begins and immediately before Grant creation. A partial plan that expires keeps its committed principal/anchor prefix and stops for review; it is not silently refreshed. Exact replay of an already committed Grant returns its historical completion even after natural expiry and never creates a replacement. Wildcards, local paths, recovery identity, delegation, egress, Effect authority, and unrelated runtime authority are rejected.
 
 ```text
 python -m adapters.bootstrap authority-bootstrap --data-root <bound-root> --policy <same-local-policy> --independent-purge-journal <same-local-journal> --plan <local-plan.json>

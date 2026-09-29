@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 from adapters.bootstrap.service import (
@@ -12,10 +13,19 @@ from adapters.bootstrap.service import (
     authority_bootstrap,
     initialize_instance,
 )
-from kernel.object.errors import MigrationError
 from kernel.instance_binding import parse_json_object
 from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, InvalidDelegation
-from kernel.object.errors import CommandConflict
+from kernel.object.errors import NexusStoreError
+
+
+_SAFE_REASON_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,95}(?::[A-Z][A-Z0-9_]{0,95}(?:,[A-Z][A-Z0-9_]{0,95})*)?$")
+
+
+def _sanitized_error_code(exc: Exception) -> str:
+    message = str(exc)
+    if len(message) <= 192 and _SAFE_REASON_CODE.fullmatch(message):
+        return message
+    return type(exc).__name__
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -70,15 +80,16 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
-    except MigrationError as exc:
-        # Bootstrap errors are stable reason codes; never print supplied paths.
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False, sort_keys=True), file=sys.stderr)
-        return 2
-    except (ApprovalDenied, AuthorizationDenied, InvalidDelegation, CommandConflict) as exc:
-        print(json.dumps({"error": str(exc) or type(exc).__name__}, sort_keys=True), file=sys.stderr)
+    except (NexusStoreError, ApprovalDenied, AuthorizationDenied, InvalidDelegation) as exc:
+        # Never expose arbitrary exception prose, reprs, causes, or tracebacks.
+        print(json.dumps({"error": _sanitized_error_code(exc)}, sort_keys=True), file=sys.stderr)
         return 2
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
         print(json.dumps({"error": "BOOTSTRAP_INPUT_INVALID"}, sort_keys=True), file=sys.stderr)
+        return 2
+    except Exception:
+        # Keep unforeseen implementation failures private at the CLI boundary.
+        print(json.dumps({"error": "BOOTSTRAP_INTERNAL_ERROR"}, sort_keys=True), file=sys.stderr)
         return 2
 
 

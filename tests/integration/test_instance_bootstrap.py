@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from adapters.bootstrap.service import adopt_policy_binding, authority_bootstrap, initialize_instance
+from adapters.bootstrap.__main__ import main as bootstrap_cli_main
 from adapters.storage import ObjectStore
 from kernel.authority import AuthorityService
 from kernel.instance_binding import policy_sha256
@@ -185,6 +187,57 @@ class FreshInstanceBootstrapTests(unittest.TestCase):
             self.assertEqual(statuses["legacy-revoked"], "REVOKED")
             self.assertEqual(statuses["legacy-expired"], "EXPIRED")
 
+    def test_legacy_adoption_accepts_existing_non_human_trust_anchor_without_rewriting_it(self):
+        policy = json.loads(json.dumps(self.policy))
+        policy["trust_anchors"] = ["legacy-service-anchor"]
+        policy_path = self.base / "legacy-service-policy.json"
+        policy_path.write_text(json.dumps(policy, ensure_ascii=False), encoding="utf-8")
+        legacy_root = self.base / "legacy-service-data"
+        legacy_journal = self.base / "legacy-service-purge.jsonl"
+        initialize_instance(data_root=legacy_root, policy_path=policy_path,
+                            independent_purge_journal=legacy_journal, command_id="init-legacy-service")
+        store = ObjectStore(legacy_root, policy=policy, independent_purge_journal_path=legacy_journal)
+        try:
+            authority = AuthorityService(store, policy)
+            authority.register_principal({
+                "schema_id": "nexus.principal", "schema_version": 1,
+                "principal_id": "legacy-service-anchor", "principal_type": "SERVICE", "status": "ACTIVE",
+            }, "legacy-service:principal")
+            authority.register_trust_anchor({
+                "schema_id": "nexus.trust_anchor", "schema_version": 1,
+                "anchor_id": "legacy-service-anchor-id", "principal_id": "legacy-service-anchor",
+                "policy_ref": policy["policy_version"],
+            }, "legacy-service:anchor")
+        finally:
+            store.close()
+
+        (legacy_root / ".nexus-instance-init-v1.json").unlink()
+        with closing(sqlite3.connect(legacy_root / "nexus.sqlite")) as conn:
+            conn.execute("DROP TRIGGER instance_policy_binding_no_update")
+            conn.execute("DROP TRIGGER instance_policy_binding_no_delete")
+            conn.execute("DROP TABLE instance_policy_binding")
+            conn.execute("DELETE FROM schema_migrations WHERE version=28")
+            conn.execute("PRAGMA user_version=27")
+            conn.commit()
+            before = tuple(conn.execute(
+                "SELECT ta.anchor_id,ta.principal_id,ta.policy_ref,p.principal_type,p.status "
+                "FROM trust_anchors ta JOIN principals p USING(principal_id)"
+            ).fetchone())
+
+        result = adopt_policy_binding(
+            data_root=legacy_root, policy_path=policy_path,
+            independent_purge_journal=legacy_journal, command_id="adopt-legacy-service",
+            confirmation=lambda *_: True,
+        )
+        self.assertEqual(result["status"], "LEGACY_ADOPTED_BOUND_INSTANCE")
+        with closing(sqlite3.connect(legacy_root / "nexus.sqlite")) as conn:
+            after = tuple(conn.execute(
+                "SELECT ta.anchor_id,ta.principal_id,ta.policy_ref,p.principal_type,p.status "
+                "FROM trust_anchors ta JOIN principals p USING(principal_id)"
+            ).fetchone())
+        self.assertEqual(after, before)
+        self.assertEqual(after[3], "SERVICE")
+
     def test_legacy_adoption_rejects_foreign_key_integrity_failure_before_migration(self):
         initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
                             independent_purge_journal=self.journal, command_id="init-corrupt-legacy")
@@ -318,6 +371,110 @@ class FreshInstanceBootstrapTests(unittest.TestCase):
                 "resume-authority:human", "resume-authority:service",
                 "resume-authority:anchor", "resume-authority:grant",
             ])
+
+    def test_future_issued_at_is_rejected_before_authority_mutation(self):
+        initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                            independent_purge_journal=self.journal, command_id="init-future-grant")
+        now = datetime.now(timezone.utc)
+        plan = {
+            "operator_principal_id": "operator-human", "runtime_principal_id": "future-runtime",
+            "anchor_id": "future-anchor", "grant_id": "future-grant", "task_id": "future-task",
+            "resource_scope": ["future-task"], "action_scope": ["RUN_CREATE"],
+            "audience_scope": ["nexus-runtime"],
+            "issued_at": (now + timedelta(days=1)).isoformat(),
+            "expires_at": (now + timedelta(days=8)).isoformat(),
+            "command_id_prefix": "future-authority",
+        }
+        with self.assertRaisesRegex(MigrationError, "AUTHORITY_BOOTSTRAP_PLAN_NOT_CURRENT"):
+            authority_bootstrap(data_root=self.data_root, policy_path=self.policy_path,
+                                independent_purge_journal=self.journal, plan=plan,
+                                confirmation=lambda *_: True)
+        with closing(sqlite3.connect(self.data_root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM principals WHERE principal_id<>'nexus-core-recovery'"
+            ).fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trust_anchors").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants").fetchone()[0], 0)
+        self.assertFalse((self.data_root / ".nexus-authority-bootstrap-v1.json").exists())
+
+    def test_expired_partial_authority_plan_keeps_prefix_and_refuses_grant(self):
+        from adapters.bootstrap import service as bootstrap_service
+
+        initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                            independent_purge_journal=self.journal, command_id="init-expired-resume")
+        start = datetime.now(timezone.utc)
+        expires = start + timedelta(minutes=2)
+        plan = {
+            "operator_principal_id": "operator-human", "runtime_principal_id": "expiry-runtime",
+            "anchor_id": "expiry-anchor", "grant_id": "expiry-grant", "task_id": "expiry-task",
+            "resource_scope": ["expiry-task"], "action_scope": ["RUN_CREATE"],
+            "audience_scope": ["nexus-runtime"],
+            "issued_at": (start - timedelta(minutes=1)).isoformat(),
+            "expires_at": expires.isoformat(), "command_id_prefix": "expiry-authority",
+        }
+
+        class ControlledDateTime(datetime):
+            now_value = start
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls.now_value
+
+        original_anchor = AuthorityService.register_trust_anchor
+
+        def anchor_then_interrupt(authority, anchor, command_id):
+            original_anchor(authority, anchor, command_id)
+            raise RuntimeError("simulated after anchor")
+
+        with mock.patch.object(bootstrap_service, "datetime", ControlledDateTime), \
+             mock.patch.object(AuthorityService, "register_trust_anchor", anchor_then_interrupt):
+            with self.assertRaisesRegex(RuntimeError, "simulated after anchor"):
+                authority_bootstrap(data_root=self.data_root, policy_path=self.policy_path,
+                                    independent_purge_journal=self.journal, plan=plan,
+                                    confirmation=lambda *_: True)
+        ControlledDateTime.now_value = expires + timedelta(seconds=1)
+        with mock.patch.object(bootstrap_service, "datetime", ControlledDateTime):
+            with self.assertRaisesRegex(MigrationError, "AUTHORITY_BOOTSTRAP_PLAN_NOT_CURRENT"):
+                authority_bootstrap(data_root=self.data_root, policy_path=self.policy_path,
+                                    independent_purge_journal=self.journal, plan=plan,
+                                    confirmation=lambda *_: True)
+        with closing(sqlite3.connect(self.data_root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM principals WHERE principal_id IN ('operator-human','expiry-runtime')"
+            ).fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trust_anchors WHERE anchor_id='expiry-anchor'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE grant_id='expiry-grant'").fetchone()[0], 0)
+
+    def test_completed_authority_bootstrap_replays_after_grant_naturally_expires(self):
+        from adapters.bootstrap import service as bootstrap_service
+
+        initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                            independent_purge_journal=self.journal, command_id="init-completed-expiry")
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(minutes=1)
+        plan = {
+            "operator_principal_id": "operator-human", "runtime_principal_id": "completed-runtime",
+            "anchor_id": "completed-anchor", "grant_id": "completed-grant", "task_id": "completed-task",
+            "resource_scope": ["completed-task"], "action_scope": ["RUN_CREATE"],
+            "audience_scope": ["nexus-runtime"], "issued_at": (now - timedelta(seconds=1)).isoformat(),
+            "expires_at": expires.isoformat(), "command_id_prefix": "completed-authority",
+        }
+        first = authority_bootstrap(data_root=self.data_root, policy_path=self.policy_path,
+                                    independent_purge_journal=self.journal, plan=plan,
+                                    confirmation=lambda *_: True)
+
+        class ExpiredDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return expires + timedelta(seconds=1)
+
+        with mock.patch.object(bootstrap_service, "datetime", ExpiredDateTime):
+            replay = authority_bootstrap(data_root=self.data_root, policy_path=self.policy_path,
+                                         independent_purge_journal=self.journal, plan=plan,
+                                         confirmation=lambda *_: self.fail("committed replay must not ask to confirm again"))
+        self.assertEqual(replay, first)
+        with closing(sqlite3.connect(self.data_root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE grant_id='completed-grant'").fetchone()[0], 1)
 
     def test_authority_bootstrap_rejects_unlisted_and_recovery_operator_before_mutation(self):
         initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
@@ -532,6 +689,68 @@ class FreshInstanceBootstrapTests(unittest.TestCase):
             initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
                                 independent_purge_journal=self.journal, command_id="init-journal-history")
         self.assertFalse((self.data_root / "nexus.sqlite").exists())
+
+    def test_nonempty_purge_journal_is_rejected_before_fresh_intent(self):
+        target = self.base / "journal-preflight-root"
+        history = self.base / "historical-purge.jsonl"
+        history.write_bytes(b"malformed or historical data\n")
+        with self.assertRaisesRegex(MigrationError, "FRESH_PURGE_JOURNAL_CONFLICT"):
+            initialize_instance(data_root=target, policy_path=self.policy_path,
+                                independent_purge_journal=history, command_id="preflight-journal")
+        self.assertFalse(target.exists())
+        self.assertFalse((target / ".nexus-instance-init-v1.json").exists())
+        self.assertFalse((target / "nexus.sqlite").exists())
+        self.assertFalse((target / "objects").exists())
+
+        corrected_empty_journal = self.base / "corrected-empty-purge.jsonl"
+        corrected_empty_journal.write_bytes(b"")
+        result = initialize_instance(data_root=target, policy_path=self.policy_path,
+                                     independent_purge_journal=corrected_empty_journal,
+                                     command_id="preflight-journal")
+        self.assertEqual(result["status"], "INITIALIZED_UNAUTHORIZED")
+
+    def test_bootstrap_cli_sanitizes_writer_lock_error_as_json(self):
+        initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                            independent_purge_journal=self.journal, command_id="init-cli-lock")
+        plan_path = self.base / "bootstrap-plan.json"
+        plan_path.write_text("{}", encoding="utf-8")
+        store = ObjectStore(self.data_root, policy=self.policy,
+                            independent_purge_journal_path=self.journal)
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        try:
+            with redirect_stderr(stderr), redirect_stdout(stdout):
+                exit_code = bootstrap_cli_main([
+                    "authority-bootstrap", "--data-root", str(self.data_root),
+                    "--policy", str(self.policy_path), "--independent-purge-journal", str(self.journal),
+                    "--plan", str(plan_path),
+                ])
+        finally:
+            store.close()
+        self.assertNotEqual(exit_code, 0)
+        response = json.loads(stderr.getvalue())
+        self.assertEqual(response["error"], "NEXUS_WRITER_ALREADY_RUNNING")
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertNotIn(str(self.base), stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_bootstrap_cli_hides_unexpected_error_prose_and_path(self):
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with mock.patch(
+            "adapters.bootstrap.__main__.initialize_instance",
+            side_effect=RuntimeError("unexpected internal failure at " + str(self.base)),
+        ), redirect_stderr(stderr), redirect_stdout(stdout):
+            exit_code = bootstrap_cli_main([
+                "initialize-instance", "--data-root", str(self.data_root),
+                "--policy", str(self.policy_path), "--independent-purge-journal", str(self.journal),
+                "--command-id", "cli-sanitizer-test",
+            ])
+        self.assertNotEqual(exit_code, 0)
+        self.assertEqual(json.loads(stderr.getvalue()), {"error": "BOOTSTRAP_INTERNAL_ERROR"})
+        self.assertNotIn(str(self.base), stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
 
     def test_stage_one_crash_after_journal_creation_is_partial_and_exactly_resumable(self):
         with mock.patch.object(ObjectStore, "_initialize_database", side_effect=RuntimeError("crash after journal")):

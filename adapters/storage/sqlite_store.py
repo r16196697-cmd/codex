@@ -667,12 +667,12 @@ class ObjectStore:
                     "FROM trust_anchors ta LEFT JOIN principals p USING(principal_id)"
                 ).fetchall()
                 for row in anchors:
+                    if row["principal_type"] is None:
+                        issues.append("TRUST_ANCHOR_PRINCIPAL_MISSING")
                     if row["principal_id"] not in proposed_policy["trust_anchors"]:
                         issues.append("TRUST_ANCHOR_NOT_ALLOWED_BY_POLICY")
                     if row["policy_ref"] != policy_version:
                         issues.append("TRUST_ANCHOR_POLICY_VERSION_MISMATCH")
-                    if row["principal_type"] != "HUMAN":
-                        issues.append("TRUST_ANCHOR_PRINCIPAL_INVALID")
                 for table, column in (
                     ("delegation_grants", "policy_version"),
                     ("classification_assertions", "policy_version"),
