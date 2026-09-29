@@ -5,7 +5,7 @@
 The command requires all of the following before it can run:
 
 - an existing Stage 1 initialized and policy-bound instance;
-- completed Stage 2 authority bootstrap with the exact scoped HUMAN-issued Work Grant and control Grant expected by the plan;
+- completed Stage 2 authority bootstrap establishing the HUMAN operator, SERVICE runtime principal, Trust Anchor, and exact scoped control Grant;
 - an operator-reviewed, frozen `project-nexus-selfhost-bootstrap-v2` manifest;
 - a local Git repository whose current HEAD matches the accepted execution commit and whose required Git objects are already available locally.
 
@@ -19,7 +19,7 @@ python -m adapters.client --data-root <existing-bound-root> --policy <bound-loca
 
 The manifest freezes all logical identities, timestamps, source commits/paths/blob IDs, classifications, object refs, verifications, candidates, Context Pack refs, and command IDs. The application validates the exact local Git state, commits a master request binding before its first business mutation, and resumes only the same semantic request. Changed content or plan under the same command identity fails closed.
 
-The normal path uses existing Authority, Hosted Bridge, Git source import, Verification, Memory, and Context Pack services. It imports eight sources, writes current-state and Claim objects, creates T1 VerificationResults and quarantined `INFERRED` Memory Candidates, compiles an explicit-ref Context Pack with no Memory query, then closes the Root Run and revokes the Work Grant. It does not admit Memory or assert that the model saw the Context Pack.
+After the Stage 3 master request has been durably bound, Stage 3 creates the frozen HUMAN-issued Work Grant and then revokes the control Grant. The normal path uses existing Authority, Hosted Bridge, Git source import, Verification, Memory, and Context Pack services. It imports eight sources, writes current-state and Claim objects, creates T1 VerificationResults and quarantined `INFERRED` Memory Candidates, compiles an explicit-ref Context Pack with no Memory query, then closes the Root Run and revokes the Work Grant. It does not admit Memory or assert that the model saw the Context Pack.
 
 `STAGE3_CANONICAL_COMPLETE` means that this bounded canonical operation completed. It is not `BOOTSTRAP_COMPLETE`: that later operational claim also requires a coherent backup and a successful disposable restore proof.
 

@@ -252,7 +252,7 @@ class ProjectNexusSelfHostCompositionTests(unittest.TestCase):
             "current_state": {
                 "object_id": state_id,
                 "payload": {"project": "Nexus", "status": "self-host bootstrap fixture", "source_count": 8},
-                "source_refs": list(artifact_ids),
+                "source_refs": sorted(artifact_ids),
                 "classification_assertion": self._classification("class-project-current-state", "OBJECT", state_id),
                 "classify_command_id": "classify-project-current-state", "put_command_id": "put-project-current-state",
             },
@@ -284,11 +284,104 @@ class ProjectNexusSelfHostCompositionTests(unittest.TestCase):
             repo_path=self.repo, manifest=manifest or self.manifest,
         )
 
+    def _assert_pre_mutation_rejection(self, manifest, expected_reason):
+        with self.store._connection() as conn:
+            before = {
+                "objects": conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0],
+                "tasks": conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0],
+                "runs": conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0],
+                "grants": conn.execute("SELECT COUNT(*) FROM delegation_grants").fetchone()[0],
+            }
+        with self.assertRaises(ProjectNexusSelfHostError) as caught:
+            self._run(manifest)
+        self.assertEqual(caught.exception.reason_code, expected_reason)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects").fetchone()[0], before["objects"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], before["tasks"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0], before["runs"])
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants").fetchone()[0], before["grants"])
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM command_ledger WHERE command_id=?",
+                (manifest["stage3_command_id"] + ":request",),
+            ).fetchone())
+
+    def test_context_sources_must_be_closed_over_this_import_set_before_mutation(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["git_sources"][3]["import_plan"]["artifact_object_id"] = "src-unimported-replacement-v1"
+        manifest["current_state"]["source_refs"] = sorted(
+            item["import_plan"]["artifact_object_id"] for item in manifest["git_sources"]
+        )
+        self._assert_pre_mutation_rejection(manifest, "STAGE3_CONTEXT_PLAN_INVALID")
+
+    def test_current_state_requires_exact_sorted_eight_source_lineage(self):
+        for refs in (sorted(self.SOURCE_IDS)[:-1], sorted(self.SOURCE_IDS)[:1]):
+            with self.subTest(source_count=len(refs)):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["current_state"]["source_refs"] = refs
+                self._assert_pre_mutation_rejection(
+                    manifest, "STAGE3_CURRENT_STATE_SOURCE_CLOSURE_INVALID",
+                )
+
+    def test_memory_candidates_form_a_bijection_with_claims_and_verifications(self):
+        manifest = copy.deepcopy(self.manifest)
+        manifest["memory_candidates"][1]["claim_ref"] = manifest["memory_candidates"][0]["claim_ref"]
+        self._assert_pre_mutation_rejection(manifest, "STAGE3_MEMORY_BINDING_INVALID")
+
+    def test_durable_command_closure_rejects_root_top_level_collision(self):
+        manifest = copy.deepcopy(self.manifest)
+        root = manifest["root"]
+        root["create_task_root_command_id"] = manifest["git_sources"][0]["import_plan"]["command_id_prefix"] + ":artifact"
+        root_command = root["create_task_root_command_id"]
+        root["classifications"]["root_created_event"]["subject_ref"] = "evt-" + root_command + "-root-create"
+        root["classifications"]["input_event"]["subject_ref"] = "evt-" + root_command + "-trace-input"
+        root["classifications"]["root_ready_event"]["subject_ref"] = "evt-" + root_command + "-root-ready"
+        root["classifications"]["root_running_event"]["subject_ref"] = "evt-" + root_command + "-root-running"
+        self._assert_pre_mutation_rejection(manifest, "STAGE3_DUPLICATE_COMMAND_ID")
+
+    def test_durable_command_closure_rejects_context_object_and_root_nested_collisions(self):
+        variants = []
+        context_collision = copy.deepcopy(self.manifest)
+        context_collision["context_pack"]["command_id"] = "shared-context-command"
+        context_collision["memory_candidates"][0]["command_id"] = "shared-context-command-object"
+        variants.append(context_collision)
+        for suffix in ("bind-contract-object", "bind-contract-logical-ref"):
+            nested_collision = copy.deepcopy(self.manifest)
+            nested_collision["memory_candidates"][0]["command_id"] = (
+                nested_collision["root"]["create_task_root_command_id"] + "-" + suffix
+            )
+            variants.append(nested_collision)
+        for manifest in variants:
+            with self.subTest(collision=manifest["memory_candidates"][0]["command_id"]):
+                self._assert_pre_mutation_rejection(manifest, "STAGE3_DUPLICATE_COMMAND_ID")
+
+    def test_static_task_contract_classification_dag_and_budget_preflight(self):
+        invalids = []
+        contract = copy.deepcopy(self.manifest)
+        contract["root"]["task_contract"]["goal"] = ""
+        invalids.append((contract, "STAGE3_TASK_CONTRACT_INVALID"))
+        classification = copy.deepcopy(self.manifest)
+        classification["root"]["classifications"]["root_run"]["handling_tags"] = "not-a-list"
+        invalids.append((classification, "STAGE3_CLASSIFICATION_INVALID"))
+        dag = copy.deepcopy(self.manifest)
+        dag["root"]["dag_nodes"] = [{"not": "supported"}]
+        invalids.append((dag, "STAGE3_DAG_UNSUPPORTED"))
+        for field in ("amount_limit", "model_call_limit", "tool_call_limit", "child_run_limit"):
+            budget = copy.deepcopy(self.manifest)
+            budget["root"]["budget_limits"][field] = 1
+            invalids.append((budget, "STAGE3_BUDGET_UNSUPPORTED"))
+        for index, (manifest, reason) in enumerate(invalids):
+            with self.subTest(case=index, reason=reason):
+                self._assert_pre_mutation_rejection(manifest, reason)
+
     def test_frozen_manifest_runs_full_canonical_composition_and_completed_replay(self):
         result = self._run()
         self.assertEqual(result["status"], "STAGE3_CANONICAL_COMPLETE")
         self.assertEqual(result["source_count"], 8)
         self.assertEqual(result["memory_candidate_count"], 5)
+        self.assertEqual(self.manifest["current_state"]["source_refs"], sorted(self.SOURCE_IDS))
+        self.assertEqual({item["claim_ref"] for item in self.manifest["memory_candidates"]},
+                         {item["claim_id"] for item in self.manifest["claims"]})
+        self.assertEqual(len({item["verification_ref"] for item in self.manifest["memory_candidates"]}), 5)
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT status FROM runs WHERE run_id=?", (self.manifest["root"]["root_run_id"],)).fetchone()[0], "SUCCEEDED")
             self.assertEqual(conn.execute("SELECT status FROM delegation_grants WHERE grant_id=?", (self.manifest["work_grant"]["grant"]["grant_id"],)).fetchone()[0], "REVOKED")

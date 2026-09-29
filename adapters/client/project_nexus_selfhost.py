@@ -30,16 +30,24 @@ _WORK_ACTIONS = {
     "VERIFY", "MEMORY_ADMIT", "INSPECT",
 }
 _SOURCE_IMPORT_SUFFIXES = (
-    "request", "classify-artifact", "authorize-artifact", "artifact", "preflight-classify-artifact",
-    "classify-artifact-authorize",
-    "classify-evidence", "authorize-evidence", "evidence", "preflight-classify-evidence",
-    "classify-evidence-authorize",
+    "request", "classify-artifact", "classify-artifact-authorize", "authorize-artifact", "artifact",
+    "preflight-classify-artifact", "classify-evidence", "classify-evidence-authorize",
+    "authorize-evidence", "evidence", "preflight-classify-evidence",
 )
 _ROOT_CHILD_SUFFIXES = (
     "request", "task", "budget-account", "class-root-run", "class-root-created", "root-create",
     "class-input", "authorize-input", "put-input", "class-input-event", "trace-input", "class-contract", "bind-contract",
     "create-dag", "class-root-manifest", "bind-root-manifest", "class-root-ready", "root-ready",
     "class-root-running", "root-running",
+)
+_ROOT_NESTED_COMMAND_SUFFIXES = (
+    "root-create-authorize", "trace-input-authorize",
+    "class-root-run-authorize", "class-root-created-authorize", "class-input-authorize",
+    "class-input-event-authorize", "class-contract-authorize", "bind-contract-authorize",
+    "bind-contract-object", "bind-contract-logical-ref", "create-dag-authorize",
+    "class-root-manifest-authorize", "bind-root-manifest-authorize", "bind-root-manifest-object",
+    "class-root-ready-authorize", "root-ready-authorize", "class-root-running-authorize",
+    "root-running-authorize",
 )
 _ROOT_CLASS_SUBJECTS = {
     "root_run": ("RUN", "root_run_id"),
@@ -100,6 +108,62 @@ def _declared_id(value: Any, ids: set[str]) -> str:
 def _unique_commands(commands: list[str], prefixes: list[str]) -> None:
     if len(commands) != len(set(commands)) or len(prefixes) != len(set(prefixes)):
         _fail("STAGE3_DUPLICATE_COMMAND_ID")
+
+
+def _command_id_closure(doc: dict[str, Any]) -> list[str]:
+    """Return every caller-controlled or deterministic command identity used by Stage 3.
+
+    This deliberately mirrors the current narrow application call graph. It is
+    not a generic command registry. Authorization command IDs are included as
+    well because denied checks can themselves leave durable ledger entries.
+    """
+    commands = [
+        doc["stage3_command_id"], doc["stage3_command_id"] + ":request",
+        doc["stage3_command_id"] + ":ready-to-close",
+        doc["control_grant"]["revoke_command_id"],
+        doc["work_grant"]["create_command_id"], doc["work_grant"]["revoke_command_id"],
+    ]
+
+    root_command = doc["root"]["create_task_root_command_id"]
+    commands.append(root_command)  # create_task_root's top-level completion command
+    commands.extend(root_command + "-" + suffix for suffix in _ROOT_CHILD_SUFFIXES)
+    commands.extend(root_command + "-" + suffix for suffix in _ROOT_NESTED_COMMAND_SUFFIXES)
+
+    for source in doc["git_sources"]:
+        prefix = source["import_plan"]["command_id_prefix"]
+        commands.extend(prefix + ":" + suffix for suffix in _SOURCE_IMPORT_SUFFIXES)
+
+    state = doc["current_state"]
+    for command_id in (state["classify_command_id"], state["put_command_id"]):
+        commands.extend((command_id, command_id + "-authorize"))
+    for claim in doc["claims"]:
+        for command_id in (claim["classify_command_id"], claim["put_command_id"]):
+            commands.extend((command_id, command_id + "-authorize"))
+
+    for verification in doc["verifications"]:
+        verification_id = verification["verification_id"]
+        commands.append("verify-" + verification_id)
+        for object_id in sorted(set([verification["target_ref"], *verification["evidence_refs"]])):
+            commands.append(f"verify-auth-{verification_id}-{object_id}")
+
+    for candidate in doc["memory_candidates"]:
+        commands.append(candidate["command_id"])
+        for object_id in sorted(set([candidate["candidate_id"], candidate["claim_ref"],
+                                     *candidate["evidence_refs"]])):
+            commands.append(f"memory-admit-auth-{candidate['candidate_id']}-{object_id}")
+
+    context = doc["context_pack"]
+    commands.extend((context["classification_command_id"],
+                     context["classification_command_id"] + "-authorize",
+                     context["command_id"], context["command_id"] + "-object",
+                     context["command_id"] + "-authorize-pack"))
+
+    for item in doc["root_close"].values():
+        commands.extend((item["classification_command_id"],
+                         item["classification_command_id"] + "-authorize",
+                         item["command_id"], item["command_id"] + "-authorize"))
+
+    return commands
 
 
 def _pairs_no_duplicates(pairs):
@@ -184,11 +248,26 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     root["input_payload"].encode("utf-8", errors="strict")
     if not isinstance(root["task_contract"], dict) or not isinstance(root["dag_nodes"], list):
         _fail("STAGE3_MANIFEST_INVALID")
+    if root["dag_nodes"]:
+        _fail("STAGE3_DAG_UNSUPPORTED")
+    effective_contract = {
+        **root["task_contract"],
+        "task_id": root["task_id"],
+        "requester_id": root["requester_id"],
+        "budget_account_ref": root["budget_account_id"],
+        "input_object_refs": [root["input_object_id"]],
+    }
+    try:
+        store._validate("nexus.task_contract@1.schema.json", effective_contract)
+    except Exception:
+        _fail("STAGE3_TASK_CONTRACT_INVALID")
     limits = root["budget_limits"]
     if not isinstance(limits, dict) or set(limits) != {"amount_limit", "unit", "model_call_limit", "tool_call_limit", "child_run_limit"}:
         _fail("STAGE3_MANIFEST_INVALID")
     if any(type(limits[key]) is not int or limits[key] < 0 for key in ("amount_limit", "model_call_limit", "tool_call_limit", "child_run_limit")) or not isinstance(limits["unit"], str) or not limits["unit"]:
         _fail("STAGE3_MANIFEST_INVALID")
+    if any(limits[key] != 0 for key in ("amount_limit", "model_call_limit", "tool_call_limit", "child_run_limit")):
+        _fail("STAGE3_BUDGET_UNSUPPORTED")
     if not isinstance(root["data_boundary"], dict):
         _fail("STAGE3_MANIFEST_INVALID")
     classes = _object(root["classifications"], set(_ROOT_CLASS_SUBJECTS), "root classifications")
@@ -206,7 +285,7 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     for key, (subject_type, _) in _ROOT_CLASS_SUBJECTS.items():
         assertion = _object(classes[key], {"schema_id", "schema_version", "assertion_id", "subject_type", "subject_ref", "sensitivity_level", "handling_tags", "policy_version", "reason", "actor_id"}, "classification")
         _declared_id(assertion["assertion_id"], ids)
-        _validate_classification(assertion, subject_type, expected_class_refs[key], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"])
+        _validate_classification(assertion, subject_type, expected_class_refs[key], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], store)
 
     sources = doc["git_sources"]
     if not isinstance(sources, list) or len(sources) != 8:
@@ -259,9 +338,11 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     _declared_id(state["object_id"], ids)
     if state["object_id"] != "artifact-project-nexus-current-state-v1" or not isinstance(state["payload"], dict):
         _fail("STAGE3_MANIFEST_INVALID")
-    if not isinstance(state["source_refs"], list) or len(state["source_refs"]) == 0 or len(state["source_refs"]) != len(set(state["source_refs"])):
-        _fail("STAGE3_MANIFEST_INVALID")
-    _validate_object_class(state["classification_assertion"], state["object_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids)
+    if (not isinstance(state["source_refs"], list)
+            or any(not isinstance(ref, str) for ref in state["source_refs"])
+            or len(state["source_refs"]) != len(set(state["source_refs"]))):
+        _fail("STAGE3_CURRENT_STATE_SOURCE_CLOSURE_INVALID")
+    _validate_object_class(state["classification_assertion"], state["object_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids, store)
     for key in ("classify_command_id", "put_command_id"):
         _declared_id(state[key], ids)
         commands.append(state[key])
@@ -275,7 +356,7 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
         _declared_id(claim["claim_id"], ids)
         if not isinstance(claim["payload"], dict) or not isinstance(claim["evidence_refs"], list) or not claim["evidence_refs"] or len(claim["evidence_refs"]) != len(set(claim["evidence_refs"])):
             _fail("STAGE3_MANIFEST_INVALID")
-        _validate_object_class(claim["classification_assertion"], claim["claim_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids)
+        _validate_object_class(claim["classification_assertion"], claim["claim_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids, store)
         for key in ("classify_command_id", "put_command_id"):
             _declared_id(claim[key], ids)
             commands.append(claim[key])
@@ -297,6 +378,11 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     if not isinstance(candidates, list) or len(candidates) != 5:
         _fail("STAGE3_MEMORY_CANDIDATE_COUNT_INVALID")
     candidate_ids: list[str] = []
+    candidate_claim_refs = [candidate["claim_ref"] for candidate in candidates]
+    candidate_verification_refs = [candidate["verification_ref"] for candidate in candidates]
+    if (len(set(candidate_claim_refs)) != 5 or set(candidate_claim_refs) != set(claim_ids)
+            or len(set(candidate_verification_refs)) != 5):
+        _fail("STAGE3_MEMORY_BINDING_INVALID")
     for candidate in candidates:
         candidate = _object(candidate, {"candidate_id", "claim_ref", "evidence_refs", "verification_ref", "owner", "review_trigger", "classification_assertion_ref", "command_id"}, "memory candidate")
         for key in ("candidate_id", "command_id"):
@@ -317,14 +403,18 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     commands.append(context["classification_command_id"])
     _declared_id(context["command_id"], ids)
     commands.append(context["command_id"])
-    if context["memory_query"] is not None or not isinstance(context["source_refs"], list) or not context["source_refs"] or len(context["source_refs"]) != len(set(context["source_refs"])):
+    if (context["memory_query"] is not None or not isinstance(context["source_refs"], list)
+            or not context["source_refs"] or any(not isinstance(ref, str) for ref in context["source_refs"])
+            or len(context["source_refs"]) != len(set(context["source_refs"]))):
         _fail("STAGE3_CONTEXT_PLAN_INVALID")
-    _validate_object_class(context["classification_assertion"], context["pack_object_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids)
+    _validate_object_class(context["classification_assertion"], context["pack_object_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], ids, store)
     for ref in context["source_refs"]:
         _require_id(ref)
     required_context = {state["object_id"], "src-phase6-closure-v1", "src-utility-pilot-freeze-v1",
                         "src-selfhost-design-v1", "src-fresh-bootstrap-guide-v1", "src-git-source-import-guide-v1"}
     if set(context["source_refs"]) != required_context:
+        _fail("STAGE3_CONTEXT_PLAN_INVALID")
+    if not (required_context - {state["object_id"]}).issubset(set(artifact_ids)):
         _fail("STAGE3_CONTEXT_PLAN_INVALID")
 
     close = _object(doc["root_close"], {"verifying", "succeeded"}, "root close")
@@ -334,7 +424,7 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
         _declared_id(item["classification_command_id"], ids)
         commands.append(item["command_id"])
         commands.append(item["classification_command_id"])
-        _validate_classification(item["classification_assertion"], "TRACE_EVENT", "evt-" + item["command_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"])
+        _validate_classification(item["classification_assertion"], "TRACE_EVENT", "evt-" + item["command_id"], instance["policy_version"], work["grant"]["granted_to"], root["data_boundary"], store)
         _declared_id(item["classification_assertion"]["assertion_id"], ids)
 
     if len(doc["stage3_command_id"] + ":request") > 128 or len(doc["stage3_command_id"] + ":ready-to-close") > 128:
@@ -343,14 +433,17 @@ def _validate_manifest(manifest: Any, store) -> dict[str, Any]:
     prefixes.append(doc["stage3_command_id"])
     if any(len(command_id) > 128 for command_id in commands):
         _fail("STAGE3_MANIFEST_INVALID")
+    commands = _command_id_closure(doc)
+    if any(not isinstance(command_id, str) or len(command_id) > 128 for command_id in commands):
+        _fail("STAGE3_MANIFEST_INVALID")
     _unique_commands(commands, prefixes)
 
     # Cross-record IDs and refs are checked only after every list has a strict,
     # bounded shape, so errors remain deterministic and path-free.
     if root["requester_id"] != work["grant"]["issued_by"] or root["task_id"] not in work["grant"]["task_scope"]:
         _fail("STAGE3_MANIFEST_INVALID")
-    if not set(state["source_refs"]).issubset(set(artifact_ids)):
-        _fail("STAGE3_MANIFEST_INVALID")
+    if state["source_refs"] != sorted(artifact_ids):
+        _fail("STAGE3_CURRENT_STATE_SOURCE_CLOSURE_INVALID")
     expected_verification_targets = set(artifact_ids) | {state["object_id"]} | set(claim_ids)
     if (len({item["target_ref"] for item in verifications}) != 14
             or {item["target_ref"] for item in verifications} != expected_verification_targets):
@@ -404,7 +497,11 @@ def _validate_relative_git_path(value: Any) -> None:
 
 
 def _validate_classification(assertion: dict[str, Any], subject_type: str, subject_ref: str,
-                              policy_version: str, actor_id: str, boundary: dict[str, Any]) -> None:
+                              policy_version: str, actor_id: str, boundary: dict[str, Any], store) -> None:
+    try:
+        store._validate("nexus.classification_assertion@1.schema.json", assertion)
+    except Exception:
+        _fail("STAGE3_CLASSIFICATION_INVALID")
     if (assertion.get("schema_id") != "nexus.classification_assertion" or assertion.get("schema_version") != 1
             or assertion.get("subject_type") != subject_type or assertion.get("subject_ref") != subject_ref
             or assertion.get("policy_version") != policy_version or assertion.get("actor_id") != actor_id
@@ -415,11 +512,11 @@ def _validate_classification(assertion: dict[str, Any], subject_type: str, subje
 
 
 def _validate_object_class(assertion: Any, object_id: str, policy_version: str, actor_id: str,
-                           boundary: dict[str, Any], ids: set[str]) -> None:
+                           boundary: dict[str, Any], ids: set[str], store) -> None:
     keys = {"schema_id", "schema_version", "assertion_id", "subject_type", "subject_ref", "sensitivity_level", "handling_tags", "policy_version", "reason", "actor_id"}
     assertion = _object(assertion, keys, "object classification")
     _declared_id(assertion["assertion_id"], ids)
-    _validate_classification(assertion, "OBJECT", object_id, policy_version, actor_id, boundary)
+    _validate_classification(assertion, "OBJECT", object_id, policy_version, actor_id, boundary, store)
 
 
 def _validate_work_grant(grant: dict[str, Any], manifest: dict[str, Any], store) -> None:
