@@ -11,13 +11,14 @@ from kernel.authority import ApprovalDenied, AuthorityService, AuthorizationDeni
 from kernel.object.errors import CommandConflict
 from kernel.budget import BudgetExceeded, BudgetService
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 
 
 class AuthorityBudgetTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-step3-")
         self.root = Path(self.temp.name)
-        self.store = ObjectStore(self.root / "data")
+        self.store = open_test_store(self.root / "data")
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.store.close)
         policy_path = Path(__file__).resolve().parents[2] / "policies" / "default-policy.json"

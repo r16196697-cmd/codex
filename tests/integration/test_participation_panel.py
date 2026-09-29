@@ -11,6 +11,7 @@ from unittest import mock
 from adapters.client.hosted import CodexHostedBridge
 from adapters.panel.application import open_panel_application
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.object.errors import WriterAlreadyRunning
 from kernel.authority import AuthorityService
 from kernel.participation import ParticipationModeService
@@ -24,7 +25,8 @@ class ParticipationPanelTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-panel-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "data"
-        self.store = ObjectStore(self.root)
+        self.store = open_test_store(self.root)
+        self.policy_path = self.root.parent / f".{self.root.name}.test-policy.json"
         self.addCleanup(self.store.close)
         self.participation = ParticipationModeService(self.store)
 
@@ -52,7 +54,7 @@ class ParticipationPanelTests(unittest.TestCase):
                           for table in ("objects", "tasks", "runs", "memory_candidates"))
         self.assertEqual(after, before)
         self.store.close()
-        self.store = ObjectStore(self.root)
+        self.store = open_test_store(self.root)
         self.addCleanup(self.store.close)
         self.participation = ParticipationModeService(self.store)
         self.assertEqual(self.participation.current()["mode"], "BYPASS")
@@ -146,7 +148,7 @@ class ParticipationPanelTests(unittest.TestCase):
 
     def test_panel_startup_viewmodel_unknowns_and_tabs_are_truthful(self):
         self.store.close()
-        application = open_panel_application(self.root)
+        application = open_panel_application(self.root, policy_path=self.policy_path)
         try:
             snapshot = application.view_model.snapshot()
             self.assertEqual(snapshot["participation_mode"], "ACTIVE")
@@ -202,20 +204,20 @@ class ParticipationPanelTests(unittest.TestCase):
             view_model.set_participation_mode("OBSERVE", expected_mode="ACTIVE")
             self.assertEqual(ParticipationModeService(writer_store).current()["mode"], "OBSERVE")
             with self.assertRaises(WriterAlreadyRunning):
-                ObjectStore(self.root)
+                open_test_store(self.root)
             panel_app.close()
             self.assertEqual(ParticipationModeService(writer_store).current()["mode"], "OBSERVE")
             with writer_store._connection() as conn:
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
             with self.assertRaises(WriterAlreadyRunning):
-                ObjectStore(self.root)
+                open_test_store(self.root)
 
         with mock.patch.object(client_cli, "_runtime", side_effect=capture_runtime), \
              mock.patch("adapters.panel.application.open_panel_application", side_effect=capture_panel), \
              mock.patch("adapters.panel.ui.launch_panel", side_effect=exercise_panel):
-            result = client_cli.main(["--data-root", str(self.root), "panel"])
+            result = client_cli.main(["--data-root", str(self.root), "--policy", str(self.policy_path), "panel"])
         self.assertEqual(result, 0)
-        reopened = ObjectStore(self.root)
+        reopened = open_test_store(self.root)
         try:
             self.assertEqual(ParticipationModeService(reopened).current()["mode"], "OBSERVE")
         finally:
@@ -223,7 +225,7 @@ class ParticipationPanelTests(unittest.TestCase):
 
     def test_recovery_mode_preserves_unavailable_instead_of_reporting_zero(self):
         self.store.close()
-        application = open_panel_application(self.root)
+        application = open_panel_application(self.root, policy_path=self.policy_path)
         try:
             with application.store._connection() as conn:
                 conn.execute("UPDATE runtime_mode_state SET mode='RECOVERY' WHERE singleton=1")

@@ -16,6 +16,7 @@ from jsonschema import ValidationError
 
 from adapters.panel.application import open_panel_application
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.authority import AuthorityService
 from kernel.authority.errors import AuthorizationDenied
 from kernel.budget import BudgetService
@@ -41,7 +42,7 @@ class ContextMeteringTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "data"
         self.policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
         self.policy["trust_anchors"] = ["human-root"]
-        self.store = ObjectStore(self.root, policy=self.policy)
+        self.store = open_test_store(self.root, policy=self.policy)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -346,7 +347,12 @@ class ContextMeteringTests(unittest.TestCase):
             conn.execute("DELETE FROM schema_migrations WHERE version=25")
             conn.execute("DELETE FROM schema_migrations WHERE version=26")
             conn.execute("DELETE FROM schema_migrations WHERE version=27")
+            conn.execute("DROP TRIGGER instance_policy_binding_no_update")
+            conn.execute("DROP TRIGGER instance_policy_binding_no_delete")
+            conn.execute("DROP TABLE instance_policy_binding")
+            conn.execute("DELETE FROM schema_migrations WHERE version=28")
             conn.execute("PRAGMA user_version=24")
+        (self.root / ".nexus-instance-init-v1.json").unlink()
         self.store.close()
         migration_dir = Path(self.temp.name) / "migration-25-only"
         migration_dir.mkdir()
@@ -354,7 +360,7 @@ class ContextMeteringTests(unittest.TestCase):
         for migration in source_migrations.glob("*.sql"):
             if int(migration.name[:4]) <= 25:
                 shutil.copy2(migration, migration_dir / migration.name)
-        reopened = ObjectStore(self.root, policy=self.policy, migrations_dir=migration_dir)
+        reopened = open_test_store(self.root, policy=self.policy, migrations_dir=migration_dir)
         self.store = reopened
         self.addCleanup(reopened.close)
         with reopened._connection() as conn:
@@ -557,7 +563,7 @@ class ContextMeteringTests(unittest.TestCase):
         app = open_panel_application(self.root, writer_services=writer_services)
         try:
             with self.assertRaises(WriterAlreadyRunning):
-                ObjectStore(self.root, policy=self.policy)
+                open_test_store(self.root, policy=self.policy)
             snapshot = app.view_model.snapshot()
             context = snapshot["context_status"]
             self.assertEqual(context["status"], "PACK_COMPILED")
@@ -587,7 +593,7 @@ class ContextMeteringTests(unittest.TestCase):
     def test_reopen_keeps_pack_and_metering_projection(self):
         self._compile(self.pack_ids[0], "reopen-pack")
         self.store.close()
-        reopened = ObjectStore(self.root, policy=self.policy)
+        reopened = open_test_store(self.root, policy=self.policy)
         try:
             service = ContextPackService(store=reopened, authority=AuthorityService(reopened, self.policy),
                                          participation=ParticipationModeService(reopened),
@@ -1223,7 +1229,7 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("SKILL_OPERATOR_CONFIRMATION_REQUIRES_TTY", errors)
         approval_id = "skill-approval-" + hashlib.sha256(b"skill-product-enable").hexdigest()
-        probe = ObjectStore(self.root, policy=self.policy)
+        probe = open_test_store(self.root, policy=self.policy)
         try:
             self.assertIsNone(AuthorityService(probe, self.policy).get_approval_metadata(approval_id))
         finally:
@@ -1269,7 +1275,7 @@ class ContextMeteringTests(unittest.TestCase):
             self.assertEqual(panel_projection["latest_selection"]["resolution"], "HOST_NATIVE")
             self.assertNotIn("Use the small helper instruction", json.dumps(panel_projection))
             with self.assertRaises(WriterAlreadyRunning):
-                ObjectStore(self.root, policy=self.policy)
+                open_test_store(self.root, policy=self.policy)
 
         def capture_production_panel(*args, **kwargs):
             panel_app = open_panel(*args, **kwargs)
@@ -1283,7 +1289,7 @@ class ContextMeteringTests(unittest.TestCase):
                 original_close()
                 self.assertEqual(writer_services["skills"].snapshot()["eligible_count"], 1)
                 with self.assertRaises(WriterAlreadyRunning):
-                    ObjectStore(self.root, policy=self.policy)
+                    open_test_store(self.root, policy=self.policy)
 
             panel_app.close = close_panel_only
             return panel_app
@@ -1305,7 +1311,7 @@ class ContextMeteringTests(unittest.TestCase):
         ])
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(reject_output)["status"], "REJECTED")
-        transition_store = ObjectStore(self.root, policy=self.policy)
+        transition_store = open_test_store(self.root, policy=self.policy)
         try:
             transition_trace = TraceRuntime(transition_store, AuthorityService(transition_store, self.policy))
             transition_trace.transition_run(
@@ -1319,7 +1325,7 @@ class ContextMeteringTests(unittest.TestCase):
         self.assertEqual(json.loads(replay_output)["status"], "ENABLED")
         self.assertNotIn("Type ENABLE to confirm", replay_output)
 
-        reopened = ObjectStore(self.root, policy=self.policy)
+        reopened = open_test_store(self.root, policy=self.policy)
         try:
             reopened_app = compose_skill_application(
                 store=reopened, authority=AuthorityService(reopened, self.policy),

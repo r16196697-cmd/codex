@@ -11,7 +11,8 @@ import tempfile
 import threading
 from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timezone
-from pathlib import Path
+from enum import Enum
+from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -35,6 +36,15 @@ _LINEAGE_TYPES = ("derived_from", "generated_from", "supersedes")
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 _MEMORY_TABLES = {"raw_history_rows", "admitted_memory_rows", "memory_candidates", "memory_candidate_evidence"}
 _MEMORY_INDEX_PREFIXES = ("raw_history_fts", "admitted_memory_fts")
+_INSTANCE_BINDING_MIGRATION = 28
+_BOOTSTRAP_LOGICAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+class StartupPurpose(str, Enum):
+    ORDINARY = "ORDINARY"
+    INSTANCE_INITIALIZE = "INSTANCE_INITIALIZE"
+    LEGACY_ADOPTION = "LEGACY_ADOPTION"
+    RECOVERY = "RECOVERY"
 
 
 def _utc_now() -> str:
@@ -56,75 +66,682 @@ class ObjectStore:
     the in-process lock also serializes payload rename and barrier checks.
     """
 
-    def __init__(self, data_root: str | Path, schema_dir: str | Path | None = None, policy: dict[str, Any] | None = None, *, force_recovery: bool = False, migrations_dir: str | Path | None = None, independent_purge_journal_path: str | Path | None = None):
+    def __init__(
+        self,
+        data_root: str | Path,
+        schema_dir: str | Path | None = None,
+        policy: dict[str, Any] | None = None,
+        *,
+        force_recovery: bool = False,
+        migrations_dir: str | Path | None = None,
+        independent_purge_journal_path: str | Path | None = None,
+        startup_purpose: StartupPurpose | str = StartupPurpose.ORDINARY,
+    ):
         self.data_root = Path(data_root).expanduser().resolve()
-        configured_journal = independent_purge_journal_path or os.environ.get("NEXUS_INDEPENDENT_PURGE_JOURNAL")
-        if configured_journal is None:
-            configured_journal = self.data_root.parent / (self.data_root.name + ".purge-journal.jsonl")
-        from kernel.purge.journal import IndependentPurgeJournal
-        self.independent_purge_journal = IndependentPurgeJournal(configured_journal, self.data_root)
-        self.independent_purge_journal_path = self.independent_purge_journal.path
-        self._journal_bootstrap_needed = False
-        self.data_root.mkdir(parents=True, exist_ok=True)
-        self.blob_root = self.data_root / "objects" / "sha256"
-        self.blob_root.mkdir(parents=True, exist_ok=True)
         self.database_path = self.data_root / "nexus.sqlite"
+        self.blob_root = self.data_root / "objects" / "sha256"
         self._format_checker = FormatChecker()
         project_root = Path(__file__).resolve().parents[2]
         self.schema_dir = Path(schema_dir).resolve() if schema_dir else project_root / "schemas"
         policy_path = project_root / "policies" / "default-policy.json"
-        self.policy = json.loads(json.dumps(policy)) if policy is not None else json.loads(policy_path.read_text(encoding="utf-8"))
-        policy_schema = json.loads((project_root / "policies" / "nexus.policy@1.schema.json").read_text(encoding="utf-8"))
+        from kernel.instance_binding import parse_json_object, policy_sha256
+
+        self.policy = json.loads(json.dumps(policy)) if policy is not None else parse_json_object(policy_path.read_bytes())
+        policy_schema = parse_json_object((project_root / "policies" / "nexus.policy@1.schema.json").read_bytes())
         Draft202012Validator.check_schema(policy_schema)
         Draft202012Validator(policy_schema, format_checker=self._format_checker).validate(self.policy)
+        self.policy_sha256 = policy_sha256(self.policy)
         self.migrations_dir = Path(migrations_dir).resolve() if migrations_dir else project_root / "migrations"
         self._lock = threading.RLock()
         self._writer_lock_file = None
         self._closed = False
         self._purge_redaction_local = threading.local()
-        if force_recovery and not self.database_path.is_file():
-            raise MigrationError("Forced recovery requires an existing database.")
-        self._force_recovery = force_recovery
-        startup_mode = "RECOVERY" if force_recovery else self._detect_startup_mode()
-        journal_state = "recovery" if force_recovery else self._journal_startup_state()
-        if journal_state == "recovery":
-            if not self.database_path.is_file():
-                raise MigrationError("Independent purge journal requires recovery before database initialization.")
-            startup_mode = "RECOVERY"
-        self._mode_cache = startup_mode
+        self._binding_write_local = threading.local()
+        self._bootstrap_schema_write_local = threading.local()
         self._recovery_local = threading.local()
         self._schemas: dict[str, dict[str, Any]] = {}
+        self._journal_bootstrap_needed = False
+        self._force_recovery = force_recovery
+        self._mode_cache = "NORMAL"
+        try:
+            self.startup_purpose = StartupPurpose.RECOVERY if force_recovery else StartupPurpose(startup_purpose)
+        except ValueError as exc:
+            raise MigrationError("INVALID_STARTUP_PURPOSE") from exc
+        if force_recovery and StartupPurpose(startup_purpose) is not StartupPurpose.ORDINARY:
+            raise MigrationError("RECOVERY_PURPOSE_CONFLICT")
+        if not force_recovery and self.startup_purpose is StartupPurpose.RECOVERY:
+            raise MigrationError("RECOVERY_PURPOSE_REQUIRES_EXPLICIT_RECOVERY_FLAG")
+
+        configured_journal = independent_purge_journal_path or os.environ.get("NEXUS_INDEPENDENT_PURGE_JOURNAL")
+        if configured_journal is None:
+            configured_journal = self.data_root.parent / (self.data_root.name + ".purge-journal.jsonl")
+        self._configured_journal_path = Path(configured_journal).expanduser().resolve()
+        self._journal_identity_expected = self._journal_identity_for_path(self._configured_journal_path)
+        self.independent_purge_journal = None
+        self.independent_purge_journal_path = self._configured_journal_path
+        self.instance_binding_status = "UNVERIFIED"
+        self.instance_binding = None
+        self._instance_restricted = False
+        self._startup_intent = None
+
+        if self.startup_purpose is StartupPurpose.ORDINARY:
+            self._reject_prebinding_legacy_before_migration()
+            if not self._configured_journal_path.parent.is_dir():
+                raise MigrationError("PURGE_JOURNAL_UNAVAILABLE")
+        elif self.startup_purpose is StartupPurpose.INSTANCE_INITIALIZE:
+            self._startup_intent = self._load_startup_intent("FRESH_INITIALIZE")
+            if not self.data_root.is_dir():
+                raise MigrationError("INSTANCE_INITIALIZATION_INCOMPLETE")
+            if not self._configured_journal_path.parent.is_dir():
+                raise MigrationError("PURGE_JOURNAL_PARENT_MISSING")
+        elif self.startup_purpose is StartupPurpose.LEGACY_ADOPTION:
+            if self._intent_path("LEGACY_OPERATOR_ADOPTION").exists():
+                self._startup_intent = self._load_startup_intent("LEGACY_OPERATOR_ADOPTION")
+            if not self.database_path.is_file():
+                raise MigrationError("LEGACY_INSTANCE_REQUIRED")
+            if not self._configured_journal_path.parent.is_dir():
+                raise MigrationError("PURGE_JOURNAL_UNAVAILABLE")
+        else:
+            if not self.database_path.is_file():
+                raise MigrationError("FORCED_RECOVERY_REQUIRES_EXISTING_DATABASE")
+
+        from kernel.purge.journal import IndependentPurgeJournal
+
+        try:
+            self.independent_purge_journal = IndependentPurgeJournal(self._configured_journal_path, self.data_root)
+        except (OSError, ValueError) as exc:
+            raise MigrationError("PURGE_JOURNAL_PATH_INVALID") from exc
         self._acquire_writer_lock()
         try:
-            if force_recovery:
-                # First inspect the restored database read-only. Only after
-                # that succeeds may controlled recovery maintenance migrate it.
+            self._mode_cache = self._detect_startup_mode() if self.database_path.is_file() else "NORMAL"
+            if self.startup_purpose is StartupPurpose.RECOVERY:
                 if not self._has_migration_table():
-                    raise MigrationError("Forced recovery requires an existing migrated database.")
+                    raise MigrationError("FORCED_RECOVERY_REQUIRES_MIGRATED_DATABASE")
                 self._validate_recovery_database()
-                with self._recovery_maintenance():
-                    self._initialize_database()
-                    self._open_recovery_session()
-            elif journal_state == "recovery":
-                if not self._has_migration_table():
-                    raise MigrationError("Stale journal recovery requires an existing migrated database.")
+                if self._force_recovery:
+                    with self._recovery_maintenance():
+                        self._initialize_database()
+                        self._open_recovery_session()
+                return
+
+            if self.startup_purpose is StartupPurpose.INSTANCE_INITIALIZE:
+                self._initialize_fresh_instance()
+                return
+
+            if self.startup_purpose is StartupPurpose.LEGACY_ADOPTION:
+                self._open_for_legacy_adoption()
+                return
+
+            # An existing instance in Runtime recovery keeps the established
+            # Recovery behavior; Recovery never creates or adopts a binding.
+            if self.startup_purpose is StartupPurpose.ORDINARY:
+                self._reject_prebinding_legacy_before_migration()
+            startup_mode = self._detect_startup_mode()
+            if startup_mode != "NORMAL":
+                self._mode_cache = startup_mode
+                # Runtime safety modes restrict capabilities, but they do not
+                # waive the instance's policy binding. Validate it before
+                # exposing even the read-only recovery projection.
+                binding = self._read_instance_binding()
+                if binding is None:
+                    if self._intent_exists("FRESH_INITIALIZE"):
+                        self._require_matching_startup_intent("FRESH_INITIALIZE", "INSTANCE_INITIALIZATION_INCOMPLETE")
+                    raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+                self._validate_instance_binding(binding)
+                self.instance_binding = binding
+                self.instance_binding_status = "BOUND"
                 self._validate_recovery_database()
+                return
+            self._mode_cache = "NORMAL"
+            self._initialize_database()
+            self._mode_cache = self._read_persisted_mode()
+            if self._mode_cache != "NORMAL":
+                self._validate_recovery_database()
+                return
+            binding = self._read_instance_binding()
+            if binding is None:
+                if self._intent_exists("FRESH_INITIALIZE"):
+                    self._require_matching_startup_intent("FRESH_INITIALIZE", "INSTANCE_INITIALIZATION_INCOMPLETE")
+                if self._intent_exists("LEGACY_OPERATOR_ADOPTION"):
+                    self._require_matching_startup_intent("LEGACY_OPERATOR_ADOPTION", "POLICY_BINDING_ADOPTION_IN_PROGRESS")
+                raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+            self._validate_instance_binding(binding)
+            journal_state = self._journal_startup_state()
+            if journal_state == "recovery":
+                self._validate_recovery_database()
+                self._mode_cache = "RECOVERY"
                 with self._recovery_maintenance():
-                    self._initialize_database()
                     self._open_recovery_session(source_mode="JOURNAL_MISMATCH")
-            elif self._mode_cache != "NORMAL":
-                self._validate_recovery_database()
-            else:
-                self._initialize_database()
-                self._mode_cache = self._read_persisted_mode()
-                if self._mode_cache == "NORMAL":
-                    self._bootstrap_or_validate_journal_watermark()
-                    self._cleanup_orphan_payloads()
-                else:
-                    self._validate_recovery_database()
+                return
+            self._bootstrap_or_validate_journal_watermark()
+            self._create_object_directories()
+            self._cleanup_orphan_payloads()
+            self.instance_binding = binding
+            self.instance_binding_status = "BOUND"
         except Exception:
             self.close()
             raise
+
+    @staticmethod
+    def _journal_identity_for_path(path: Path) -> str:
+        material = "nexus-independent-purge-journal-v1\0" + os.path.normcase(str(path))
+        return _sha256(material.encode("utf-8"))
+
+    def _intent_path(self, source: str) -> Path:
+        name = {
+            "FRESH_INITIALIZE": ".nexus-instance-init-v1.json",
+            "LEGACY_OPERATOR_ADOPTION": ".nexus-policy-adoption-v1.json",
+        }.get(source)
+        if name is None:
+            raise MigrationError("INVALID_BOOTSTRAP_INTENT_KIND")
+        return self.data_root / name
+
+    @staticmethod
+    def _strict_json_object(raw: bytes) -> dict[str, Any]:
+        def pairs_hook(pairs):
+            value = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError("duplicate JSON key")
+                value[key] = item
+            return value
+
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs_hook)
+        if not isinstance(value, dict):
+            raise ValueError("bootstrap intent must be an object")
+        if raw != _canonical_json(value).encode("utf-8"):
+            raise ValueError("bootstrap intent must use canonical JSON")
+        return value
+
+    def _load_startup_intent(self, source: str) -> dict[str, Any]:
+        from kernel.instance_binding import BOOTSTRAP_PROTOCOL_VERSION, request_sha256
+
+        path = self._intent_path(source)
+        try:
+            intent = self._strict_json_object(path.read_bytes())
+        except FileNotFoundError as exc:
+            raise MigrationError("BOOTSTRAP_INTENT_REQUIRED") from exc
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID") from exc
+        expected_kind = "FRESH_INITIALIZE" if source == "FRESH_INITIALIZE" else "LEGACY_OPERATOR_ADOPTION"
+        if intent.get("source") != expected_kind or intent.get("protocol_version") != BOOTSTRAP_PROTOCOL_VERSION:
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID")
+        required = {
+            "protocol_version", "source", "instance_id", "command_id", "policy_version",
+            "policy_sha256", "journal_identity", "request_sha256", "created_at",
+        }
+        if set(intent) != required:
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID")
+        request = {key: intent[key] for key in required - {"request_sha256", "created_at"}}
+        if request_sha256(request) != intent["request_sha256"]:
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID")
+        instance_id = intent["instance_id"]
+        command_id = intent["command_id"]
+        if (
+            not isinstance(instance_id, str)
+            or not re.fullmatch(r"nexus-instance-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", instance_id)
+            or not isinstance(command_id, str)
+            or not _BOOTSTRAP_LOGICAL_ID.fullmatch(command_id)
+            or PureWindowsPath(command_id).drive
+            or Path(command_id).is_absolute()
+        ):
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID")
+        try:
+            created_at = datetime.fromisoformat(intent["created_at"].replace("Z", "+00:00"))
+            if created_at.tzinfo is None:
+                raise ValueError("timezone required")
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise MigrationError("BOOTSTRAP_INTENT_INVALID") from exc
+        if (
+            intent["policy_version"] != self.policy["policy_version"]
+            or intent["policy_sha256"] != self.policy_sha256
+            or intent["journal_identity"] != self._journal_identity_expected
+        ):
+            raise MigrationError("BOOTSTRAP_INTENT_CONFLICT")
+        return intent
+
+    def _intent_exists(self, source: str) -> bool:
+        return self._intent_path(source).exists()
+
+    def _database_schema_version(self) -> int | None:
+        if not self.database_path.is_file():
+            return None
+        try:
+            with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+                has_migrations = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+                ).fetchone()
+                if not has_migrations:
+                    return -1
+                return int(conn.execute("PRAGMA user_version").fetchone()[0])
+        except sqlite3.DatabaseError as exc:
+            raise MigrationError("DATABASE_SCHEMA_STATE_INVALID") from exc
+
+    def _reject_prebinding_legacy_before_migration(self) -> None:
+        version = self._database_schema_version()
+        if version is None:
+            if self._intent_exists("FRESH_INITIALIZE"):
+                self._require_matching_startup_intent("FRESH_INITIALIZE", "INSTANCE_INITIALIZATION_INCOMPLETE")
+            if self._intent_exists("LEGACY_OPERATOR_ADOPTION"):
+                self._require_matching_startup_intent("LEGACY_OPERATOR_ADOPTION", "POLICY_BINDING_ADOPTION_IN_PROGRESS")
+            raise MigrationError("INSTANCE_INITIALIZATION_REQUIRED")
+        if 0 <= version < _INSTANCE_BINDING_MIGRATION:
+            if self._intent_exists("FRESH_INITIALIZE"):
+                self._require_matching_startup_intent("FRESH_INITIALIZE", "INSTANCE_INITIALIZATION_INCOMPLETE")
+            if self._intent_exists("LEGACY_OPERATOR_ADOPTION"):
+                self._require_matching_startup_intent("LEGACY_OPERATOR_ADOPTION", "POLICY_BINDING_ADOPTION_IN_PROGRESS")
+            raise MigrationError("POLICY_BINDING_ADOPTION_REQUIRED")
+        if version < 0:
+            raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+        # At/after the binding migration, defer reading the singleton binding
+        # until after the writer lease and checksum-verified migration pass.
+
+    def _startup_intent_matches_current(self, source: str) -> bool:
+        try:
+            self._load_startup_intent(source)
+            return True
+        except MigrationError:
+            return False
+
+    def _require_matching_startup_intent(self, source: str, incomplete_reason: str) -> None:
+        if not self._startup_intent_matches_current(source):
+            raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+        raise MigrationError(incomplete_reason)
+
+    def _create_object_directories(self) -> None:
+        self.blob_root.mkdir(parents=True, exist_ok=True)
+
+    def _read_instance_binding(self) -> dict[str, Any] | None:
+        try:
+            with self._connection() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='instance_policy_binding'"
+                ).fetchone()
+                if not exists:
+                    return None
+                row = conn.execute("SELECT * FROM instance_policy_binding WHERE singleton=1").fetchone()
+        except sqlite3.DatabaseError as exc:
+            raise MigrationError("INSTANCE_BINDING_UNREADABLE") from exc
+        return dict(row) if row else None
+
+    def _validate_instance_binding(self, binding: dict[str, Any]) -> None:
+        from kernel.instance_binding import request_sha256
+
+        if binding["policy_version"] != self.policy["policy_version"]:
+            raise MigrationError("POLICY_ROTATION_UNSUPPORTED")
+        if binding["policy_sha256"] != self.policy_sha256:
+            raise MigrationError("POLICY_BINDING_MISMATCH")
+        if binding["journal_identity"] != self._journal_identity_expected:
+            raise MigrationError("PURGE_JOURNAL_IDENTITY_MISMATCH")
+        if binding["binding_source"] not in {"FRESH_INITIALIZE", "LEGACY_OPERATOR_ADOPTION"}:
+            raise MigrationError("INSTANCE_BINDING_SOURCE_INVALID")
+        request = {
+            "instance_id": binding["instance_id"],
+            "binding_source": binding["binding_source"],
+            "policy_version": binding["policy_version"],
+            "policy_sha256": binding["policy_sha256"],
+            "journal_identity": binding["journal_identity"],
+            "bootstrap_protocol_version": binding["bootstrap_protocol_version"],
+            "binding_command_id": binding["binding_command_id"],
+        }
+        if request_sha256(request) != binding["binding_request_sha256"]:
+            raise MigrationError("INSTANCE_BINDING_REQUEST_INTEGRITY_FAILED")
+        source = binding["binding_source"]
+        # The immutable database binding is the durable identity. Intents are
+        # retained provenance and support exact bootstrap retries, but backup
+        # and restore flows need not copy process-local initialization files.
+        # If one is present, verify it; its absence cannot unbind a committed
+        # instance.
+        if self._intent_exists(source):
+            intent = self._load_startup_intent(source)
+            if intent["instance_id"] != binding["instance_id"] or intent["command_id"] != binding["binding_command_id"]:
+                raise MigrationError("INSTANCE_BINDING_INTENT_MISMATCH")
+
+    def get_instance_binding_status(self) -> dict[str, Any]:
+        """Return a path-free binding projection for operator diagnostics."""
+        binding = self.instance_binding or self._read_instance_binding()
+        if not binding:
+            version = self._database_schema_version()
+            if self._intent_exists("FRESH_INITIALIZE"):
+                state = (
+                    "PARTIAL_FRESH_BOOTSTRAP"
+                    if self._startup_intent_matches_current("FRESH_INITIALIZE")
+                    else "CONFLICT_OR_RECOVERY_REQUIRED"
+                )
+            elif version is not None and 0 <= version < _INSTANCE_BINDING_MIGRATION:
+                state = "LEGACY_UNBOUND_INSTANCE"
+            else:
+                state = "CONFLICT_OR_RECOVERY_REQUIRED"
+            return {"state": state, "policy_content_binding": "UNVERIFIED"}
+        state = "FRESH_BOUND_INSTANCE" if binding["binding_source"] == "FRESH_INITIALIZE" else "LEGACY_ADOPTED_BOUND_INSTANCE"
+        return {
+            "state": state,
+            "policy_content_binding": "BOUND",
+            "instance_id": binding["instance_id"],
+            "policy_version": binding["policy_version"],
+            "policy_sha256": binding["policy_sha256"],
+            "journal_identity": binding["journal_identity"],
+            "binding_source": binding["binding_source"],
+            "bound_at": binding["bound_at"],
+        }
+
+    def _commit_instance_binding(self, *, source: str, intent: dict[str, Any]) -> dict[str, Any]:
+        from kernel.instance_binding import request_sha256
+
+        if source not in {"FRESH_INITIALIZE", "LEGACY_OPERATOR_ADOPTION"}:
+            raise MigrationError("INVALID_BINDING_SOURCE")
+        binding_request = {
+            "instance_id": intent["instance_id"],
+            "binding_source": source,
+            "policy_version": self.policy["policy_version"],
+            "policy_sha256": self.policy_sha256,
+            "journal_identity": self._journal_identity_expected,
+            "bootstrap_protocol_version": intent["protocol_version"],
+            "binding_command_id": intent["command_id"],
+        }
+        digest = request_sha256(binding_request)
+        with self._lock:
+            self._binding_write_local.depth = getattr(self._binding_write_local, "depth", 0) + 1
+            try:
+                with self._connection() as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        exists = conn.execute("SELECT * FROM instance_policy_binding WHERE singleton=1").fetchone()
+                        if exists:
+                            prior = dict(exists)
+                            if (
+                                prior["instance_id"] == binding_request["instance_id"]
+                                and prior["binding_source"] == source
+                                and prior["policy_version"] == binding_request["policy_version"]
+                                and prior["policy_sha256"] == binding_request["policy_sha256"]
+                                and prior["journal_identity"] == binding_request["journal_identity"]
+                                and prior["bootstrap_protocol_version"] == binding_request["bootstrap_protocol_version"]
+                                and prior["binding_command_id"] == binding_request["binding_command_id"]
+                                and prior["binding_request_sha256"] == digest
+                            ):
+                                conn.commit()
+                                return prior
+                            raise MigrationError("INSTANCE_BINDING_CONFLICT")
+                        conn.execute(
+                            "INSERT INTO instance_policy_binding(singleton,instance_id,binding_source,policy_version,policy_sha256,journal_identity,bound_at,bootstrap_protocol_version,binding_command_id,binding_request_sha256) VALUES(1,?,?,?,?,?,?,?,?,?)",
+                            (
+                                binding_request["instance_id"], source, binding_request["policy_version"],
+                                binding_request["policy_sha256"], binding_request["journal_identity"],
+                                _utc_now(), binding_request["bootstrap_protocol_version"],
+                                binding_request["binding_command_id"], digest,
+                            ),
+                        )
+                        row = conn.execute("SELECT * FROM instance_policy_binding WHERE singleton=1").fetchone()
+                        conn.commit()
+                        return dict(row)
+                    except Exception:
+                        if conn.in_transaction:
+                            conn.rollback()
+                        raise
+            finally:
+                self._binding_write_local.depth -= 1
+
+    def _initialize_fresh_instance(self) -> None:
+        if self._intent_exists("LEGACY_OPERATOR_ADOPTION"):
+            raise MigrationError("BOOTSTRAP_INTENT_CONFLICT")
+        if not self._resume_root_has_only_expected_fresh_residue():
+            raise MigrationError("FRESH_INSTANCE_ROOT_NOT_EMPTY")
+        self._mode_cache = self._detect_startup_mode() if self.database_path.is_file() else "NORMAL"
+        if self._mode_cache != "NORMAL":
+            raise MigrationError("FRESH_INSTANCE_RUNTIME_STATE_INVALID")
+        journal_state = self._journal_startup_state()
+        if journal_state == "recovery":
+            raise MigrationError("FRESH_PURGE_JOURNAL_CONFLICT")
+        self._initialize_database()
+        self._mode_cache = self._read_persisted_mode()
+        if self._mode_cache != "NORMAL":
+            raise MigrationError("FRESH_INSTANCE_RUNTIME_STATE_INVALID")
+        self._bootstrap_or_validate_journal_watermark()
+        binding = self._read_instance_binding()
+        if binding is None:
+            self._validate_fresh_instance_empty_state()
+            binding = self._commit_instance_binding(source="FRESH_INITIALIZE", intent=self._startup_intent)
+        elif binding["binding_source"] != "FRESH_INITIALIZE":
+            raise MigrationError("INSTANCE_BINDING_CONFLICT")
+        self._validate_instance_binding(binding)
+        self.instance_binding = binding
+        self.instance_binding_status = "BOUND"
+        self._create_object_directories()
+        self._cleanup_orphan_payloads()
+
+    def _resume_root_has_only_expected_fresh_residue(self) -> bool:
+        allowed = {
+            ".nexus-instance-init-v1.json", "nexus.sqlite", "nexus.sqlite-wal", "nexus.sqlite-shm",
+            "nexus.writer.lock", "objects",
+        }
+        try:
+            if any(child.name not in allowed for child in self.data_root.iterdir()):
+                return False
+            objects = self.data_root / "objects"
+            if objects.exists():
+                if objects.is_symlink() or not objects.is_dir():
+                    return False
+                for path in objects.rglob("*"):
+                    if path.is_symlink():
+                        return False
+                    if path.is_file():
+                        return False
+                    if path.name not in {"sha256"} and path != objects:
+                        return False
+            return True
+        except OSError:
+            return False
+
+    def _validate_fresh_instance_empty_state(self) -> None:
+        with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+            if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise MigrationError("FRESH_DATABASE_INTEGRITY_FAILED")
+            checks = {
+                "trust_anchors": "SELECT COUNT(*) FROM trust_anchors",
+                "delegation_grants": "SELECT COUNT(*) FROM delegation_grants",
+                "approval_decisions": "SELECT COUNT(*) FROM approval_decisions",
+                "classification_assertions": "SELECT COUNT(*) FROM classification_assertions",
+                "tasks": "SELECT COUNT(*) FROM tasks",
+                "runs": "SELECT COUNT(*) FROM runs",
+                "objects": "SELECT COUNT(*) FROM objects",
+                "trace_events": "SELECT COUNT(*) FROM trace_events",
+                "authority_events": "SELECT COUNT(*) FROM authority_events",
+                "command_ledger": "SELECT COUNT(*) FROM command_ledger",
+            }
+            for table, query in checks.items():
+                if conn.execute(query).fetchone()[0] != 0:
+                    raise MigrationError("FRESH_DATABASE_CONTAINS_ORDINARY_RECORDS")
+            principals = conn.execute("SELECT principal_id,principal_type,status FROM principals").fetchall()
+            if [tuple(row) for row in principals] != [("nexus-core-recovery", "SERVICE", "ACTIVE")]:
+                raise MigrationError("FRESH_DATABASE_PRINCIPAL_STATE_INVALID")
+            watermark = conn.execute(
+                "SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1"
+            ).fetchone()
+        if not watermark or tuple(watermark) != (self._journal_identity_expected, 0, "0" * 64):
+            raise MigrationError("FRESH_PURGE_WATERMARK_INVALID")
+
+    def _open_for_legacy_adoption(self) -> None:
+        if self._intent_exists("FRESH_INITIALIZE"):
+            raise MigrationError("INSTANCE_INITIALIZATION_INCOMPLETE")
+        if self._mode_cache != "NORMAL":
+            raise MigrationError("LEGACY_INSTANCE_RUNTIME_NOT_NORMAL")
+        binding = self._read_instance_binding()
+        if binding is not None:
+            self._validate_instance_binding(binding)
+            if binding["binding_source"] != "LEGACY_OPERATOR_ADOPTION":
+                raise MigrationError("INSTANCE_BINDING_CONFLICT")
+            self.instance_binding = binding
+            self.instance_binding_status = "BOUND_FROM_ADOPTION"
+        else:
+            version = self._database_schema_version()
+            if version is None or version < 0:
+                raise MigrationError("LEGACY_DATABASE_SCHEMA_INVALID")
+            if version >= _INSTANCE_BINDING_MIGRATION and self._startup_intent is None:
+                raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+            if version < _INSTANCE_BINDING_MIGRATION and self._startup_intent is not None:
+                raise MigrationError("LEGACY_ADOPTION_INTENT_CONFLICT")
+            self.instance_binding_status = "UNVERIFIED"
+        self._instance_restricted = True
+
+    def accept_legacy_adoption_intent(self, intent: dict[str, Any]) -> None:
+        if self.startup_purpose is not StartupPurpose.LEGACY_ADOPTION or not self._instance_restricted:
+            raise MigrationError("LEGACY_ADOPTION_MODE_REQUIRED")
+        if self._startup_intent is not None and intent != self._startup_intent:
+            raise MigrationError("BOOTSTRAP_INTENT_CONFLICT")
+        self._startup_intent = intent
+
+    def prepare_legacy_adoption(self) -> None:
+        if self.startup_purpose is not StartupPurpose.LEGACY_ADOPTION or not self._instance_restricted:
+            raise MigrationError("LEGACY_ADOPTION_MODE_REQUIRED")
+        if self._startup_intent is None:
+            raise MigrationError("BOOTSTRAP_INTENT_REQUIRED")
+        self._bootstrap_schema_write_local.depth = getattr(self._bootstrap_schema_write_local, "depth", 0) + 1
+        try:
+            self._initialize_database()
+        finally:
+            self._bootstrap_schema_write_local.depth -= 1
+        self._mode_cache = self._read_persisted_mode()
+        if self._mode_cache != "NORMAL":
+            raise MigrationError("LEGACY_INSTANCE_RUNTIME_NOT_NORMAL")
+        if self._read_instance_binding() is not None:
+            raise MigrationError("INSTANCE_BINDING_CONFLICT")
+        if self._journal_startup_state() == "recovery":
+            raise MigrationError("LEGACY_PURGE_JOURNAL_CONFLICT")
+        self._bootstrap_schema_write_local.depth += 1
+        try:
+            self._bootstrap_or_validate_journal_watermark()
+        finally:
+            self._bootstrap_schema_write_local.depth -= 1
+        self._adoption_schema_ready = True
+
+    def commit_legacy_policy_binding(self) -> dict[str, Any]:
+        if self.startup_purpose is not StartupPurpose.LEGACY_ADOPTION or not self._instance_restricted or not getattr(self, "_adoption_schema_ready", False):
+            raise MigrationError("LEGACY_ADOPTION_MODE_REQUIRED")
+        binding = self._commit_instance_binding(source="LEGACY_OPERATOR_ADOPTION", intent=self._startup_intent)
+        self._validate_instance_binding(binding)
+        self.instance_binding = binding
+        self.instance_binding_status = "BOUND_FROM_ADOPTION"
+        return binding
+
+    def legacy_adoption_compatibility(self, proposed_policy: dict[str, Any]) -> dict[str, Any]:
+        """Read-only, sanitized checks required before a legacy binding is adopted."""
+        from kernel.authority import AuthorityService
+
+        if self.startup_purpose is not StartupPurpose.LEGACY_ADOPTION or not self._instance_restricted:
+            raise MigrationError("LEGACY_ADOPTION_MODE_REQUIRED")
+        issues: list[str] = []
+        policy_version = proposed_policy.get("policy_version")
+        db_path = f"file:{self.database_path.as_posix()}?mode=ro"
+        anchors = active_grants = available_objects = []
+        active_barrier = watermark = None
+        try:
+            with closing(sqlite3.connect(db_path, uri=True)) as conn:
+                conn.row_factory = sqlite3.Row
+                if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    issues.append("SQLITE_INTEGRITY_FAILED")
+                if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    issues.append("SQLITE_FOREIGN_KEY_CHECK_FAILED")
+                rows = conn.execute("SELECT version,name,checksum FROM schema_migrations ORDER BY version").fetchall()
+                user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+                migration_bytes = {path.name: path.read_bytes() for path in self.migrations_dir.glob("*.sql")}
+                if [row["version"] for row in rows] != list(range(1, user_version + 1)):
+                    issues.append("MIGRATION_SEQUENCE_INVALID")
+                for row in rows:
+                    content = migration_bytes.get(row["name"])
+                    if content is None or _sha256(content) != row["checksum"]:
+                        issues.append("MIGRATION_CHECKSUM_MISMATCH")
+                        break
+                tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                required_tables = {
+                    "schema_migrations", "principals", "trust_anchors", "delegation_grants",
+                    "approval_decisions", "classification_assertions", "object_states",
+                }
+                if not required_tables.issubset(tables):
+                    issues.append("LEGACY_DATABASE_SCHEMA_INVALID")
+                if "instance_policy_binding" in tables and conn.execute(
+                    "SELECT 1 FROM instance_policy_binding WHERE singleton=1"
+                ).fetchone():
+                    issues.append("INSTANCE_ALREADY_BOUND")
+                anchors = conn.execute(
+                    "SELECT ta.principal_id,ta.policy_ref,p.principal_type "
+                    "FROM trust_anchors ta LEFT JOIN principals p USING(principal_id)"
+                ).fetchall()
+                for row in anchors:
+                    if row["principal_id"] not in proposed_policy["trust_anchors"]:
+                        issues.append("TRUST_ANCHOR_NOT_ALLOWED_BY_POLICY")
+                    if row["policy_ref"] != policy_version:
+                        issues.append("TRUST_ANCHOR_POLICY_VERSION_MISMATCH")
+                    if row["principal_type"] != "HUMAN":
+                        issues.append("TRUST_ANCHOR_PRINCIPAL_INVALID")
+                for table, column in (
+                    ("delegation_grants", "policy_version"),
+                    ("classification_assertions", "policy_version"),
+                    ("approval_decisions", "policy_version"),
+                ):
+                    if table in tables and conn.execute(
+                        f"SELECT 1 FROM {table} WHERE {column}<>? LIMIT 1", (policy_version,)
+                    ).fetchone():
+                        issues.append("PERSISTED_POLICY_VERSION_MISMATCH")
+                active_grants = conn.execute(
+                    "SELECT grant_id FROM delegation_grants WHERE status='ACTIVE' ORDER BY grant_id"
+                ).fetchall()
+                available_objects = conn.execute(
+                    "SELECT object_id FROM object_states WHERE payload_state='AVAILABLE' ORDER BY object_id"
+                ).fetchall()
+                active_barrier = (
+                    conn.execute("SELECT 1 FROM purge_barriers WHERE status IN ('ACTIVE','PARTIAL') LIMIT 1").fetchone()
+                    if "purge_barriers" in tables else None
+                )
+                watermark = (
+                    conn.execute("SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1").fetchone()
+                    if "independent_purge_journal_watermark" in tables else None
+                )
+        except sqlite3.DatabaseError:
+            issues.append("LEGACY_DATABASE_SCHEMA_INVALID")
+            anchors = active_grants = available_objects = []
+            active_barrier = watermark = None
+        if active_barrier:
+            issues.append("PURGE_BARRIER_UNRESOLVED")
+        try:
+            journal_sequence, journal_hash = self.independent_purge_journal.verified_head()
+            if not self.independent_purge_journal.path.is_file():
+                issues.append("PURGE_JOURNAL_MISSING")
+            if watermark and tuple(watermark) != (self.independent_purge_journal.identity, journal_sequence, journal_hash):
+                issues.append("PURGE_JOURNAL_WATERMARK_MISMATCH")
+            elif not watermark and (journal_sequence != 0 or any(
+                self._table_has_rows(table) for table in ("purge_barriers", "purge_ledger", "purge_execution_records")
+            )):
+                issues.append("PURGE_HISTORY_WITHOUT_WATERMARK")
+        except Exception:
+            issues.append("PURGE_JOURNAL_UNREADABLE")
+        for row in available_objects:
+            try:
+                self.verify_object(row["object_id"])
+            except Exception:
+                issues.append("OBJECT_PAYLOAD_INTEGRITY_FAILED")
+                break
+        authority = AuthorityService(self, proposed_policy)
+        for row in active_grants:
+            try:
+                authority.validate_delegation_chain(row["grant_id"])
+            except Exception:
+                issues.append("ACTIVE_GRANT_CHAIN_INVALID")
+                break
+        unique_issues = sorted(set(issues))
+        return {
+            "compatible": not unique_issues,
+            "policy_version": policy_version,
+            "policy_sha256": self.policy_sha256,
+            "trust_anchor_count": len(anchors),
+            "active_grant_count": len(active_grants),
+            "available_object_count": len(available_objects),
+            "issues": unique_issues,
+        }
+
+    def _table_has_rows(self, table: str) -> bool:
+        with self._connection() as conn:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            return bool(exists and conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone())
 
     def _acquire_writer_lock(self) -> None:
         lock_path = self.data_root / "nexus.writer.lock"
@@ -294,6 +911,19 @@ class ObjectStore:
         return _canonical_json(old)
 
     def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
+        if self._instance_restricted:
+            if getattr(self._bootstrap_schema_write_local, "depth", 0) > 0:
+                return sqlite3.SQLITE_OK
+            if getattr(self._binding_write_local, "depth", 0) > 0:
+                if action in {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+                              sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ}:
+                    return sqlite3.SQLITE_OK
+                if action == sqlite3.SQLITE_INSERT and arg1 == "instance_policy_binding":
+                    return sqlite3.SQLITE_OK
+                return sqlite3.SQLITE_DENY
+            if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ}:
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
         if self._mode_cache != "RECOVERY" or getattr(self._recovery_local, "depth", 0) > 0:
             if self._mode_cache not in {"SAFE", "STATELESS"}:
                 return sqlite3.SQLITE_OK
@@ -304,7 +934,7 @@ class ObjectStore:
             return sqlite3.SQLITE_OK
         if action == sqlite3.SQLITE_SELECT:
             return sqlite3.SQLITE_OK
-        if action == sqlite3.SQLITE_READ and arg1 == "runtime_mode_state":
+        if action == sqlite3.SQLITE_READ and arg1 in {"runtime_mode_state", "instance_policy_binding", "sqlite_master"}:
             return sqlite3.SQLITE_OK
         return sqlite3.SQLITE_DENY
 
@@ -485,6 +1115,8 @@ class ObjectStore:
         return row["mode"]
 
     def _require_mode(self, capability: str) -> None:
+        if self._instance_restricted and capability != "core_read":
+            raise MigrationError("POLICY_BINDING_ADOPTION_REQUIRED")
         from kernel.runtime.modes import require_mode_permission
 
         require_mode_permission(self._current_runtime_mode(), capability)

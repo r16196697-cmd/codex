@@ -22,7 +22,7 @@ class FailureRecoveryPhase3Tests(unittest.TestCase):
     def test_committed_object_response_loss_replays_once_after_reopen(self):
         from tests.integration.test_object_store import ObjectStoreTests
         from kernel.object.errors import CommandConflict
-        from adapters.storage import ObjectStore
+        from tests.support.test_store import open_test_store
 
         fixture = ObjectStoreTests("test_payload_is_content_addressed_verified_and_idempotent")
         fixture.setUp()
@@ -45,7 +45,7 @@ class FailureRecoveryPhase3Tests(unittest.TestCase):
                     "(SELECT COUNT(*) FROM command_ledger),"
                     "(SELECT COUNT(*) FROM trace_events)").fetchone())
             fixture.store.close()
-            reopened = ObjectStore(fixture.root / "data")
+            reopened = open_test_store(fixture.root / "data")
             replayed = reopened.put_object(**request)
             self.assertEqual(replayed, object_id)
             with reopened._connection() as conn:
@@ -107,7 +107,7 @@ class FailureRecoveryPhase3Tests(unittest.TestCase):
 
     def test_journal_identity_mismatch_forces_recovery(self):
         from tests.integration.test_object_store import ObjectStoreTests
-        from adapters.storage import ObjectStore
+        from tests.support.test_store import open_test_store
         from kernel.purge.journal import IndependentPurgeJournal
         fixture = ObjectStoreTests("test_payload_is_content_addressed_verified_and_idempotent")
         fixture.setUp()
@@ -118,7 +118,7 @@ class FailureRecoveryPhase3Tests(unittest.TestCase):
             alternate_path = fixture.root / "alternate-purge-journal.jsonl"
             alternate = IndependentPurgeJournal(alternate_path, data_root)
             alternate.ensure_empty_exists()
-            reopened = ObjectStore(data_root, independent_purge_journal_path=alternate_path)
+            reopened = open_test_store(data_root, independent_purge_journal_path=alternate_path)
             self.assertEqual(reopened._current_runtime_mode(), "RECOVERY")
             from kernel.runtime.errors import RuntimeDenied
             with self.assertRaisesRegex(RuntimeDenied, "RUNTIME_RECOVERY_CORE_BYPASS"):

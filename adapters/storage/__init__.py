@@ -1,5 +1,5 @@
 """SQLite and filesystem persistence adapters."""
 
-from .sqlite_store import ObjectStore
+from .sqlite_store import ObjectStore, StartupPurpose
 
-__all__ = ["ObjectStore"]
+__all__ = ["ObjectStore", "StartupPurpose"]

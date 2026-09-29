@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.authority import AuthorityService
 from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import CommandConflict
@@ -23,7 +24,7 @@ class RuntimeModeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "data"
         self.journal_path = Path(self.temp.name) / "purge-ledger.jsonl"
-        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         policy_path = Path(__file__).resolve().parents[2] / "policies" / "default-policy.json"
         self.policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -119,7 +120,7 @@ class RuntimeModeTests(unittest.TestCase):
     def test_mode_persists_when_store_is_reopened(self):
         self.set_mode(command_id="mode-stateless", mode="STATELESS")
         self.store.close()
-        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.modes = RuntimeModeService(self.store, self.authority)
@@ -131,7 +132,7 @@ class RuntimeModeTests(unittest.TestCase):
         orphan.parent.mkdir(parents=True, exist_ok=True)
         orphan.write_bytes(b"non-normal-startup-must-not-clean")
         self.store.close()
-        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.modes = RuntimeModeService(self.store, self.authority)
@@ -265,7 +266,7 @@ class RuntimeModeTests(unittest.TestCase):
         orphan.parent.mkdir(parents=True, exist_ok=True)
         orphan.write_bytes(b"recovery-must-not-clean")
         self.store.close()
-        self.store = ObjectStore(self.root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority.store = self.store
         self.trace = TraceRuntime(self.store, self.authority)

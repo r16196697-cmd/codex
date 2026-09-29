@@ -10,6 +10,7 @@ from pathlib import Path
 
 from adapters.client.hosted import CodexHostedBridge
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.memory import MemoryService
@@ -43,7 +44,7 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         shutil.copy2(live_root / "policy.json", clone / "policy.json")
         policy = json.loads((clone / "policy.json").read_text(encoding="utf-8"))
         journal = base / "independent" / "purge.jsonl"
-        store = ObjectStore(clone, policy=policy, independent_purge_journal_path=journal)
+        store = open_test_store(clone, policy=policy, independent_purge_journal_path=journal)
         self.addCleanup(store.close)
         self.assertEqual(store._current_runtime_mode(), "NORMAL")
         authority = AuthorityService(store, policy)
@@ -144,7 +145,7 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         import sqlite3
         with sqlite3.connect(restored / "nexus.sqlite") as snapshot_conn:
             self.assertEqual(snapshot_conn.execute("SELECT mode FROM runtime_mode_state").fetchone()[0], "NORMAL")
-        recovery_store = ObjectStore(restored,policy=policy,force_recovery=True,independent_purge_journal_path=journal)
+        recovery_store = open_test_store(restored,policy=policy,force_recovery=True,independent_purge_journal_path=journal)
         recovery_authority = AuthorityService(recovery_store,policy)
         recovery_memory = MemoryService(recovery_store,recovery_authority,VerificationService(recovery_store,recovery_authority))
         recovery_purge = PurgeService(recovery_store,recovery_authority,recovery_memory,independent_journal_path=journal)
@@ -181,10 +182,10 @@ class PersistentRootCloneRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery_store._current_runtime_mode(),"NORMAL")
         with recovery_store._connection() as conn:
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 27)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 28)
             self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?",(input_id,)).fetchone()[0], "PURGED")
         recovery_store.close()
-        reopened = ObjectStore(restored,policy=policy,independent_purge_journal_path=journal)
+        reopened = open_test_store(restored,policy=policy,independent_purge_journal_path=journal)
         self.addCleanup(reopened.close)
         self.assertEqual(reopened._current_runtime_mode(),"NORMAL")
         with self.assertRaises(PurgedObject):

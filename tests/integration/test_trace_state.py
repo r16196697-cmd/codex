@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.run import InvalidRunTransition, TraceAdmissionDenied, TraceRuntime
@@ -15,7 +16,7 @@ from kernel.runtime import DeterministicRuntime
 class TraceStateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-step4-")
-        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.store = open_test_store(Path(self.temp.name) / "data")
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.store.close)
         self.policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
@@ -82,7 +83,7 @@ class TraceStateTests(unittest.TestCase):
         self.assertEqual(result["seq_no"], 2)
         before_retry = self._event_count()
         self.store.close()
-        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.store = open_test_store(Path(self.temp.name) / "data")
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.runtime = TraceRuntime(self.store, self.authority)
@@ -184,7 +185,7 @@ class TraceStateTests(unittest.TestCase):
         ready_class = self._event_classification("cmd-ready")
         self.runtime.transition_run(command_id="cmd-ready", run_id="run-1", expected_state="CREATED", next_state="READY", classification_assertion_ref=ready_class)
         self.store.close()
-        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.store = open_test_store(Path(self.temp.name) / "data")
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.runtime = TraceRuntime(self.store, self.authority)

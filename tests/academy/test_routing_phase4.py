@@ -31,14 +31,14 @@ class RoutingPhase4Tests(unittest.TestCase):
             before = tuple(conn.execute("SELECT (SELECT COUNT(*) FROM route_decisions),(SELECT COUNT(*) FROM runs),(SELECT COUNT(*) FROM budget_reservations),(SELECT COUNT(*) FROM trace_events),(SELECT COUNT(*) FROM command_ledger)").fetchone())
             route = json.loads(conn.execute("SELECT decision_json FROM route_decisions WHERE decision_object_id='route-e0'").fetchone()[0])
             manifest_id = conn.execute("SELECT manifest_ref FROM runs WHERE run_id='run-e0'").fetchone()[0]
-        from adapters.storage import ObjectStore
+        from tests.support.test_store import open_test_store
         from kernel.authority import AuthorityService
         from kernel.budget import BudgetService
         from kernel.run import TraceRuntime
         from kernel.runtime import DeterministicRuntime
         data_root = fixture.temp.name + "\\data"
         fixture.store.close()
-        fixture.store = ObjectStore(data_root)
+        fixture.store = open_test_store(data_root)
         fixture.addCleanup(fixture.store.close)
         fixture.authority = AuthorityService(fixture.store, fixture.policy)
         fixture.budget = BudgetService(fixture.store)

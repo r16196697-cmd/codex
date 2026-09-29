@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from adapters.client.operator import OperatorClient
 from kernel.authority import AuthorityService
 from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, InvalidDelegation
@@ -25,7 +26,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nexus-step5-")
         self.addCleanup(self.temp.cleanup)
-        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.store = open_test_store(Path(self.temp.name) / "data")
         self.addCleanup(self.store.close)
         self.policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
         self.policy["trust_anchors"] = ["human-root"]
@@ -346,7 +347,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         # Reopen the persistent root and ensure the old request remains replayable.
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -465,7 +466,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self._advance("run-root", "cmd-compensation-root-failed", "RUNNING", "FAILED", "agent")
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -537,7 +538,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
                         self.authority.validate_delegation_chain(grant_id)
             data_root = Path(self.temp.name) / "data"
             self.store.close()
-            self.store = ObjectStore(data_root)
+            self.store = open_test_store(data_root)
             self.addCleanup(self.store.close)
             self.authority = AuthorityService(self.store, self.policy)
             self.budget = BudgetService(self.store)
@@ -577,11 +578,11 @@ class DeterministicRuntimeTests(unittest.TestCase):
         # infrastructure history after a normal close/reopen.
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.trace = TraceRuntime(self.store, AuthorityService(self.store, self.policy))
         with self.store._connection() as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 27)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 28)
             self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM trace_events WHERE actor_id='nexus-core-recovery'").fetchone()[0], 2)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM classification_assertions WHERE actor_id='nexus-core-recovery' AND subject_type='TRACE_EVENT'").fetchone()[0], 2)
@@ -616,7 +617,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
 
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -685,7 +686,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
         self._advance("run-root", "cmd-compensation-root-cancelled", "RUNNING", "CANCELLED", "agent")
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -840,7 +841,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
 
         policy = self.authority.policy
         self.store.close()
-        self.store = ObjectStore(Path(self.temp.name) / "data")
+        self.store = open_test_store(Path(self.temp.name) / "data")
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, policy)
         self.budget = BudgetService(self.store)
@@ -966,7 +967,7 @@ class DeterministicRuntimeTests(unittest.TestCase):
 
         data_root = Path(self.temp.name) / "data"
         self.store.close()
-        self.store = ObjectStore(data_root)
+        self.store = open_test_store(data_root)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)

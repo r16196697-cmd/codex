@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from adapters.client.operator import OperatorClient
 from kernel.authority.errors import AuthorizationDenied
 from kernel.object.errors import CommandConflict, PurgedObject, PurgeBarrierActive
@@ -33,7 +34,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.data_root = self.root / "data"
         self.journal_path = self.root / "independent" / "purge.jsonl"
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
         policy["trust_anchors"] = ["human-root"]
@@ -328,7 +329,7 @@ class MemoryPurgeTests(unittest.TestCase):
         with self.assertRaises(PurgeBarrierActive):
             self.store.get_payload(self.claim)
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -359,7 +360,7 @@ class MemoryPurgeTests(unittest.TestCase):
             self.store.add_relation(command_id="barrier-before-journal-write", from_id=self.claim, relation_type="supports", to_id="evidence-7")
 
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.verifier = VerificationService(self.store, self.authority)
@@ -389,7 +390,7 @@ class MemoryPurgeTests(unittest.TestCase):
             self.store.add_relation(command_id="journal-before-delete-write", from_id=self.claim, relation_type="supports", to_id="evidence-7")
 
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.verifier = VerificationService(self.store, self.authority)
@@ -479,7 +480,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(self.memory.search_raw(query="governed memory", run_id="run-7"), [])
 
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -520,7 +521,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT status FROM purge_barriers WHERE barrier_id='barrier-7'").fetchone()[0], "PARTIAL")
                 self.assertEqual(conn.execute("SELECT payload_state FROM object_states WHERE object_id=?", (self.claim,)).fetchone()[0], "PURGED")
             self.store.close()
-            self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+            self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
             self.addCleanup(self.store.close)
             self.authority = AuthorityService(self.store, self.authority.policy)
             self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -564,7 +565,7 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.OperationalError, "completion projection"):
                 self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -585,7 +586,7 @@ class MemoryPurgeTests(unittest.TestCase):
         resumed = self.purge.execute(command_id="purge-release-projection", record_id="record-7", barrier_id="barrier-7", plan=plan, grant_id="grant-7", task_id="task-7", approval_id="approval-7")
         self.assertEqual(resumed["status"], "COMPLETED")
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -608,7 +609,7 @@ class MemoryPurgeTests(unittest.TestCase):
             with self.assertRaisesRegex(CommandConflict, "COMMAND_CONFLICT"):
                 self.purge.plan(command_id="stable-plan-command", **changed)
         self.store.close()
-        self.store = ObjectStore(self.data_root, independent_purge_journal_path=self.journal_path)
+        self.store = open_test_store(self.data_root, independent_purge_journal_path=self.journal_path)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.authority.policy)
         self.memory = MemoryService(self.store, self.authority, VerificationService(self.store, self.authority))
@@ -1287,7 +1288,7 @@ class MemoryPurgeTests(unittest.TestCase):
             self.assertNotIn(purged_payload_hash, json.dumps([tuple(row) for row in conn.execute("SELECT target_ref,payload_integrity_hash FROM effects UNION ALL SELECT target_ref,payload_integrity_hash FROM approval_decisions")]))
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("UPDATE runs SET status='READY' WHERE run_id='run-pending'")
-        restored = ObjectStore(backup_root, independent_purge_journal_path=self.journal_path)
+        restored = open_test_store(backup_root, independent_purge_journal_path=self.journal_path)
         try:
             restored_authority = AuthorityService(restored, self.authority.policy)
             restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
@@ -1555,7 +1556,7 @@ class MemoryPurgeTests(unittest.TestCase):
         self.assertEqual(self.store.get_object_metadata(self.claim)["payload_state"], "PURGED")
         self.assertFalse(hasattr(self.store, "get_logical_ref"))
 
-        restored = ObjectStore(backup_root, independent_purge_journal_path=self.journal_path)
+        restored = open_test_store(backup_root, independent_purge_journal_path=self.journal_path)
         try:
             restored_authority = AuthorityService(restored, self.authority.policy)
             restored_memory = MemoryService(restored, restored_authority, VerificationService(restored, restored_authority))
@@ -1688,7 +1689,7 @@ class MemoryPurgeTests(unittest.TestCase):
         shutil.copytree(snapshot_root, restored_root)
         # The snapshot deliberately remains NORMAL and is opened through the ordinary
         # production path; stale external journal freshness must force Recovery.
-        restored = ObjectStore(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
+        restored = open_test_store(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
         try:
             restored_authority = AuthorityService(restored, self.authority.policy)
             self.assertEqual(RuntimeModeService(restored, restored_authority).current()["mode"], "RECOVERY")
@@ -1724,7 +1725,7 @@ class MemoryPurgeTests(unittest.TestCase):
                 self.assertEqual(tuple(watermark), journal_head)
             self.assertEqual(restored_modes.current()["mode"], "NORMAL")
             restored.close()
-            reopened = ObjectStore(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
+            reopened = open_test_store(restored_root, policy=self.authority.policy, independent_purge_journal_path=self.journal_path)
             try:
                 self.assertEqual(RuntimeModeService(reopened, restored_authority).current()["mode"], "NORMAL")
             finally:

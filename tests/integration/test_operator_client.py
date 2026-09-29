@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from adapters.client.operator import OperatorClient
 from adapters.client.__main__ import _parser, _runtime, main
 from kernel.authority import AuthorityService
@@ -56,7 +57,7 @@ class OperatorClientTests(unittest.TestCase):
             policy = json.loads((Path(__file__).resolve().parents[2] / "policies" / "default-policy.json").read_text(encoding="utf-8"))
             policy["trust_anchors"] = ["human-root"]
             policy_path.write_text(json.dumps(policy), encoding="utf-8")
-            store = ObjectStore(root, policy=policy)
+            store = open_test_store(root, policy=policy)
             authority = AuthorityService(store, policy)
             now = datetime.now(timezone.utc)
             authority.register_principal({"schema_id":"nexus.principal","schema_version":1,"principal_id":"human-root","principal_type":"HUMAN","status":"ACTIVE"}, "cli-human")
@@ -86,7 +87,7 @@ class OperatorClientTests(unittest.TestCase):
             self.assertEqual(task_projection["task"]["task_id"], "cli-task")
             self.assertEqual(task_projection["runs"][0]["executor_kind"], "ORCHESTRATOR")
             self.assertNotIn("payload", task_projection["runs"][0])
-            reopened = ObjectStore(root, policy=policy)
+            reopened = open_test_store(root, policy=policy)
             self.assertEqual(reopened._current_runtime_mode(), "SAFE")
             with reopened._connection() as conn:
                 event = conn.execute("SELECT event_json FROM trace_events WHERE event_id='evt-cli-mode-safe'").fetchone()

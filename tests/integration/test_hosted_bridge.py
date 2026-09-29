@@ -9,6 +9,7 @@ from jsonschema.exceptions import ValidationError
 
 from adapters.client.hosted import CodexHostedBridge
 from adapters.storage import ObjectStore
+from tests.support.test_store import open_test_store
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetExceeded, BudgetService
 from kernel.run import TraceRuntime
@@ -37,7 +38,7 @@ class HostedBridgeTests(unittest.TestCase):
             self.operator_id = "human-root"
             policy["trust_anchors"] = [self.operator_id]
         self.policy = policy
-        self.store = ObjectStore(self.data_root, policy=policy)
+        self.store = open_test_store(self.data_root, policy=policy)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, policy)
         self.budget = BudgetService(self.store)
@@ -261,7 +262,7 @@ class HostedBridgeTests(unittest.TestCase):
 
     def _reopen_hosted_services(self):
         self.store.close()
-        self.store = ObjectStore(self.data_root, policy=self.policy)
+        self.store = open_test_store(self.data_root, policy=self.policy)
         self.addCleanup(self.store.close)
         self.authority = AuthorityService(self.store, self.policy)
         self.budget = BudgetService(self.store)
@@ -619,7 +620,7 @@ class HostedBridgeTests(unittest.TestCase):
         data_root=self.data_root
         policy=self.policy
         self.store.close()
-        self.store=ObjectStore(data_root,policy=policy)
+        self.store=open_test_store(data_root,policy=policy)
         self.addCleanup(self.store.close)
         self.authority=AuthorityService(self.store,policy)
         self.budget=BudgetService(self.store)
