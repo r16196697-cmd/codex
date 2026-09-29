@@ -55,6 +55,11 @@ persisted Artifact metadata, and links Evidence `derived_from` Artifact. Both
 objects are classified and written through the existing AuthorityService and
 ObjectStore APIs under the target Run's exact Grant and data boundary.
 
+Before the Artifact/Evidence multi-stage mutation, the complete import request
+is deterministically committed through the existing CommandLedger. After a
+partial Artifact success, the same command prefix can only exact-resume and
+cannot be retargeted to another Git source.
+
 Importing source does not establish that it is current, correct, or verified.
 Imported source is not verified truth. Further work still follows the governed
 path:

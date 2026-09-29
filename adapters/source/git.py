@@ -61,8 +61,9 @@ def _validate_plan(plan: Any) -> dict[str, Any]:
     prefix = plan["command_id_prefix"]
     if not _logical_id(prefix) or len(prefix) > 96:
         _deny("GIT_SOURCE_PLAN_INVALID")
-    for suffix in ("classify-artifact", "authorize-artifact", "artifact",
-                   "classify-evidence", "authorize-evidence", "evidence"):
+    for suffix in ("request", "classify-artifact", "authorize-artifact", "artifact",
+                   "preflight-classify-artifact", "classify-evidence", "authorize-evidence", "evidence",
+                   "preflight-classify-evidence"):
         if len(prefix + ":" + suffix) > 128:
             _deny("GIT_SOURCE_PLAN_INVALID")
     if not isinstance(plan["sensitivity_level"], str) or plan["sensitivity_level"] not in _SENSITIVITY:
@@ -217,6 +218,23 @@ def _authorize_object_write(authority, *, task_id: str, grant_id: str, object_id
         _deny("GIT_SOURCE_AUTHORITY_DENIED")
 
 
+def _preflight_authority(authority, *, plan: dict[str, Any], object_id: str,
+                         write_command_id: str, classify_command_id: str) -> None:
+    """Check both required scopes before the durable request commitment."""
+    _authorize_object_write(
+        authority, task_id=plan["task_id"], grant_id=plan["grant_id"],
+        object_id=object_id, command_id=write_command_id,
+    )
+    try:
+        authority.evaluate_authorization(
+            plan["grant_id"],
+            {"task": plan["task_id"], "resource": object_id, "action": "CLASSIFY", "audience": "nexus-runtime"},
+            classify_command_id,
+        )
+    except (AuthorizationDenied, ApprovalDenied, InvalidDelegation):
+        _deny("GIT_SOURCE_AUTHORITY_DENIED")
+
+
 def _record_object_classification(authority, *, plan: dict[str, Any], assertion_id: str,
                                   object_id: str, command_id: str) -> None:
     try:
@@ -267,11 +285,54 @@ def import_git_source(*, store, authority, trace, repository_path: str | os.Path
     prefix = request["command_id_prefix"]
     artifact_id = request["artifact_object_id"]
     evidence_id = request["evidence_object_id"]
+    artifact_auth_id = prefix + ":authorize-artifact"
+    evidence_auth_id = prefix + ":authorize-evidence"
+
+    # Preflight both objects before committing the request identity. These
+    # checks do not perform the guarded mutations; each write below repeats its
+    # existing near-write authorization check.
+    _preflight_authority(
+        authority, plan=request, object_id=artifact_id,
+        write_command_id=artifact_auth_id,
+        classify_command_id=prefix + ":preflight-classify-artifact",
+    )
+    _preflight_authority(
+        authority, plan=request, object_id=evidence_id,
+        write_command_id=evidence_auth_id,
+        classify_command_id=prefix + ":preflight-classify-evidence",
+    )
+
+    bound_request = {
+        "repository_id": request["repository_id"],
+        "git_object_format": object_format,
+        "commit_oid": request["commit_oid"].lower(),
+        "path": request["path"],
+        "blob_oid": blob_oid,
+        "blob_sha256": hashlib.sha256(blob).hexdigest(),
+        "task_id": request["task_id"],
+        "run_id": request["run_id"],
+        "grant_id": request["grant_id"],
+        "artifact_object_id": artifact_id,
+        "artifact_classification_assertion_id": request["artifact_classification_assertion_id"],
+        "evidence_object_id": evidence_id,
+        "evidence_classification_assertion_id": request["evidence_classification_assertion_id"],
+        "sensitivity_level": request["sensitivity_level"],
+        "handling_tags": sorted(request["handling_tags"]),
+    }
+    try:
+        store.bind_command_request(
+            command_id=prefix + ":request", operation="import_git_source", request=bound_request,
+        )
+    except CommandConflict:
+        _deny("GIT_SOURCE_IMPORT_CONFLICT")
+    except NexusStoreError:
+        _deny("GIT_SOURCE_IMPORT_FAILED")
+
     with store._lock:
         _run_binding(trace, task_id=request["task_id"], run_id=request["run_id"], grant_id=request["grant_id"])
         _authorize_object_write(
             authority, task_id=request["task_id"], grant_id=request["grant_id"],
-            object_id=artifact_id, command_id=prefix + ":authorize-artifact",
+            object_id=artifact_id, command_id=artifact_auth_id,
         )
         _record_object_classification(
             authority, plan=request, assertion_id=request["artifact_classification_assertion_id"],
@@ -325,7 +386,7 @@ def import_git_source(*, store, authority, trace, repository_path: str | os.Path
         _run_binding(trace, task_id=request["task_id"], run_id=request["run_id"], grant_id=request["grant_id"])
         _authorize_object_write(
             authority, task_id=request["task_id"], grant_id=request["grant_id"],
-            object_id=evidence_id, command_id=prefix + ":authorize-evidence",
+            object_id=evidence_id, command_id=evidence_auth_id,
         )
         _record_object_classification(
             authority, plan=request, assertion_id=request["evidence_classification_assertion_id"],

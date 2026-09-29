@@ -84,6 +84,32 @@ class ObjectStoreTests(unittest.TestCase):
         with self.assertRaises(CommandConflict):
             self.put("cmd-put-1", b"different request")
 
+    def test_command_request_binding_replays_exactly_and_conflicts_on_change(self) -> None:
+        request = {"source": "logical-repo", "revision": "a" * 40, "handling_tags": ["A", "B"]}
+        result = self.store.bind_command_request(
+            command_id="cmd-request-binding", operation="import_git_source", request=request,
+        )
+        self.assertEqual(result, {"status": "REQUEST_BOUND"})
+        self.assertEqual(
+            self.store.bind_command_request(
+                command_id="cmd-request-binding", operation="import_git_source", request=request,
+            ),
+            result,
+        )
+        with self.assertRaises(CommandConflict):
+            self.store.bind_command_request(
+                command_id="cmd-request-binding", operation="import_git_source",
+                request={**request, "source": "another-repo"},
+            )
+        with self.store._connection() as conn:
+            row = conn.execute(
+                "SELECT operation,request_hash,result_json FROM command_ledger WHERE command_id=?",
+                ("cmd-request-binding",),
+            ).fetchone()
+        self.assertEqual(row["operation"], "import_git_source")
+        self.assertEqual(row["result_json"], '{"status":"REQUEST_BOUND"}')
+        self.assertNotIn("logical-repo", row["result_json"])
+
     def test_byte_tampering_and_missing_payload_never_verify(self) -> None:
         object_id = self.put("cmd-put-2", b"immutable payload")
         path = self.store._payload_path(self.store.get_object_metadata(object_id)["payload_uri"])

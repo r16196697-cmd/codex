@@ -71,7 +71,7 @@ class GitSourceImportTests(unittest.TestCase):
         resources = [self.run_id, "evt-git-run-create"]
         if not resource_limited:
             resources += ["artifact-source", "evidence-source", "artifact-source-2", "evidence-source-2",
-                          "artifact-sha256", "evidence-sha256"]
+                          "artifact-sha256", "evidence-sha256", "evidence-source-alt"]
         actions = ["RUN_CREATE", "CLASSIFY"]
         if allow_object_write:
             actions.append("OBJECT_WRITE")
@@ -203,6 +203,73 @@ class GitSourceImportTests(unittest.TestCase):
                 self.assertEqual(replay["status"], "IMPORTED")
                 self.assertEqual(self.store.get_payload(plan["artifact_object_id"]), expected_blob)
                 self.assertEqual(self.store.get_object_metadata(plan["evidence_object_id"])["payload_state"], "AVAILABLE")
+
+    def _commit_artifact_then_lose_response(self, plan):
+        original = self.store.put_object
+        lost = {"done": False}
+
+        def put_then_lose(**kwargs):
+            result = original(**kwargs)
+            if kwargs["object_type"] == "artifact" and not lost["done"]:
+                lost["done"] = True
+                raise RuntimeError("simulated response loss")
+            return result
+
+        with mock.patch.object(self.store, "put_object", side_effect=put_then_lose):
+            with self.assertRaisesRegex(RuntimeError, "response loss"):
+                self._import(plan=plan)
+        self.assertTrue(lost["done"])
+        with self.store._connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM objects WHERE object_id=?", (plan["artifact_object_id"],)).fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM objects WHERE object_id=?", (plan["evidence_object_id"],)).fetchone())
+
+    def _assert_partial_retry_conflicts(self, original_plan, changed_plan):
+        self._commit_artifact_then_lose_response(original_plan)
+        with self.assertRaises(GitSourceImportError) as caught:
+            self._import(plan=changed_plan)
+        self.assertEqual(caught.exception.reason_code, "GIT_SOURCE_IMPORT_CONFLICT")
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM objects WHERE object_id=?", (original_plan["evidence_object_id"],)).fetchone())
+
+    def test_partial_artifact_changed_repository_id_conflicts_before_evidence(self):
+        plan = self._plan(command_id_prefix="git-import-partial-repo")
+        changed = {**plan, "repository_id": "another-logical-repo"}
+        self._assert_partial_retry_conflicts(plan, changed)
+
+    def test_partial_artifact_changed_commit_with_same_blob_conflicts(self):
+        (self.repo / "unrelated.txt").write_bytes(b"tree change without source change\n")
+        commit_b = self._commit("same source blob, different commit")
+        self.assertNotEqual(commit_b, self.commit_a)
+        self.assertEqual(_local_git(self.repo, "rev-parse", f"{commit_b}:source.md").decode("ascii"), self.blob_a)
+        plan = self._plan(command_id_prefix="git-import-partial-commit")
+        changed = {**plan, "commit_oid": commit_b}
+        self._assert_partial_retry_conflicts(plan, changed)
+
+    def test_partial_artifact_changed_path_with_same_blob_conflicts(self):
+        (self.repo / "source-copy.md").write_bytes(b"committed source A\r\n\x00")
+        commit = self._commit("two paths with the same blob")
+        blob_copy = _local_git(self.repo, "rev-parse", f"{commit}:source-copy.md").decode("ascii")
+        self.assertEqual(blob_copy, self.blob_a)
+        plan = self._plan(command_id_prefix="git-import-partial-path", commit_oid=commit)
+        changed = {**plan, "path": "source-copy.md"}
+        self._assert_partial_retry_conflicts(plan, changed)
+
+    def test_partial_artifact_changed_plan_field_conflicts(self):
+        plan = self._plan(command_id_prefix="git-import-partial-plan")
+        changed = {**plan, "evidence_object_id": "evidence-source-alt"}
+        self._assert_partial_retry_conflicts(plan, changed)
+
+    def test_exact_partial_retry_reuses_artifact_and_continues_evidence(self):
+        plan = self._plan(command_id_prefix="git-import-exact-partial")
+        self._commit_artifact_then_lose_response(plan)
+        artifact_hash = self.store.get_object_metadata(plan["artifact_object_id"])["integrity_hash"]
+        result = self._import(plan=plan)
+        self.assertEqual(result["status"], "IMPORTED")
+        self.assertEqual(self.store.get_object_metadata(plan["artifact_object_id"])["integrity_hash"], artifact_hash)
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (plan["artifact_object_id"],)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM objects WHERE object_id=?", (plan["evidence_object_id"],)).fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM command_ledger WHERE command_id=?", (plan["command_id_prefix"] + ":request",)).fetchone()[0], 1)
 
     def test_same_command_identity_with_changed_source_conflicts(self):
         self._import()

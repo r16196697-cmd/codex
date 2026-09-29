@@ -1351,6 +1351,38 @@ class ObjectStore:
     def _request_hash(operation: str, request: dict[str, Any]) -> str:
         return _sha256(_canonical_json({"operation": operation, "request": request}).encode("utf-8"))
 
+    def bind_command_request(self, *, command_id: str, operation: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Durably bind a command identity to a request without storing the request.
+
+        This narrow CommandLedger primitive is for multi-stage mutations whose
+        later stages cannot otherwise detect a retargeted request after an
+        earlier stage has committed. Only the request hash and a fixed safe
+        result are persisted.
+        """
+        self._require_mode("core_write")
+        if not isinstance(operation, str) or not operation or len(operation) > 64:
+            raise ValueError("COMMAND_OPERATION_INVALID")
+        if not isinstance(request, dict):
+            raise ValueError("COMMAND_REQUEST_INVALID")
+        try:
+            request_hash = self._request_hash(operation, request)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("COMMAND_REQUEST_INVALID") from exc
+        result = {"status": "REQUEST_BOUND"}
+        with self._lock, self._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                replay = self._replay_command(conn, command_id, operation, request_hash)
+                if replay is not None:
+                    conn.commit()
+                    return replay
+                self._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+                return result
+            except Exception:
+                conn.rollback()
+                raise
+
     def _replay_command(
         self, conn: sqlite3.Connection, command_id: str, operation: str, request_hash: str
     ) -> dict[str, Any] | None:
