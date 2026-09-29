@@ -10,7 +10,7 @@ The fresh-instance path had a real bootstrap paradox. The ordinary `adapters.cli
 
 Migrations create Authority tables but no ordinary operator Principal, Trust Anchor, or Grant. The only Principal inserted by migrations is the reserved `nexus-core-recovery` `SERVICE`; it is an infrastructure identity, not an operator. `policies/default-policy.json` has `trust_anchors: []`. `CodexHostedBridge.create_task_root()` requires an already-valid Grant and does not create authority implicitly.
 
-There is no official production helper today that completes these steps. The Authority APIs are reusable: `register_principal()`, `register_trust_anchor()`, and `create_grant()` apply the existing schemas, policy checks, and command-ledger semantics. `CodexHostedBridge.create_task_root()` is the existing governed first Task/Root Run path once a suitable Grant exists.
+An explicit bootstrap application now provides the reviewed instance-initialization, legacy-adoption, and authority-bootstrap paths. No production Project Nexus bootstrap has yet been executed. The Authority APIs remain the canonical implementation: `register_principal()`, `register_trust_anchor()`, and `create_grant()` apply the existing schemas, policy checks, and command-ledger semantics. `CodexHostedBridge.create_task_root()` is the existing governed first Task/Root Run path once a suitable Grant exists.
 
 Tests build authority explicitly: they set a test policy's trust-anchor list, register HUMAN/SERVICE principals, register the configured anchor, create a scoped Grant, and then call the relevant Core/Bridge API. These are examples of API use, not evidence that test identities or test policies are valid production bootstrap defaults.
 
@@ -162,7 +162,7 @@ The required order is:
 4. For explicit fresh initialization only, establish and verify the empty journal and sequence-zero watermark, then commit and reread the complete binding using the restricted storage-level binding method. Stage 1 reports success only after that immutable row is committed.
 5. Ordinary startup acquires the writer lock, verifies migrations, reads and validates the binding and policy identity, verifies journal identity/head/watermark, and only then exposes services or performs orphan cleanup. Runtime SAFE/STATELESS projections also require a valid binding. A same-version/different-hash policy fails closed; a different policy version is unsupported pending separately reviewed rotation.
 
-`force_recovery` remains distinct: it never creates or adopts a binding. A legacy root remains unbound after recovery and still requires explicit adoption.
+`force_recovery` remains distinct: it never creates or adopts a binding. For a verified pre-binding legacy root, Recovery commits a `FORCED_LEGACY_UNBOUND` recovery-session provenance record before migration 0028; this preserves its legacy classification across migration and crashes. The root remains unbound after Recovery and still requires explicit adoption.
 
 ### Enforcement Boundary
 

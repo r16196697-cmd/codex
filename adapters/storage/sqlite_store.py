@@ -36,6 +36,7 @@ _LINEAGE_TYPES = ("derived_from", "generated_from", "supersedes")
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 _MEMORY_TABLES = {"raw_history_rows", "admitted_memory_rows", "memory_candidates", "memory_candidate_evidence"}
 _MEMORY_INDEX_PREFIXES = ("raw_history_fts", "admitted_memory_fts")
+_RECOVERY_SESSIONS_MIGRATION = 17
 _INSTANCE_BINDING_MIGRATION = 28
 _BOOTSTRAP_LOGICAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -159,9 +160,26 @@ class ObjectStore:
                     raise MigrationError("FORCED_RECOVERY_REQUIRES_MIGRATED_DATABASE")
                 self._validate_recovery_database()
                 if self._force_recovery:
-                    with self._recovery_maintenance():
-                        self._initialize_database()
-                        self._open_recovery_session()
+                    # Explicit Recovery may start from a previously NORMAL
+                    # snapshot. Set the in-memory capability boundary before
+                    # maintenance; the durable mode transition is committed
+                    # with the recovery-session record below.
+                    self._mode_cache = "RECOVERY"
+                    legacy_recovery = (
+                        self._is_provable_prebinding_legacy()
+                        or self._has_open_forced_legacy_recovery_session()
+                    )
+                    if legacy_recovery:
+                        # Persist generation provenance before migration 0028
+                        # removes the only schema-version evidence that this
+                        # unbound database predates policy binding.
+                        with self._recovery_maintenance():
+                            self._open_recovery_session(source_mode="FORCED_LEGACY_UNBOUND")
+                            self._initialize_database()
+                    else:
+                        with self._recovery_maintenance():
+                            self._initialize_database()
+                            self._open_recovery_session()
                 return
 
             if self.startup_purpose is StartupPurpose.INSTANCE_INITIALIZE:
@@ -410,6 +428,12 @@ class ObjectStore:
                 )
             elif version is not None and 0 <= version < _INSTANCE_BINDING_MIGRATION:
                 state = "LEGACY_UNBOUND_INSTANCE"
+            elif (
+                version is not None
+                and version >= _INSTANCE_BINDING_MIGRATION
+                and self._has_forced_legacy_recovery_provenance()
+            ):
+                state = "LEGACY_UNBOUND_INSTANCE"
             else:
                 state = "CONFLICT_OR_RECOVERY_REQUIRED"
             return {"state": state, "policy_content_binding": "UNVERIFIED"}
@@ -576,7 +600,11 @@ class ObjectStore:
             version = self._database_schema_version()
             if version is None or version < 0:
                 raise MigrationError("LEGACY_DATABASE_SCHEMA_INVALID")
-            if version >= _INSTANCE_BINDING_MIGRATION and self._startup_intent is None:
+            if (
+                version >= _INSTANCE_BINDING_MIGRATION
+                and self._startup_intent is None
+                and not self._has_forced_legacy_recovery_provenance()
+            ):
                 raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
             if version < _INSTANCE_BINDING_MIGRATION and self._startup_intent is not None:
                 raise MigrationError("LEGACY_ADOPTION_INTENT_CONFLICT")
@@ -1052,16 +1080,78 @@ class ObjectStore:
         from uuid import uuid4
         with self._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "INSERT INTO recovery_sessions(session_id,opened_at,source_mode,status) VALUES(?,?,?,'OPEN')",
-                ("recovery-session-" + str(uuid4()), _utc_now(), source_mode),
-            )
+            existing = None
+            if source_mode == "FORCED_LEGACY_UNBOUND":
+                existing = conn.execute(
+                    "SELECT session_id FROM recovery_sessions WHERE source_mode=? AND status='OPEN' ORDER BY opened_at DESC LIMIT 1",
+                    (source_mode,),
+                ).fetchone()
+            elif source_mode == "FORCED_RECOVERY":
+                # A crash after migration but before recovery completion must
+                # resume the legacy provenance session rather than replacing
+                # it with a generic Recovery event.
+                existing = conn.execute(
+                    "SELECT session_id FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND' AND status='OPEN' ORDER BY opened_at DESC LIMIT 1"
+                ).fetchone()
+            if existing is None:
+                conn.execute(
+                    "INSERT INTO recovery_sessions(session_id,opened_at,source_mode,status) VALUES(?,?,?,'OPEN')",
+                    ("recovery-session-" + str(uuid4()), _utc_now(), source_mode),
+                )
             conn.execute(
                 "UPDATE runtime_mode_state SET mode='RECOVERY',updated_at=?,updated_by='nexus-core-recovery',command_id=NULL WHERE singleton=1",
                 (_utc_now(),),
             )
             conn.commit()
         self._mode_cache = "RECOVERY"
+
+    def _recovery_session_source_exists(self, source_mode: str, *, status: str | None = None) -> bool:
+        if source_mode != "FORCED_LEGACY_UNBOUND" or status not in {None, "OPEN", "COMPLETED"}:
+            return False
+        version = self._database_schema_version()
+        if version is None or version < _RECOVERY_SESSIONS_MIGRATION:
+            return False
+        try:
+            maintenance = self._recovery_maintenance() if self._mode_cache == "RECOVERY" else nullcontext()
+            with maintenance:
+                with self._connection() as conn:
+                    exists = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recovery_sessions'"
+                    ).fetchone()
+                    if not exists:
+                        return False
+                    if status is None:
+                        row = conn.execute(
+                            "SELECT 1 FROM recovery_sessions WHERE source_mode=? AND status IN ('OPEN','COMPLETED') LIMIT 1",
+                            (source_mode,),
+                        ).fetchone()
+                    else:
+                        row = conn.execute(
+                            "SELECT 1 FROM recovery_sessions WHERE source_mode=? AND status=? LIMIT 1",
+                            (source_mode, status),
+                        ).fetchone()
+        except sqlite3.DatabaseError as exc:
+            raise MigrationError("RECOVERY_PROVENANCE_UNREADABLE") from exc
+        return bool(row)
+
+    def _has_forced_legacy_recovery_provenance(self) -> bool:
+        return self._recovery_session_source_exists("FORCED_LEGACY_UNBOUND")
+
+    def _has_open_forced_legacy_recovery_session(self) -> bool:
+        return self._recovery_session_source_exists("FORCED_LEGACY_UNBOUND", status="OPEN")
+
+    def _is_provable_prebinding_legacy(self) -> bool:
+        """Classify only a checksum-validated pre-0028 unbound root for Recovery provenance."""
+        version = self._database_schema_version()
+        if (
+            version is None
+            or version < _RECOVERY_SESSIONS_MIGRATION
+            or version >= _INSTANCE_BINDING_MIGRATION
+            or self._intent_exists("FRESH_INITIALIZE")
+            or self._intent_exists("LEGACY_OPERATOR_ADOPTION")
+        ):
+            return False
+        return self._read_instance_binding() is None
 
     def _read_persisted_mode(self) -> str:
         with self._connection() as conn:

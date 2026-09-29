@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -32,6 +33,213 @@ class FreshInstanceBootstrapTests(unittest.TestCase):
         self.policy_path.write_text(json.dumps(self.policy, ensure_ascii=False, indent=2), encoding="utf-8")
         self.data_root = self.base / "nexus-data"
         self.journal = self.base / "nexus-purge.jsonl"
+
+    def _create_v27_legacy_root(self, label: str, *, with_history: bool = False):
+        repo = Path(__file__).resolve().parents[2]
+        migrations_dir = self.base / f"{label}-migrations-v27"
+        migrations_dir.mkdir()
+        for migration in sorted((repo / "migrations").glob("*.sql")):
+            if int(migration.name[:4]) <= 27:
+                shutil.copy2(migration, migrations_dir / migration.name)
+        root = self.base / f"{label}-root"
+        journal = self.base / f"{label}-journal.jsonl"
+        store = open_legacy_fixture_store(
+            root, policy=self.policy, independent_purge_journal_path=journal,
+            migrations_dir=migrations_dir,
+        )
+        history = None
+        if with_history:
+            authority = AuthorityService(store, self.policy)
+            authority.register_principal({
+                "schema_id": "nexus.principal", "schema_version": 1,
+                "principal_id": "operator-human", "principal_type": "HUMAN", "status": "ACTIVE",
+            }, f"{label}:register-operator")
+            authority.register_trust_anchor({
+                "schema_id": "nexus.trust_anchor", "schema_version": 1,
+                "anchor_id": f"{label}-anchor", "principal_id": "operator-human",
+                "policy_ref": self.policy["policy_version"],
+            }, f"{label}:register-anchor")
+            with store._connection() as conn:
+                conn.execute(
+                    "INSERT INTO classification_assertions(assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,reason,actor_id) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (f"{label}-classification", "OBJECT", f"{label}-object", "PUBLIC", "[]",
+                     self.policy["policy_version"], "legacy recovery test fixture", "operator-human"),
+                )
+            store.put_object(
+                command_id=f"{label}:put-object", object_id=f"{label}-object",
+                payload=b"prebinding legacy object fact", object_type="artifact",
+                created_by_run=f"{label}-historical-run", classification_assertion_ref=f"{label}-classification",
+            )
+            with store._connection() as conn:
+                history = {
+                    "principals": [tuple(row) for row in conn.execute(
+                        "SELECT principal_id,principal_type,status FROM principals ORDER BY principal_id"
+                    )],
+                    "anchors": [tuple(row) for row in conn.execute(
+                        "SELECT anchor_id,principal_id,policy_ref FROM trust_anchors ORDER BY anchor_id"
+                    )],
+                    "objects": [tuple(row) for row in conn.execute(
+                        "SELECT o.object_id,e.integrity_hash,s.payload_state FROM objects o "
+                        "JOIN object_envelopes e USING(object_id) JOIN object_states s USING(object_id) ORDER BY o.object_id"
+                    )],
+                }
+        store.close()
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 27)
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='instance_policy_binding'"
+            ).fetchone())
+        self.assertFalse((root / ".nexus-instance-init-v1.json").exists())
+        self.assertFalse((root / ".nexus-policy-adoption-v1.json").exists())
+        return root, journal, history
+
+    def _assert_legacy_recovery_then_adoption(self, root: Path, journal: Path, history) -> None:
+        from kernel.purge import PurgeService
+        from kernel.runtime import RuntimeModeService
+
+        store = ObjectStore(
+            root, policy=self.policy, independent_purge_journal_path=journal,
+            force_recovery=True,
+        )
+        try:
+            self.assertEqual(store._current_runtime_mode(), "RECOVERY")
+            self.assertEqual(store.get_instance_binding_status()["state"], "LEGACY_UNBOUND_INSTANCE")
+            with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+                conn.row_factory = sqlite3.Row
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 28)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM instance_policy_binding").fetchone()[0], 0)
+                provenance = conn.execute(
+                    "SELECT session_id,source_mode,status FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+                ).fetchall()
+                self.assertEqual(len(provenance), 1)
+                self.assertEqual(provenance[0]["status"], "OPEN")
+                if history is not None:
+                    self.assertEqual(history["principals"], [tuple(row) for row in conn.execute(
+                        "SELECT principal_id,principal_type,status FROM principals ORDER BY principal_id"
+                    )])
+                    self.assertEqual(history["anchors"], [tuple(row) for row in conn.execute(
+                        "SELECT anchor_id,principal_id,policy_ref FROM trust_anchors ORDER BY anchor_id"
+                    )])
+                    self.assertEqual(history["objects"], [tuple(row) for row in conn.execute(
+                        "SELECT o.object_id,e.integrity_hash,s.payload_state FROM objects o "
+                        "JOIN object_envelopes e USING(object_id) JOIN object_states s USING(object_id) ORDER BY o.object_id"
+                    )])
+            purge = PurgeService(store, None, None, independent_journal_path=journal)
+            RuntimeModeService(store, None).complete_validated_recovery(
+                command_id="complete-legacy-recovery", purge_service=purge
+            )
+            with store._connection() as conn:
+                completed = conn.execute(
+                    "SELECT source_mode,status FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+                ).fetchall()
+                self.assertEqual([tuple(row) for row in completed], [("FORCED_LEGACY_UNBOUND", "COMPLETED")])
+        finally:
+            store.close()
+
+        result = adopt_policy_binding(
+            data_root=root, policy_path=self.policy_path,
+            independent_purge_journal=journal, command_id="adopt-after-legacy-recovery",
+            confirmation=lambda *_: True,
+        )
+        self.assertEqual(result["status"], "LEGACY_ADOPTED_BOUND_INSTANCE")
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT binding_source FROM instance_policy_binding WHERE singleton=1"
+            ).fetchone()[0], "LEGACY_OPERATOR_ADOPTION")
+            self.assertEqual(tuple(conn.execute(
+                "SELECT source_mode,status FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+            ).fetchone()), ("FORCED_LEGACY_UNBOUND", "COMPLETED"))
+            if history is not None:
+                self.assertEqual(history["anchors"], [tuple(row) for row in conn.execute(
+                    "SELECT anchor_id,principal_id,policy_ref FROM trust_anchors ORDER BY anchor_id"
+                )])
+                self.assertEqual(history["objects"], [tuple(row) for row in conn.execute(
+                    "SELECT o.object_id,e.integrity_hash,s.payload_state FROM objects o "
+                    "JOIN object_envelopes e USING(object_id) JOIN object_states s USING(object_id) ORDER BY o.object_id"
+                )])
+
+    def test_prebinding_legacy_recovery_provenance_survives_migration_and_allows_adoption(self):
+        root, journal, history = self._create_v27_legacy_root("legacy-recovery", with_history=True)
+        self._assert_legacy_recovery_then_adoption(root, journal, history)
+
+    def test_legacy_recovery_provenance_replays_after_crash_before_migration(self):
+        root, journal, _ = self._create_v27_legacy_root("legacy-crash-before")
+        with mock.patch.object(ObjectStore, "_initialize_database", side_effect=RuntimeError("injected crash")):
+            with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                ObjectStore(root, policy=self.policy, independent_purge_journal_path=journal, force_recovery=True)
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 27)
+            first = conn.execute(
+                "SELECT session_id,source_mode,status FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+            ).fetchall()
+            self.assertEqual(len(first), 1)
+            self.assertEqual(first[0][2], "OPEN")
+
+        self._assert_legacy_recovery_then_adoption(root, journal, None)
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+            ).fetchone()[0], 1)
+
+    def test_legacy_recovery_provenance_replays_after_migration_before_completion(self):
+        root, journal, _ = self._create_v27_legacy_root("legacy-crash-after")
+        migrate = ObjectStore._initialize_database
+
+        def migrate_then_crash(store):
+            migrate(store)
+            raise RuntimeError("injected crash after migration")
+
+        with mock.patch.object(ObjectStore, "_initialize_database", migrate_then_crash):
+            with self.assertRaisesRegex(RuntimeError, "injected crash after migration"):
+                ObjectStore(root, policy=self.policy, independent_purge_journal_path=journal, force_recovery=True)
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 28)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM instance_policy_binding").fetchone()[0], 0)
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND' AND status='OPEN'"
+            ).fetchone()[0], 1)
+
+        self._assert_legacy_recovery_then_adoption(root, journal, None)
+        with closing(sqlite3.connect(root / "nexus.sqlite")) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+            ).fetchone()[0], 1)
+
+    def test_unproven_v28_unbound_root_remains_ambiguous(self):
+        initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                            independent_purge_journal=self.journal, command_id="init-ambiguous-v28")
+        (self.data_root / ".nexus-instance-init-v1.json").unlink()
+        with closing(sqlite3.connect(self.data_root / "nexus.sqlite")) as conn:
+            conn.execute("DROP TRIGGER instance_policy_binding_no_update")
+            conn.execute("DROP TRIGGER instance_policy_binding_no_delete")
+            conn.execute("DELETE FROM instance_policy_binding WHERE singleton=1")
+            conn.commit()
+        with self.assertRaisesRegex(MigrationError, "INSTANCE_BINDING_MISSING_OR_AMBIGUOUS"):
+            ObjectStore(
+                self.data_root, policy=self.policy,
+                independent_purge_journal_path=self.journal,
+                startup_purpose="LEGACY_ADOPTION",
+            )
+
+    def test_fresh_partial_with_recovery_session_remains_fresh_partial(self):
+        with mock.patch.object(ObjectStore, "_commit_instance_binding", side_effect=RuntimeError("binding crash")):
+            with self.assertRaisesRegex(RuntimeError, "binding crash"):
+                initialize_instance(data_root=self.data_root, policy_path=self.policy_path,
+                                    independent_purge_journal=self.journal, command_id="init-fresh-partial-recovery")
+        store = ObjectStore(
+            self.data_root, policy=self.policy, independent_purge_journal_path=self.journal,
+            force_recovery=True,
+        )
+        try:
+            self.assertEqual(store.get_instance_binding_status()["state"], "PARTIAL_FRESH_BOOTSTRAP")
+            with closing(sqlite3.connect(self.data_root / "nexus.sqlite")) as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM recovery_sessions").fetchone()[0], 1)
+                self.assertEqual(conn.execute(
+                    "SELECT COUNT(*) FROM recovery_sessions WHERE source_mode='FORCED_LEGACY_UNBOUND'"
+                ).fetchone()[0], 0)
+        finally:
+            store.close()
 
     def test_fresh_init_binds_policy_and_journal_without_user_authority_or_work(self):
         result = initialize_instance(data_root=self.data_root, policy_path=self.policy_path,

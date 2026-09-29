@@ -24,6 +24,8 @@ python -m adapters.bootstrap adopt-policy-binding --data-root <legacy-root> --po
 
 This requires an interactive TTY confirmation. Adoption verifies migration/checksum, database, journal, purge, object, and authority compatibility before binding. It declares that the supplied full policy applies from adoption time forward; it does not assert that the exact policy document governed historical operation.
 
+A pre-binding legacy root remains eligible for explicit adoption after forced Recovery migrates it: the Recovery session durably records `FORCED_LEGACY_UNBOUND` provenance before migration, and adoption still runs the full compatibility checks.
+
 ## Stage 2: bootstrap narrow operator authority
 
 Create a local plan JSON with exactly these fields:
