@@ -13,6 +13,7 @@ from adapters.client.operator import OperatorClient
 from kernel.authority import AuthorityService
 from kernel.budget import BudgetService
 from kernel.memory.service import MemoryService
+from kernel.participation import ParticipationModeService
 from kernel.purge.service import PurgeService
 from kernel.run import TraceRuntime
 from kernel.runtime import DeterministicRuntime
@@ -99,6 +100,10 @@ def _parser() -> argparse.ArgumentParser:
     git_source.add_argument("--repo", required=True, type=Path, help="process-local path to an existing local Git worktree; never persisted")
     git_source.add_argument("--plan", required=True, type=Path, help="process-local JSON import plan with logical IDs and exact commit/path")
 
+    selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
+    selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
+    selfhost.add_argument("--plan", required=True, type=Path, help="process-local strict Stage 3 v2 manifest")
+
     commands.add_parser("panel", help="open the native panel inside this writer-owned process")
     return parser
 
@@ -134,6 +139,16 @@ def _safe_import_error_reason(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _safe_stage3_error_reason(exc: Exception) -> str:
+    reason = getattr(exc, "reason_code", None)
+    if not isinstance(reason, str):
+        args = getattr(exc, "args", ())
+        reason = args[0] if args else None
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason):
+        return reason
+    return type(exc).__name__
+
+
 def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
@@ -156,7 +171,6 @@ def main(argv: list[str] | None = None) -> int:
         participation = None
         skill_application = None
         if args.command in {"skill", "panel"}:
-            from kernel.participation import ParticipationModeService
             participation = ParticipationModeService(store)
             roots = default_codex_skill_roots(
                 repo_root=args.repo_skill_root, user_root=args.user_skill_root,
@@ -204,6 +218,24 @@ def main(argv: list[str] | None = None) -> int:
             result = import_git_source(
                 store=store, authority=authority, trace=trace,
                 repository_path=args.repo, plan=_read_git_source_plan(args.plan),
+            )
+        elif args.command == "project-nexus-selfhost":
+            from adapters.client.project_nexus_selfhost import read_stage3_manifest, run_project_nexus_selfhost_bootstrap
+            from kernel.context import ContextPackService
+            from kernel.metering import MeteringService
+            from kernel.verification import VerificationService
+
+            verifier = VerificationService(store, authority)
+            memory = MemoryService(store, authority, verifier)
+            participation = ParticipationModeService(store)
+            context_packs = ContextPackService(
+                store=store, authority=authority, participation=participation, memory=memory,
+                metering=MeteringService(store, authority, participation),
+            )
+            result = run_project_nexus_selfhost_bootstrap(
+                store=store, authority=authority, budget=_budget, trace=trace, runtime=runtime,
+                verifier=verifier, memory=memory, context_packs=context_packs,
+                repo_path=args.repo, manifest=read_stage3_manifest(args.plan),
             )
         elif args.command == "skill" and args.skill_action == "register":
             result = skill_application.register_package(
@@ -256,7 +288,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        reason = _safe_import_error_reason(exc) if args.command == "import-git-source" else str(getattr(exc, "args", [None])[0] or type(exc).__name__)
+        if args.command == "import-git-source":
+            reason = _safe_import_error_reason(exc)
+        elif args.command == "project-nexus-selfhost":
+            reason = _safe_stage3_error_reason(exc)
+        else:
+            reason = str(getattr(exc, "args", [None])[0] or type(exc).__name__)
         print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
         return 2
     finally:

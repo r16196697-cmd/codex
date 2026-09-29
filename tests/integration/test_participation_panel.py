@@ -135,16 +135,25 @@ class ParticipationPanelTests(unittest.TestCase):
         self.assertEqual(self.participation.current()["mode"], "ACTIVE")
 
     def test_observe_and_bypass_block_automatic_host_bridge_ingestion(self):
-        bridge = CodexHostedBridge(store=self.store, authority=None, budget=None, trace=None, runtime=None, verifier=None)
+        authority = AuthorityService(self.store, self.store.policy)
+        bridge = CodexHostedBridge(store=self.store, authority=authority, budget=None, trace=None, runtime=None, verifier=None)
         for previous, mode in (("ACTIVE", "OBSERVE"), ("OBSERVE", "BYPASS")):
             self.participation.set_mode(mode=mode, expected_mode=previous, command_id="bridge-mode-" + mode)
             with self.assertRaisesRegex(RuntimeDenied, "PARTICIPATION_MODE_DISALLOWS_AUTOMATIC_INGESTION"):
                 bridge.create_task_root(
-                    command_id="must-not-run", task_id="t", requester_id="r", grant_id="g", root_run_id="rr",
+                    command_id="must-not-run", created_at="2026-09-29T00:00:00.000000Z",
+                    task_id="t", requester_id="r", grant_id="g", root_run_id="rr",
                     budget_account_id="b", budget_limits={}, input_object_id="i", input_payload=b"",
                     task_contract={}, contract_object_id="c", dag_nodes=[], root_manifest_object_id="m",
-                    data_boundary={}, classifications={},
+                    data_boundary={}, classifications={
+                        "root_run": {"assertion_id": "class-root"},
+                        "root_running_event": {"assertion_id": "class-root-running"},
+                    },
                 )
+        with self.store._connection() as conn:
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM command_ledger WHERE command_id='must-not-run-request'"
+            ).fetchone())
 
     def test_panel_startup_viewmodel_unknowns_and_tabs_are_truthful(self):
         self.store.close()

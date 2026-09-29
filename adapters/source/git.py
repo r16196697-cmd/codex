@@ -183,6 +183,43 @@ def _load_exact_blob(repo_root: Path, commit_oid: str, path: str) -> tuple[str, 
     return object_format, blob_oid, blob
 
 
+def inspect_local_git_head(repository_path: str | os.PathLike[str]) -> dict[str, str]:
+    """Return a sanitized local HEAD identity without causing lazy fetch or mutation."""
+    repo_root = _validated_repo_root(repository_path)
+    try:
+        object_format = _run_git(repo_root, "rev-parse", "--show-object-format", failure_code="GIT_SOURCE_REPOSITORY_INVALID").decode("ascii", errors="strict").strip()
+        head_oid = _run_git(repo_root, "rev-parse", "--verify", "--end-of-options", "HEAD^{commit}", failure_code="GIT_SOURCE_COMMIT_INVALID").decode("ascii", errors="strict").strip()
+    except (UnicodeError, ValueError):
+        _deny("GIT_SOURCE_COMMIT_INVALID")
+    expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+    if expected_length is None or len(head_oid) != expected_length or _OID.fullmatch(head_oid) is None:
+        _deny("GIT_SOURCE_COMMIT_INVALID")
+    return {"git_object_format": object_format, "head_oid": head_oid}
+
+
+def prepare_git_source(repository_path: str | os.PathLike[str], *, commit_oid: str, path: str) -> dict[str, Any]:
+    """Resolve exact local commit/path identity for read-only application preflight.
+
+    This does not persist data or return the process-local repository path. It
+    deliberately uses the same no-lazy-fetch plumbing as the governed importer.
+    """
+    repo_root = _validated_repo_root(repository_path)
+    try:
+        object_format, blob_oid, blob = _load_exact_blob(repo_root, commit_oid, path)
+    except GitSourceImportError:
+        raise
+    except (OSError, UnicodeError, ValueError):
+        _deny("GIT_SOURCE_OBJECT_UNAVAILABLE")
+    return {
+        "git_object_format": object_format,
+        "commit_oid": commit_oid.lower(),
+        "path": path,
+        "blob_oid": blob_oid,
+        "blob_sha256": hashlib.sha256(blob).hexdigest(),
+        "byte_size": len(blob),
+    }
+
+
 def _run_binding(trace, *, task_id: str, run_id: str, grant_id: str) -> dict[str, Any]:
     try:
         run = trace.inspect_run_binding(run_id)

@@ -8,11 +8,28 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 from datetime import datetime, timezone
 from kernel.participation import ParticipationModeService
 from kernel.participation.service import active_participation_required
+
+
+_CANONICAL_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
+
+
+def _canonical_utc_timestamp(value: str) -> str:
+    if not isinstance(value, str) or not _CANONICAL_UTC.fullmatch(value):
+        raise ValueError("HOSTED_ROOT_CREATED_AT_INVALID")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise ValueError("HOSTED_ROOT_CREATED_AT_INVALID") from exc
+    canonical = parsed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if canonical != value:
+        raise ValueError("HOSTED_ROOT_CREATED_AT_INVALID")
+    return canonical
 
 
 class CodexHostedBridge:
@@ -27,11 +44,11 @@ class CodexHostedBridge:
         self.verifier = verifier
         self.participation = ParticipationModeService(store)
 
-    @active_participation_required
     def create_task_root(
         self,
         *,
         command_id: str,
+        created_at: str,
         task_id: str,
         requester_id: str,
         grant_id: str,
@@ -52,12 +69,86 @@ class CodexHostedBridge:
         A caller must first establish an exact trusted Grant and predefine every
         referenced ID/classification. No policy or grant is created implicitly.
         """
-        self.participation.require_active_ingestion()
-        from datetime import datetime, timezone
+        created_at = _canonical_utc_timestamp(created_at)
+        contract = {**task_contract, "task_id": task_id, "requester_id": requester_id,
+                    "budget_account_ref": budget_account_id, "input_object_refs": [input_object_id]}
+        root_manifest = {
+            "schema_id": "nexus.run_manifest", "schema_version": 1, "executor_kind": "ORCHESTRATOR",
+            "runtime_version": "0.1", "policy_version": self.authority.policy["policy_version"],
+            "schema_versions": {"nexus.run_manifest": 1, "nexus.task_contract": 1},
+            "input_object_refs": [input_object_id], "authority_grant_ref": grant_id,
+            "data_boundary": data_boundary, "classification_assertion_ref": classifications["root_run"]["assertion_id"],
+            "task_contract_ref": contract_object_id, "dag_version": "1", "scheduler_version": "1",
+        }
+        operation = "create_hosted_task_root"
+        request = {
+            "bridge_version": self.VERSION,
+            "created_at": created_at,
+            "task_id": task_id,
+            "requester_id": requester_id,
+            "grant_id": grant_id,
+            "root_run_id": root_run_id,
+            "budget_account_id": budget_account_id,
+            "budget_limits": budget_limits,
+            "input_object_id": input_object_id,
+            "input_payload_sha256": hashlib.sha256(input_payload).hexdigest(),
+            "task_contract": contract,
+            "contract_object_id": contract_object_id,
+            "dag_nodes": dag_nodes,
+            "root_manifest_object_id": root_manifest_object_id,
+            "root_manifest": root_manifest,
+            "data_boundary": data_boundary,
+            "classifications": classifications,
+        }
+        request_hash = self.store._request_hash(operation, request)
 
+        # A completed operation is historical fact. Replay it before mutable
+        # Participation or Authority checks, including after grant revocation.
+        with self.store._connection() as conn:
+            completed = self.store._replay_command(conn, command_id, operation, request_hash)
+        if completed is not None:
+            return completed
+
+        request_operation = "create_hosted_task_root_request"
+        request_command_id = command_id + "-request"
+        request_hash_for_binding = self.store._request_hash(request_operation, request)
+        with self.store._connection() as conn:
+            bound = self.store._replay_command(conn, request_command_id, request_operation, request_hash_for_binding)
+            if bound is None:
+                child_ids = [command_id + suffix for suffix in (
+                    "-task", "-budget-account", "-class-root-run", "-class-root-created", "-root-create",
+                    "-class-input", "-put-input", "-class-input-event", "-trace-input", "-class-contract",
+                    "-bind-contract", "-create-dag", "-class-root-manifest", "-bind-root-manifest",
+                    "-class-root-ready", "-root-ready", "-class-root-running", "-root-running",
+                )]
+                if any(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (item,)).fetchone() for item in child_ids):
+                    raise ValueError("HOSTED_ROOT_REQUEST_BINDING_MISSING")
+        # The last child transition can commit just before a process/response
+        # loss. Recover its exact result from the immutable child commitment and
+        # a bounded persisted projection before re-entering mutable gates.
+        running_class_id = classifications["root_running_event"]["assertion_id"]
+        running_request_hash = self.store._request_hash("transition_run", {
+            "run_id": root_run_id, "expected_state": "READY", "next_state": "RUNNING",
+            "classification_assertion_ref": running_class_id,
+        })
+        with self.store._connection() as conn:
+            running_result = self.store._replay_command(conn, command_id + "-root-running", "transition_run", running_request_hash)
+        if running_result is not None:
+            self._assert_hosted_root_projection(
+                task_id=task_id, root_run_id=root_run_id, requester_id=requester_id,
+                input_object_id=input_object_id, contract_object_id=contract_object_id,
+                manifest_object_id=root_manifest_object_id,
+            )
+            result = self._hosted_root_result(task_id, root_run_id, input_object_id, contract_object_id, root_manifest_object_id)
+            self._record_hosted_root_completion(command_id, request_hash, result)
+            return result
+
+        self.participation.require_active_ingestion()
+        self.store._require_mode("run_execute")
+        if bound is None:
+            self.store.bind_command_request(command_id=request_command_id, operation=request_operation, request=request)
         chain = self.authority.validate_delegation_chain(grant_id)
         actor = chain[-1]["granted_to"]
-        created_at = datetime.now(timezone.utc).isoformat()
         self.trace.create_task({
             "schema_id": "nexus.task", "schema_version": 1, "task_id": task_id,
             "requester_id": requester_id, "status": "CREATED", "created_at": created_at,
@@ -84,26 +175,63 @@ class CodexHostedBridge:
         self._record_classification(classifications["input_event"], grant_id, task_id, command_id + "-class-input-event")
         self.trace.append_trace_event(command_id=command_id + "-trace-input", run_id=root_run_id, event_type="nexus.object.created", classification_assertion_ref=classifications["input_event"]["assertion_id"], typed_metadata={"object_type": "user_input"}, object_refs=[input_object_id])
 
-        contract = {**task_contract, "task_id": task_id, "requester_id": requester_id, "budget_account_ref": budget_account_id, "input_object_refs": [input_object_id]}
         self._record_classification(classifications["task_contract"], grant_id, task_id, command_id + "-class-contract")
         self.runtime.bind_task_contract(command_id=command_id + "-bind-contract", root_run_id=root_run_id, contract_object_id=contract_object_id, classification_assertion_ref=classifications["task_contract"]["assertion_id"], contract=contract)
         self.runtime.create_dag(command_id=command_id + "-create-dag", task_id=task_id, root_run_id=root_run_id, nodes=dag_nodes)
 
-        root_manifest = {
-            "schema_id": "nexus.run_manifest", "schema_version": 1, "executor_kind": "ORCHESTRATOR",
-            "runtime_version": "0.1", "policy_version": self.authority.policy["policy_version"],
-            "schema_versions": {"nexus.run_manifest": 1, "nexus.task_contract": 1},
-            "input_object_refs": [input_object_id], "authority_grant_ref": grant_id,
-            "data_boundary": data_boundary, "classification_assertion_ref": classifications["root_run"]["assertion_id"],
-            "task_contract_ref": contract_object_id, "dag_version": "1", "scheduler_version": "1",
-        }
         self._record_classification(classifications["root_manifest"], grant_id, task_id, command_id + "-class-root-manifest")
         self.runtime.bind_manifest(command_id=command_id + "-bind-root-manifest", run_id=root_run_id, manifest_object_id=root_manifest_object_id, manifest_classification_assertion_ref=classifications["root_manifest"]["assertion_id"], manifest=root_manifest)
         self._record_classification(classifications["root_ready_event"], grant_id, task_id, command_id + "-class-root-ready")
         self.trace.transition_run(command_id=command_id + "-root-ready", run_id=root_run_id, expected_state="CREATED", next_state="READY", classification_assertion_ref=classifications["root_ready_event"]["assertion_id"])
         self._record_classification(classifications["root_running_event"], grant_id, task_id, command_id + "-class-root-running")
         self.trace.transition_run(command_id=command_id + "-root-running", run_id=root_run_id, expected_state="READY", next_state="RUNNING", classification_assertion_ref=classifications["root_running_event"]["assertion_id"])
-        return {"task_id": task_id, "root_run_id": root_run_id, "executor_kind": "ORCHESTRATOR", "status": "RUNNING", "input_object_id": input_object_id, "task_contract_ref": contract_object_id, "manifest_ref": root_manifest_object_id}
+        result = self._hosted_root_result(task_id, root_run_id, input_object_id, contract_object_id, root_manifest_object_id)
+        self._record_hosted_root_completion(command_id, request_hash, result)
+        return result
+
+    @staticmethod
+    def _hosted_root_result(task_id: str, root_run_id: str, input_object_id: str,
+                            contract_object_id: str, manifest_object_id: str) -> dict[str, Any]:
+        return {"task_id": task_id, "root_run_id": root_run_id, "executor_kind": "ORCHESTRATOR",
+                "status": "RUNNING", "input_object_id": input_object_id,
+                "task_contract_ref": contract_object_id, "manifest_ref": manifest_object_id}
+
+    def _assert_hosted_root_projection(self, *, task_id: str, root_run_id: str, requester_id: str,
+                                       input_object_id: str, contract_object_id: str,
+                                       manifest_object_id: str) -> None:
+        with self.store._connection() as conn:
+            task = conn.execute("SELECT requester_id,status,root_run_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            run = conn.execute("SELECT task_id,status,executor_kind,parent_run_id,manifest_ref FROM runs WHERE run_id=?", (root_run_id,)).fetchone()
+            contract = conn.execute("SELECT current_object_id FROM logical_refs WHERE ref_id=?", (f"task-contract:{task_id}",)).fetchone()
+        if (not task or not run or task["requester_id"] != requester_id or task["root_run_id"] != root_run_id
+                or task["status"] != "ACTIVE" or run["task_id"] != task_id or run["status"] != "RUNNING"
+                or run["executor_kind"] != "ORCHESTRATOR" or run["parent_run_id"] is not None
+                or run["manifest_ref"] != manifest_object_id or not contract
+                or contract["current_object_id"] != contract_object_id):
+            raise ValueError("HOSTED_ROOT_REPLAY_PROJECTION_MISMATCH")
+        for object_id, expected_type in ((input_object_id, "user_input"),
+                                         (contract_object_id, "task_contract"),
+                                         (manifest_object_id, "run_manifest")):
+            metadata = self.store.get_object_metadata(object_id)
+            if metadata.get("object_type") != expected_type or metadata.get("payload_state") != "AVAILABLE":
+                raise ValueError("HOSTED_ROOT_REPLAY_PROJECTION_MISMATCH")
+
+    def _record_hosted_root_completion(self, command_id: str, request_hash: str, result: dict[str, Any]) -> None:
+        operation = "create_hosted_task_root"
+        with self.store._lock, self.store._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                prior = self.store._replay_command(conn, command_id, operation, request_hash)
+                if prior is not None:
+                    conn.commit()
+                    if prior != result:
+                        raise ValueError("HOSTED_ROOT_REPLAY_PROJECTION_MISMATCH")
+                    return
+                self.store._record_command(conn, command_id, operation, request_hash, result)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
     def _record_classification(self, classification: dict[str, Any], grant_id: str, task_id: str, command_id: str) -> None:
         self.authority.record_classification_assertion(classification, grant_id=grant_id, task_id=task_id, audience="nexus-runtime", command_id=command_id)

@@ -99,6 +99,7 @@ class HostedBridgeTests(unittest.TestCase):
         if self.operator_id == "human-root":
             self.resource_scope.append("hosted-model-memory-candidate")
         now = datetime.now(timezone.utc)
+        self.root_created_at = "2025-01-02T03:04:05.123456Z"
         self.authority.create_grant({
             "schema_id":"nexus.delegation_grant","schema_version":1,"grant_id":"hosted-root-grant",
             "issued_by":self.operator_id,"granted_to":"host-agent","task_scope":[self.task_id],
@@ -123,13 +124,192 @@ class HostedBridgeTests(unittest.TestCase):
                 "dependency_ids":[],"quality_requirement":"ROUTINE","risk_class":"LOW","validation_method":"TEST",
                 "budget_amount":1,"requested_executor":"TOOL","tool_id":self.tool_id,"required_modalities":["text"],"created_at":now.isoformat()}
         self.bridge.create_task_root(
-            command_id="hosted-e2e",task_id=self.task_id,requester_id=self.operator_id,grant_id="hosted-root-grant",
+            command_id="hosted-e2e",created_at=self.root_created_at,task_id=self.task_id,requester_id=self.operator_id,grant_id="hosted-root-grant",
             root_run_id=self.root_run_id,budget_account_id="hosted-budget",
             budget_limits={"amount_limit":10,"unit":"test-units","model_call_limit":2,"tool_call_limit":2,"child_run_limit":2},
             input_object_id=self.input_id,input_payload=(Path(__file__).resolve().parents[2]/"eval/regression/fixtures/nexus-hosted-e2e-input.csv").read_bytes(),task_contract=self.contract,
             contract_object_id=self.contract_id,dag_nodes=[node,tool_node],root_manifest_object_id=self.root_manifest_id,
             data_boundary=self.boundary, classifications=self._root_classes(),
         )
+
+    def _root_request(self, **overrides):
+        values = {
+            "command_id": "hosted-e2e", "created_at": self.root_created_at,
+            "task_id": self.task_id, "requester_id": self.operator_id, "grant_id": "hosted-root-grant",
+            "root_run_id": self.root_run_id, "budget_account_id": "hosted-budget",
+            "budget_limits": {"amount_limit": 10, "unit": "test-units", "model_call_limit": 2, "tool_call_limit": 2, "child_run_limit": 2},
+            "input_object_id": self.input_id,
+            "input_payload": (Path(__file__).resolve().parents[2] / "eval/regression/fixtures/nexus-hosted-e2e-input.csv").read_bytes(),
+            "task_contract": self.contract, "contract_object_id": self.contract_id,
+            "dag_nodes": [
+                {"schema_id":"nexus.subtask","schema_version":1,"subtask_id":"hosted-model-node","task_id":self.task_id,
+                 "input_object_refs":[self.input_id],"input_schema_id":"nexus.object@1.schema.json","output_schema_id":"nexus.object@1.schema.json",
+                 "dependency_ids":[],"quality_requirement":"STANDARD","risk_class":"STANDARD","validation_method":"SCHEMA",
+                 "budget_amount":2,"requested_executor":"MODEL","required_modalities":["text"],"created_at":self.contract["created_at"]},
+                {"schema_id":"nexus.subtask","schema_version":1,"subtask_id":"hosted-tool-node","task_id":self.task_id,
+                 "input_object_refs":[self.input_id],"input_schema_id":"nexus.object@1.schema.json","output_schema_id":"nexus.object@1.schema.json",
+                 "dependency_ids":[],"quality_requirement":"ROUTINE","risk_class":"LOW","validation_method":"TEST",
+                 "budget_amount":1,"requested_executor":"TOOL","tool_id":self.tool_id,"required_modalities":["text"],"created_at":self.contract["created_at"]},
+            ],
+            "root_manifest_object_id": self.root_manifest_id,
+            "data_boundary": self.boundary,
+            "classifications": self._root_classes(),
+        }
+        values.update(overrides)
+        return values
+
+    def test_root_uses_caller_frozen_timestamp_for_task_and_run(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+        with self.store._connection() as conn:
+            task_time = conn.execute("SELECT created_at FROM tasks WHERE task_id=?", (self.task_id,)).fetchone()[0]
+            run_time = conn.execute("SELECT created_at FROM runs WHERE run_id=?", (self.root_run_id,)).fetchone()[0]
+        self.assertEqual(task_time, self.root_created_at)
+        self.assertEqual(run_time, self.root_created_at)
+        self.assertEqual(self.bridge.create_task_root(**self._root_request())["status"], "RUNNING")
+
+    def test_root_completed_replay_precedes_revoked_grant(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+        before = self._persisted_counts()
+        self.authority.revoke_grant("hosted-root-grant", "hosted-root-replay-revoke")
+        replay = self.bridge.create_task_root(**self._root_request())
+        self.assertEqual(replay["root_run_id"], self.root_run_id)
+        self.assertEqual(self._persisted_counts(), before)
+
+    def test_root_completed_command_rejects_changed_semantics(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+        variants = [
+            {"created_at": "2025-01-02T03:04:06.123456Z"},
+            {"budget_limits": {"amount_limit": 9, "unit": "test-units", "model_call_limit": 2, "tool_call_limit": 2, "child_run_limit": 2}},
+            {"input_payload": b"different frozen input"},
+            {"task_contract": {**self.contract, "goal": "changed"}},
+            {"dag_nodes": []},
+            {"root_manifest_object_id": "changed-root-manifest"},
+            {"data_boundary": {"allowed_classifications": ["PUBLIC"], "handling_tags": ["changed"]}},
+            {"classifications": {**self._root_classes(), "root_run": {**self._root_classes()["root_run"], "reason": "changed"}}},
+        ]
+        for variant in variants:
+            with self.subTest(changed=next(iter(variant))):
+                with self.assertRaisesRegex(Exception, "COMMAND_CONFLICT"):
+                    self.bridge.create_task_root(**self._root_request(**variant))
+
+    def test_root_final_child_recovery_precedes_revoked_grant(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        values = self._new_root_request("final-child")
+        command_id = values["command_id"]
+        grant_id = values["grant_id"]
+        with mock.patch.object(self.bridge, "_record_hosted_root_completion", side_effect=SimulatedProcessLoss("lost response")):
+            with self.assertRaises(SimulatedProcessLoss):
+                self.bridge.create_task_root(**values)
+        with self.store._connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id + "-root-running",)).fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+        self.authority.revoke_grant(grant_id, command_id + "-revoke-after-final-child")
+        before = self._persisted_counts()
+        replay = self.bridge.create_task_root(**values)
+        self.assertEqual(replay["status"], "RUNNING")
+        self.assertEqual(self._persisted_counts(), before)
+        with self.store._connection() as conn:
+            self.assertIsNotNone(conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?", (command_id,)).fetchone())
+
+    def test_root_request_commitment_precedes_child_mutations(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+        with self.store._connection() as conn:
+            row = conn.execute("SELECT operation,result_json FROM command_ledger WHERE command_id='hosted-e2e-request'").fetchone()
+        self.assertEqual(row["operation"], "create_hosted_task_root_request")
+        self.assertEqual(json.loads(row["result_json"]), {"status": "REQUEST_BOUND"})
+        self.assertNotIn(b"hosted synthetic", row["result_json"].encode("utf-8"))
+
+    def _new_root_request(self, suffix):
+        command_id = "partial-root-" + suffix
+        task_id = command_id + "-task"
+        run_id = command_id + "-run"
+        input_id = command_id + "-input"
+        contract_id = command_id + "-contract"
+        manifest_id = command_id + "-manifest"
+        budget_id = command_id + "-budget"
+        grant_id = command_id + "-grant"
+        classes = {
+            "root_run": self._class(command_id + "-class-run", "RUN", run_id),
+            "root_created_event": self._class(command_id + "-class-create", "TRACE_EVENT", "evt-" + command_id + "-root-create"),
+            "input_object": self._class(command_id + "-class-input", "OBJECT", input_id),
+            "input_event": self._class(command_id + "-class-input-event", "TRACE_EVENT", "evt-" + command_id + "-trace-input"),
+            "task_contract": self._class(command_id + "-class-contract", "OBJECT", contract_id),
+            "root_manifest": self._class(command_id + "-class-manifest", "OBJECT", manifest_id),
+            "root_ready_event": self._class(command_id + "-class-ready", "TRACE_EVENT", "evt-" + command_id + "-root-ready"),
+            "root_running_event": self._class(command_id + "-class-running", "TRACE_EVENT", "evt-" + command_id + "-root-running"),
+        }
+        resources = ["task:" + task_id, run_id, input_id, contract_id, manifest_id]
+        resources.extend(value["subject_ref"] for value in classes.values())
+        self.authority.create_grant({
+            "schema_id": "nexus.delegation_grant", "schema_version": 1, "grant_id": grant_id,
+            "issued_by": self.operator_id, "granted_to": "host-agent", "task_scope": [task_id],
+            "resource_scope": sorted(set(resources)),
+            "action_scope": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY"],
+            "audience_scope": ["nexus-runtime"], "issued_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+            "status": "ACTIVE", "policy_version": "1",
+        }, command_id + "-grant-create")
+        contract = {**self.contract, "task_id": task_id, "requester_id": self.operator_id,
+                    "budget_account_ref": budget_id, "input_object_refs": [input_id]}
+        return {
+            "command_id": command_id, "created_at": "2025-01-02T03:04:05.123456Z",
+            "task_id": task_id, "requester_id": self.operator_id, "grant_id": grant_id,
+            "root_run_id": run_id, "budget_account_id": budget_id,
+            "budget_limits": {"amount_limit": 10, "unit": "test-units", "model_call_limit": 0, "tool_call_limit": 0, "child_run_limit": 0},
+            "input_object_id": input_id,
+            "input_payload": (Path(__file__).resolve().parents[2] / "eval/regression/fixtures/nexus-hosted-e2e-input.csv").read_bytes() + ("\n" + suffix).encode("ascii"),
+            "task_contract": contract, "contract_object_id": contract_id, "dag_nodes": [],
+            "root_manifest_object_id": manifest_id, "data_boundary": self.boundary, "classifications": classes,
+        }
+
+    def test_root_resumes_after_each_durable_child_boundary(self):
+        if self.fixture_already_completed:
+            self.skipTest("persistent acceptance fixture is immutable")
+
+        class SimulatedProcessLoss(BaseException):
+            pass
+
+        cases = [
+            ("task", self.trace, "create_task", lambda values: values["command_id"] + "-task"),
+            ("budget", self.budget, "create_account", lambda values: values["command_id"] + "-budget-account"),
+            ("root", self.trace, "create_run", lambda values: values["command_id"] + "-root-create"),
+            ("input", self.store, "put_object", lambda values: values["command_id"] + "-put-input"),
+            ("contract", self.runtime, "bind_task_contract", lambda values: values["command_id"] + "-bind-contract"),
+            ("manifest", self.runtime, "bind_manifest", lambda values: values["command_id"] + "-bind-root-manifest"),
+        ]
+        for suffix, target, method_name, _ in cases:
+            with self.subTest(stage=suffix):
+                values = self._new_root_request(suffix)
+                original = getattr(target, method_name)
+                fired = False
+
+                def commit_then_lose(*args, _original=original, _suffix=suffix, **kwargs):
+                    nonlocal fired
+                    result = _original(*args, **kwargs)
+                    if _suffix != "input" or kwargs.get("object_id") == values["input_object_id"]:
+                        if not fired:
+                            fired = True
+                            raise SimulatedProcessLoss("response lost")
+                    return result
+
+                with mock.patch.object(target, method_name, side_effect=commit_then_lose):
+                    with self.assertRaises(SimulatedProcessLoss):
+                        self.bridge.create_task_root(**values)
+                self.assertTrue(fired)
+                resumed = self.bridge.create_task_root(**values)
+                self.assertEqual(resumed["root_run_id"], values["root_run_id"])
+                with self.store._connection() as conn:
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks WHERE task_id=?", (values["task_id"],)).fetchone()[0], 1)
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE run_id=?", (values["root_run_id"],)).fetchone()[0], 1)
 
     def _class(self, assertion_id, subject_type, subject_ref, actor="host-agent"):
         return {"schema_id":"nexus.classification_assertion","schema_version":1,"assertion_id":assertion_id,

@@ -29,8 +29,8 @@ Current boundaries matter:
 - `MemoryService.create_candidate()` binds a claim and evidence refs to a Verification result. T1 object-integrity verification only proves bytes, not semantic truth. The current verifier offers T1 integrity and T3 human/domain attestation; no usable T2 authoritative verifier path was found for this bootstrap. Semantic Memory must not be admitted on T1 alone. Use the existing approval-bound T3 route where appropriate; otherwise leave a candidate quarantined or keep the fact only as an evidence-backed Artifact.
 - `ContextPackService` requires explicit eligible sources and a real authorized Task/Run. A compiled Pack is not Host delivery or model-visible evidence.
 - The object-state schema has a `revision` value (`CURRENT`/`SUPERSEDED`), but no operator-facing Core transition API for marking supersession was found. Bootstrap must not update SQLite directly. Until a reviewed API exists, keep only current claims in admitted Memory/default Packs; retain historical sources as unindexed source Artifacts for explicit historical retrieval. If the chosen workflow requires durable object-level supersession transitions, stop and request a narrow Core/application design review rather than faking it in payload text.
-- The operator client operates only on an existing data root. The source contains no documented official first-initialization CLI. The underlying `ObjectStore` constructor can initialize a missing database, but direct construction is not an approved operator initialization path for this bootstrap. **No existing official initialization entry point can currently be named.** First data creation is blocked until an operator-approved existing procedure is identified or separately reviewed; do not write a bootstrap-only direct SQLite initializer.
-- No general operator-facing local Git-document import command was found. Source import must go through an explicitly authorized application/Core boundary using ObjectStore and existing governance; no direct SQLite writes or ad hoc filesystem-to-database script.
+- The operator client operates only on an existing bound data root. The explicit `adapters.bootstrap` Stage 1/2 commands provide the reviewed initialization and authority-bootstrap path; they do not create a Project Nexus production root by themselves. Direct `ObjectStore` construction remains an implementation/test capability, not an operator shortcut.
+- A local Git source-import command and a Project Nexus-specific Stage 3 application composition now exist. Source import still goes through the authorized adapter/Core boundary, existing ObjectStore and governance; it is not Git synchronization, a crawler, or a general workflow engine.
 
 ## 4. Pre-Nexus history import semantics
 
@@ -143,13 +143,13 @@ Retain the single-writer invariant. Use the existing command-scoped Panel/operat
 
 Only a sanitized logical root identity, backup policy, schema/migration status, and safe manifest hashes may be recorded in repository docs. No absolute path, raw payload, credential, Codex state, or private instruction enters Git.
 
-**Initialization blocker:** `python -m adapters.client --data-root <root>` and the Panel are existing operator entry points only for an already initialized database. No official public initializer is currently documented or present. The implementation plan must use a separately reviewed existing initialization procedure if the operator can identify one. Otherwise, before any root is created, a small explicit initialization entry point must receive separate architecture/security approval; it should call the normal Core initialization/migration path and fail closed on non-empty/incompatible roots. This design does not authorize or implement such an entry point. Calling `ObjectStore` directly as a bootstrap shortcut is not acceptable.
+**Initialization status:** `python -m adapters.client --data-root <root>` and the Panel remain existing-root-only. A separate `python -m adapters.bootstrap` implementation now initializes and binds an explicitly supplied instance, then separately bootstraps narrow authority. This implementation exists, but no Project Nexus production root has been created or bootstrapped.
 
 ## 15. Project Nexus Self-Hosting Bootstrap Slice 1 proposal
 
 This is a proposed implementation sequence, not permission to run it:
 
-1. **Resolve and approve root creation:** external operator confirms no existing production root is being overwritten and approves the official initialization procedure. The current repository has no documented official initializer, so this gate is open.
+1. **Resolve and authorize root creation:** external operator confirms no existing production root is being overwritten and separately authorizes using the implemented Stage 1/2 bootstrap commands. The bounded root audit found no evidence of an existing production root; it did not search the whole disk.
 2. **Prepare the dedicated root and recovery boundary:** establish local-only path, policy, matching independent Purge Journal, single-writer ownership, and tested backup/restore procedure.
 3. **Create one real bootstrap Task/Run:** record only the present-day bootstrap action under current Authority/Participation rules.
 4. **Import a small authoritative source set:** selected accepted closure/evaluation documents and current implementation/state refs at an exact accepted Git revision. Each imported object records `IMPORTED_FROM_PRE_NEXUS_HISTORY`, source commit/ref and hashes; import does not fabricate old Runs/Traces.
@@ -160,14 +160,24 @@ This is a proposed implementation sequence, not permission to run it:
 
 The slice should not import all historical chats, all Academy packets, all Skills, every design alternative, or every source document. The first usable state should be compact enough that a new session can resume from a current summary and follow source refs when needed.
 
-## 16. Risks and non-goals
+## 16. Stage 3 application composition status
 
-Risks: incorrectly treating imported history as live telemetry; semantically overclaiming T1 integrity; admitting stale/conflicting Memory; lack of a supersession mutation API; no generic governed local-source import boundary; no documented official initializer; unresolved external data-root history; backup/Purge Journal mismatch; single-writer interruption; leaking private local paths or instruction bodies; confusing eval transport with product delivery; claiming Utility improvement from data created after T0.
+The Project Nexus-specific Stage 3 composition is implemented at `adapters.client.project_nexus_selfhost` and exposed by the existing operator client as `project-nexus-selfhost`. It requires an existing policy-bound instance, completed Stage 2 authority, and a frozen, strictly validated manifest. It is not a generic workflow engine and does not initialize a root, issue Stage 1/2 authority, or execute Git network operations.
+
+Before child mutations, `CodexHostedBridge.create_task_root()` binds its complete semantic request and uses caller-frozen canonical `created_at`. Exact completed requests replay before mutable Authority/Participation gates; the final `READY → RUNNING` child can recover a lost top-level result after a read-only persisted projection check.
+
+Stage 3 binds its complete semantic request in the existing CommandLedger before Work Grant creation or any business mutation. `READY-TO-CLOSE` means the Stage 3 business phase and final pre-terminal projections are complete while the root is `VERIFYING`; it does not mean the root succeeded or the application is complete. Once readiness is committed, retries cannot re-enter import, Verification, Memory, or Context work. If the terminal transition has not committed and the original Work Grant is expired or revoked, recovery stops with `STAGE3_TERMINAL_AUTHORITY_UNAVAILABLE`; it does not renew or replace the grant. If terminal success is already committed, exact recovery can finish revocation and record the Stage 3 completion result without reopening business work.
+
+The application result is `STAGE3_CANONICAL_COMPLETE`: canonical state is complete, the Root Run is `SUCCEEDED`, and the Work Grant is revoked. It is deliberately distinct from `BOOTSTRAP_COMPLETE`. The latter additionally requires a coherent final backup and a successful disposable restore proof; no backup framework or restore gate is executed by the Stage 3 command.
+
+## 17. Risks and non-goals
+
+Risks: incorrectly treating imported history as live telemetry; semantically overclaiming T1 integrity; admitting stale/conflicting Memory; lack of a supersession mutation API; local source-import policy/eligibility limits; the production root remains uncreated; backup/Purge Journal mismatch; single-writer interruption; leaking private local paths or instruction bodies; confusing eval transport with product delivery; claiming Utility improvement from data created after T0.
 
 Non-goals: create a root or write canonical state; direct SQLite or ObjectStore bypass; new Project/Decision/Procedure/Knowledge Graph service or schema; all-history/chat ingestion; automatic Memory admission; skill registration/promotion; autonomous upgrade; daemon/IPC; full Project Reconstruction; Utility v1 trial or task seeding; Phase 6 retry/reopen; Academy/Cerification/Shadow/Production claims; Host portability/DSH/Second Host; Foundation Contract changes.
 
-## 17. Exact next step after review
+## 18. Exact next step after review
 
-Independent review this design, especially the absence of an existing official initializer, the local-source import boundary, semantic Memory admission, and current-vs-superseded retrieval without a mutation API. Then the operator must either identify an already reviewed initialization procedure and explicitly authorize a separate Bootstrap Slice 1 implementation/run, or request a separately scoped initialization-entrypoint design. Until that decision, do not create a production root, import sources, write Tasks/Runs/Memory, or call the bootstrap complete.
+Independently review the implemented Stage 1/2 and Project Nexus-specific Stage 3 application, especially its request binding, terminal recovery, authority scope, local-source provenance, semantic Memory admission, and current-vs-superseded retrieval. Production root creation and Stage 3 execution require separate explicit authorization. Until then, do not create a production root, import sources, write canonical Project Nexus state, or call the bootstrap complete.
 
 **Current execution state:** `NO BOOTSTRAP EXECUTION AUTHORIZED`.
