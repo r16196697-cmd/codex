@@ -316,6 +316,27 @@ class ContextPackReadTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_UNAVAILABLE"):
             self.context.read_compiled(self.pack_id)
 
+    def test_missing_current_source_payload_denies_embedded_copy(self):
+        metadata = self.store.get_object_metadata(self.source_ids[0])
+        payload_path = self.store._payload_path(metadata["payload_uri"])
+        payload_path.unlink()
+
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_INTEGRITY_INVALID") as raised:
+            self.context.read_compiled(self.pack_id)
+        self.assertNotIn("read-source-a", str(raised.exception))
+        self.assertNotIn("source 0 exact bytes", str(raised.exception))
+
+    def test_corrupted_current_source_payload_denies_embedded_copy(self):
+        metadata = self.store.get_object_metadata(self.source_ids[0])
+        payload_path = self.store._payload_path(metadata["payload_uri"])
+        original_payload = payload_path.read_bytes()
+        payload_path.write_bytes(original_payload + b"tampered")
+
+        with self.assertRaisesRegex(RuntimeDenied, "CONTEXT_PACK_SOURCE_INTEGRITY_INVALID") as raised:
+            self.context.read_compiled(self.pack_id)
+        self.assertNotIn("read-source-a", str(raised.exception))
+        self.assertNotIn("source 0 exact bytes", str(raised.exception))
+
     def test_source_classification_must_remain_in_original_run_boundary(self):
         with contextlib.closing(sqlite3.connect(self.store.database_path)) as conn:
             conn.execute("BEGIN")

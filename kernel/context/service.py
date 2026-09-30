@@ -269,6 +269,12 @@ class ContextPackService:
                 or metadata.get("integrity_hash") != entry["source_integrity_sha256"]
                 or metadata.get("classification_assertion_ref") != entry["classification_assertion_ref"]):
             raise RuntimeDenied("CONTEXT_PACK_SOURCE_UNAVAILABLE")
+        try:
+            source_verified = self.store.verify_object(source_ref)
+        except Exception:
+            raise RuntimeDenied("CONTEXT_PACK_SOURCE_INTEGRITY_INVALID") from None
+        if source_verified is not True:
+            raise RuntimeDenied("CONTEXT_PACK_SOURCE_INTEGRITY_INVALID")
         self._validate_current_classification(
             entry["classification_assertion_ref"], source_ref, boundary,
             "CONTEXT_PACK_SOURCE_OUTSIDE_RUN_BOUNDARY",
