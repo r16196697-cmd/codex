@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 from contextlib import closing
@@ -78,6 +80,31 @@ class ReadOnlyPanelTests(unittest.TestCase):
         self.assertEqual(after, before)
         self.assertNotIn("data/nexus.sqlite-wal", after)
         self.assertNotIn("data/nexus.sqlite-shm", after)
+
+    @unittest.skipUnless(os.name == "nt", "Windows reader-lock access regression")
+    def test_windows_read_only_panel_opens_readable_nonwritable_writer_lock(self):
+        lock_path = self.root / "nexus.writer.lock"
+        original_mode = stat.S_IMODE(lock_path.stat().st_mode)
+        try:
+            # On Windows, chmod(S_IREAD) sets the file's read-only attribute.
+            # This is a real filesystem restriction: r+b must fail while rb remains usable.
+            os.chmod(lock_path, stat.S_IREAD)
+            with self.assertRaises(PermissionError):
+                with lock_path.open("r+b"):
+                    pass
+            with lock_path.open("rb") as handle:
+                self.assertGreaterEqual(len(handle.read(1)), 1)
+
+            before = _filesystem_snapshot(self.root, self.journal_dir)
+            app = self._open_read_only()
+            try:
+                snapshot = app.view_model.snapshot()
+                self.assertEqual(snapshot["runtime_mode"], "NORMAL")
+            finally:
+                app.close()
+            self.assertEqual(_filesystem_snapshot(self.root, self.journal_dir), before)
+        finally:
+            os.chmod(lock_path, original_mode | stat.S_IWRITE)
 
     def test_read_only_open_does_not_initialize_or_cleanup(self):
         blob_dir = self.root / "objects" / "sha256" / "aa"

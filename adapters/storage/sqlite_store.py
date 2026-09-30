@@ -839,7 +839,7 @@ class ObjectStore:
             if not lock_path.is_file() or lock_path.is_symlink():
                 raise MigrationError("NEXUS_WRITER_LOCK_MISSING_OR_INVALID")
             try:
-                self._writer_lock_file = lock_path.open("r+b" if os.name == "nt" else "rb")
+                self._writer_lock_file = lock_path.open("rb")
             except OSError as exc:
                 raise MigrationError("NEXUS_WRITER_LOCK_UNAVAILABLE") from exc
             self._writer_lock_file.seek(0, os.SEEK_END)
