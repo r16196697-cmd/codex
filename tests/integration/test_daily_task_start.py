@@ -185,11 +185,14 @@ class DailyTaskStartTests(unittest.TestCase):
         })
         self.assertEqual(confirmations[0][0], "START task-one")
         summary = confirmations[0][1]
+        self.assertEqual(summary["root_created_at"], plan["root"]["created_at"])
+        self.assertEqual(summary["grant_issued_at"], plan["grant"]["issued_at"])
         self.assertNotIn("PRIVATE_INPUT_MARKER", json.dumps(summary))
+        self.assertNotIn(str(self.base), json.dumps(summary))
         with self.store._connection() as conn:
             grant = conn.execute("SELECT * FROM delegation_grants WHERE grant_id='grant-one'").fetchone()
-            task = conn.execute("SELECT requester_id,status,root_run_id FROM tasks WHERE task_id='task-one'").fetchone()
-            run = conn.execute("SELECT task_id,status,executor_kind,parent_run_id,grant_id,manifest_ref FROM runs WHERE run_id='run-one'").fetchone()
+            task = conn.execute("SELECT requester_id,status,root_run_id,created_at FROM tasks WHERE task_id='task-one'").fetchone()
+            run = conn.execute("SELECT task_id,status,executor_kind,parent_run_id,grant_id,manifest_ref,created_at FROM runs WHERE run_id='run-one'").fetchone()
             contract = conn.execute("SELECT current_object_id FROM logical_refs WHERE ref_id='task-contract:task-one'").fetchone()
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM subtasks WHERE task_id='task-one'").fetchone()[0], 0)
             request = conn.execute("SELECT operation,result_json FROM command_ledger WHERE command_id='daily-start-one:request'").fetchone()
@@ -202,7 +205,10 @@ class DailyTaskStartTests(unittest.TestCase):
         self.assertEqual(task["status"], "ACTIVE")
         self.assertEqual(task["requester_id"], "operator-human")
         self.assertEqual(task["root_run_id"], "run-one")
-        self.assertEqual(tuple(run), ("task-one", "RUNNING", "ORCHESTRATOR", None, "grant-one", "manifest-one"))
+        self.assertEqual(tuple(run), ("task-one", "RUNNING", "ORCHESTRATOR", None, "grant-one", "manifest-one", plan["root"]["created_at"]))
+        self.assertEqual(task["created_at"], plan["root"]["created_at"])
+        contract_doc = json.loads(self.store.get_payload("contract-one"))
+        self.assertEqual(contract_doc["created_at"], plan["root"]["created_at"])
         self.assertEqual(contract["current_object_id"], "contract-one")
         self.assertEqual(request["operation"], "daily_task_start_request")
         self.assertEqual(json.loads(request["result_json"]), {"status": "REQUEST_BOUND"})
@@ -222,6 +228,43 @@ class DailyTaskStartTests(unittest.TestCase):
             *plan["grant"]["additional_resource_scope"],
         }
         return sorted(refs)
+
+    @staticmethod
+    def _parse_timestamp(value):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    @staticmethod
+    def _format_timestamp(value):
+        return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    def test_root_created_at_must_fall_inside_grant_interval(self):
+        before_issued = self.plan("created-before-issued")
+        issued = self._parse_timestamp(before_issued["grant"]["issued_at"])
+        invalid_created = self._format_timestamp(issued - timedelta(microseconds=1))
+        before_issued["root"]["created_at"] = invalid_created
+        before_issued["root"]["task_contract"]["created_at"] = invalid_created
+        self.assert_no_new_task_start_mutation(before_issued, "DAILY_TASK_CREATED_AT_INVALID")
+
+        after_expiry = self.plan("created-after-expiry")
+        invalid_created = after_expiry["grant"]["expires_at"]
+        after_expiry["root"]["created_at"] = invalid_created
+        after_expiry["root"]["task_contract"]["created_at"] = invalid_created
+        self.assert_no_new_task_start_mutation(after_expiry, "DAILY_TASK_CREATED_AT_INVALID")
+
+    def test_task_contract_created_at_must_match_root_created_at(self):
+        plan = self.plan("created-mismatch")
+        root_created = self._parse_timestamp(plan["root"]["created_at"])
+        plan["root"]["task_contract"]["created_at"] = self._format_timestamp(
+            root_created - timedelta(microseconds=1),
+        )
+        self.assert_no_new_task_start_mutation(plan, "DAILY_TASK_CREATED_AT_MISMATCH")
+
+    def test_future_root_created_at_is_denied_before_confirmation(self):
+        plan = self.plan("future-created")
+        future = self._format_timestamp(datetime.now(timezone.utc) + timedelta(minutes=5))
+        plan["root"]["created_at"] = future
+        plan["root"]["task_contract"]["created_at"] = future
+        self.assert_no_new_task_start_mutation(plan, "DAILY_TASK_CREATED_AT_NOT_CURRENT")
 
     def test_denied_confirmation_and_non_tty_are_zero_mutation(self):
         self.assert_no_new_task_start_mutation(self.plan("deny"), "DAILY_TASK_CONFIRMATION_DENIED",
@@ -282,10 +325,20 @@ class DailyTaskStartTests(unittest.TestCase):
         future = self.plan("future")
         future["grant"]["issued_at"] = self._now_text(timedelta(minutes=5))
         future["grant"]["expires_at"] = self._now_text(timedelta(days=2))
+        created_after_issue = self._format_timestamp(
+            self._parse_timestamp(future["grant"]["issued_at"]) + timedelta(seconds=1),
+        )
+        future["root"]["created_at"] = created_after_issue
+        future["root"]["task_contract"]["created_at"] = created_after_issue
         self.assert_no_new_task_start_mutation(future, "DAILY_TASK_GRANT_NOT_CURRENT")
         expired = self.plan("expired")
         expired["grant"]["issued_at"] = self._now_text(timedelta(days=-2))
         expired["grant"]["expires_at"] = self._now_text(timedelta(days=-1))
+        created_inside_interval = self._format_timestamp(
+            self._parse_timestamp(expired["grant"]["issued_at"]) + timedelta(minutes=1),
+        )
+        expired["root"]["created_at"] = created_inside_interval
+        expired["root"]["task_contract"]["created_at"] = created_inside_interval
         self.assert_no_new_task_start_mutation(expired, "DAILY_TASK_GRANT_NOT_CURRENT")
 
         plan = self.plan("bad-operator-type")
@@ -400,10 +453,16 @@ class DailyTaskStartTests(unittest.TestCase):
             self.assertIsNone(conn.execute("SELECT 1 FROM delegation_grants WHERE grant_id='grant-after-bind'").fetchone())
         prompts = []
         with mock.patch.object(AuthorityService, "create_grant", original):
-            result = self.start(plan, confirmation=lambda *_: prompts.append(True) or False)
+            historical_retry_time = self._parse_timestamp(plan["root"]["created_at"]) + timedelta(minutes=5)
+            with mock.patch("adapters.client.task_start._now", return_value=historical_retry_time):
+                result = self.start(plan, confirmation=lambda *_: prompts.append(True) or False)
         self.assertEqual(prompts, [])
         self.assertEqual(result["status"], "DAILY_TASK_STARTED")
         self.assertEqual(self.store.get_instance_binding_status()["state"], "FRESH_BOUND_INSTANCE")
+        with self.store._connection() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE grant_id='grant-after-bind'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks WHERE task_id='task-after-bind'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE run_id='run-after-bind'").fetchone()[0], 1)
 
     def test_exact_retry_after_grant_commit_reuses_grant_and_completes_root(self):
         class SimulatedProcessLoss(BaseException):
@@ -421,7 +480,9 @@ class DailyTaskStartTests(unittest.TestCase):
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE grant_id='grant-after-grant'").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks WHERE task_id='task-after-grant'").fetchone()[0], 0)
-        result = self.start(plan, confirmation=lambda *_: self.fail("exact bound retry prompted again"))
+        historical_retry_time = self._parse_timestamp(plan["root"]["created_at"]) + timedelta(minutes=5)
+        with mock.patch("adapters.client.task_start._now", return_value=historical_retry_time):
+            result = self.start(plan, confirmation=lambda *_: self.fail("exact bound retry prompted again"))
         self.assertEqual(result["status"], "DAILY_TASK_STARTED")
         with self.store._connection() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM delegation_grants WHERE grant_id='grant-after-grant'").fetchone()[0], 1)
@@ -433,7 +494,9 @@ class DailyTaskStartTests(unittest.TestCase):
         prompts = []
         expected = self.start(plan, confirmation=lambda *args: prompts.append(args) or True)
         before = self.counts()
-        replay = self.start(plan, confirmation=lambda *_: self.fail("completed exact replay requested confirmation"))
+        after_expiry = self._parse_timestamp(plan["grant"]["expires_at"]) + timedelta(seconds=1)
+        with mock.patch("adapters.client.task_start._now", return_value=after_expiry):
+            replay = self.start(plan, confirmation=lambda *_: self.fail("completed exact replay requested confirmation"))
         self.assertEqual(replay, expected)
         self.assertEqual(prompts.__len__(), 1)
         self.assertEqual(self.counts(), before)

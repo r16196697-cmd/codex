@@ -133,6 +133,10 @@ def _timestamp(value: Any) -> datetime:
     return parsed
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _validate_plan(store, authority, plan: dict[str, Any]) -> dict[str, Any]:
     top = _exact_object(plan, {
         "protocol_version", "command_id", "instance_expectation", "operator_principal_id",
@@ -186,7 +190,7 @@ def _validate_plan(store, authority, plan: dict[str, Any]) -> dict[str, Any]:
         "input_object_id", "input_payload", "task_contract", "contract_object_id", "dag_nodes",
         "root_manifest_object_id", "data_boundary", "classifications",
     })
-    _timestamp(root_input["created_at"])
+    root_created = _timestamp(root_input["created_at"])
     declared_ids = [
         _require_id(root_input[key]) for key in (
             "task_id", "requester_id", "root_run_id", "budget_account_id", "input_object_id",
@@ -216,6 +220,14 @@ def _validate_plan(store, authority, plan: dict[str, Any]) -> dict[str, Any]:
         _fail("DAILY_TASK_BUDGET_INVALID")
     if not isinstance(root_input["task_contract"], dict):
         _fail("DAILY_TASK_TASK_CONTRACT_INVALID")
+    try:
+        contract_created = _timestamp(root_input["task_contract"].get("created_at"))
+    except DailyTaskStartError:
+        _fail("DAILY_TASK_CREATED_AT_MISMATCH")
+    if contract_created != root_created:
+        _fail("DAILY_TASK_CREATED_AT_MISMATCH")
+    if not issued <= root_created < expires:
+        _fail("DAILY_TASK_CREATED_AT_INVALID")
     boundary = root_input["data_boundary"]
     if not isinstance(boundary, dict):
         _fail("DAILY_TASK_PLAN_INVALID")
@@ -356,7 +368,7 @@ def _validate_plan(store, authority, plan: dict[str, Any]) -> dict[str, Any]:
         "command_id": command_id, "request_command_id": command_id + ":request",
         "grant_command_id": command_id + ":grant", "root_command_id": root_command,
         "instance_expectation": dict(expected), "operator_id": operator_id, "runtime_id": runtime_id,
-        "issued": issued, "expires": expires, "grant": grant, "root": root_input,
+        "issued": issued, "expires": expires, "created": root_created, "grant": grant, "root": root_input,
         "effective_contract": effective_contract, "root_manifest": root_manifest,
         "input_bytes": input_bytes, "request": request, "command_ids": command_ids,
     }
@@ -403,7 +415,9 @@ def _validate_binding(store, expected: dict[str, Any]) -> None:
         _fail("DAILY_TASK_INSTANCE_BINDING_MISMATCH")
 
 
-def _validate_current_authority(store, authority, normalized: dict[str, Any]) -> None:
+def _validate_current_authority(
+    store, authority, normalized: dict[str, Any], *, require_current_created_at: bool,
+) -> None:
     root = normalized["root"]
     with store._connection() as conn:
         issuer = conn.execute("SELECT principal_type,status FROM principals WHERE principal_id=?", (normalized["operator_id"],)).fetchone()
@@ -421,9 +435,11 @@ def _validate_current_authority(store, authority, normalized: dict[str, Any]) ->
         _fail("DAILY_TASK_RUNTIME_MODE_UNSUPPORTED")
     if ParticipationModeService(store).current().get("mode") != NexusParticipationMode.ACTIVE.value:
         _fail("DAILY_TASK_PARTICIPATION_INACTIVE")
-    now = datetime.now(timezone.utc)
+    now = _now()
     if not normalized["issued"] <= now < normalized["expires"]:
         _fail("DAILY_TASK_GRANT_NOT_CURRENT")
+    if require_current_created_at and normalized["created"] > now:
+        _fail("DAILY_TASK_CREATED_AT_NOT_CURRENT")
 
 
 def _assert_ids_unused_or_replay(store, normalized: dict[str, Any], *, request_bound: bool, grant_replay: bool) -> None:
@@ -501,7 +517,8 @@ def _summary(normalized: dict[str, Any]) -> dict[str, Any]:
     return {
         "task_id": root["task_id"], "root_run_id": root["root_run_id"],
         "grant_id": grant["grant_id"], "operator_principal_id": normalized["operator_id"],
-        "runtime_principal_id": normalized["runtime_id"], "expires_at": grant["expires_at"],
+        "runtime_principal_id": normalized["runtime_id"], "root_created_at": root["created_at"],
+        "grant_issued_at": grant["issued_at"], "expires_at": grant["expires_at"],
         "action_scope": grant["action_scope"], "audience_scope": grant["audience_scope"],
         "resource_count": len(grant["resource_scope"]), "data_boundary": root["data_boundary"],
         "budget_limits": root["budget_limits"],
@@ -545,14 +562,16 @@ def start_daily_task(
                 _fail("DAILY_TASK_ROOT_REPLAY_MISMATCH")
             return _result(normalized)
 
-        _validate_current_authority(store, authority, normalized)
+        _validate_current_authority(
+            store, authority, normalized, require_current_created_at=not request_bound,
+        )
         if not request_bound:
             expected = "START " + normalized["root"]["task_id"]
             if not confirmation(expected, _summary(normalized)):
                 _fail("DAILY_TASK_CONFIRMATION_DENIED")
             # Confirmation may take long enough for the plan or issuer state to
             # change. Recheck immediately before crossing the first mutation.
-            _validate_current_authority(store, authority, normalized)
+            _validate_current_authority(store, authority, normalized, require_current_created_at=True)
         elif grant_replay and _grant_status(store, normalized["grant"]["grant_id"]) != "ACTIVE":
             # A committed Grant is never replaced or reactivated. Let the
             # bridge return an already-completed result above; partial work
@@ -564,7 +583,7 @@ def start_daily_task(
         store.bind_command_request(command_id=normalized["request_command_id"],
                                    operation="daily_task_start_request", request=normalized["request"])
         if not grant_replay:
-            if not normalized["issued"] <= datetime.now(timezone.utc) < normalized["expires"]:
+            if not normalized["issued"] <= _now() < normalized["expires"]:
                 _fail("DAILY_TASK_GRANT_NOT_CURRENT")
             authority.create_grant(normalized["grant"], normalized["grant_command_id"])
         root = normalized["root"]

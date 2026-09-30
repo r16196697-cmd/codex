@@ -29,6 +29,11 @@ Root plan; any additional resources must be listed explicitly. Wildcards,
 delegation, egress, effects, runtime configuration, protected inspection, and
 Skill administration are not available through this command.
 
+Timestamps use canonical UTC form. `grant.issued_at <= root.created_at <
+grant.expires_at`, and `task_contract.created_at` must equal `root.created_at`.
+On a first start, the Root creation time must not be in the future. Exact
+retries retain their already-bound historical creation time.
+
 On the first request, the CLI requires an interactive TTY and the operator
 must type exactly `START <task_id>`. The sanitized confirmation shows IDs,
 scope, boundary, and budget; it does not print the input payload or local plan
