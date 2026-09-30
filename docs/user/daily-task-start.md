@@ -29,6 +29,10 @@ Root plan; any additional resources must be listed explicitly. Wildcards,
 delegation, egress, effects, runtime configuration, protected inspection, and
 Skill administration are not available through this command.
 
+If a later `task finish` must record terminal Trace classifications, include
+the exact planned finish event refs in `grant.additional_resource_scope` when
+starting the Task.
+
 Timestamps use canonical UTC form. `grant.issued_at <= root.created_at <
 grant.expires_at`, and `task_contract.created_at` must equal `root.created_at`.
 On a first start, the Root creation time must not be in the future. Exact
