@@ -71,6 +71,8 @@ class ParticipationModeService:
         command_id: str,
         updated_by: str = "local-operator",
     ) -> dict:
+        if hasattr(self.store, "_assert_writable"):
+            self.store._assert_writable()
         allowed = {item.value for item in NexusParticipationMode}
         if mode not in allowed:
             raise RuntimeDenied("PARTICIPATION_MODE_INVALID")

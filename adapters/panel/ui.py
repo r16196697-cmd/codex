@@ -21,6 +21,8 @@ def launch_panel(view_model) -> None:
     ttk.Label(header, text="Participation:").pack(side="left", padx=(22, 5))
     mode = tk.StringVar(value="UNKNOWN")
     selector = ttk.Combobox(header, state="readonly", values=_MODES, width=12, textvariable=mode)
+    if getattr(view_model, "read_only", False):
+        selector.configure(state="disabled")
     selector.pack(side="left")
     runtime_text = tk.StringVar(value="Runtime: UNKNOWN")
     ttk.Label(header, textvariable=runtime_text).pack(side="left", padx=18)

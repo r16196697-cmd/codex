@@ -28,12 +28,17 @@ def _thread_lock(path: Path) -> threading.RLock:
 class IndependentPurgeJournal:
     """Hash-chained append-only JSONL journal stored outside the database backup root."""
 
-    def __init__(self, path: str | Path, data_root: str | Path):
+    def __init__(self, path: str | Path, data_root: str | Path, *, read_only: bool = False):
         self.path = Path(path).expanduser().resolve()
         root = Path(data_root).expanduser().resolve()
         if self.path == root or root in self.path.parents:
             raise ValueError("purge journal must be outside the Nexus data root")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.read_only = read_only
+        if read_only:
+            if not self.path.parent.is_dir() or not self.path.is_file():
+                raise ValueError("PURGE_JOURNAL_UNAVAILABLE")
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def identity(self) -> str:
@@ -43,6 +48,7 @@ class IndependentPurgeJournal:
 
     def ensure_empty_exists(self) -> None:
         """Durably establish the empty bootstrap journal under its path lock."""
+        self._require_writable()
         with self._exclusive_path_lock():
             if not self.path.exists():
                 self._create_empty_journal_durably()
@@ -96,15 +102,26 @@ class IndependentPurgeJournal:
                             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def read(self) -> list[dict[str, Any]]:
+        if self.read_only:
+            return self._read_unlocked()
         with self._exclusive_path_lock():
             return self._read_unlocked()
 
     def _read_unlocked(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
+        return self.parse_records(self.path.read_bytes())
+
+    @staticmethod
+    def parse_records(raw: bytes) -> list[dict[str, Any]]:
+        """Verify journal bytes without acquiring/creating a path lock sidecar."""
+        try:
+            text = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ValueError("purge journal encoding invalid") from exc
         records = []
         previous = "0" * 64
-        for number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(text.splitlines(), 1):
             try:
                 row = json.loads(line)
             except Exception as exc:
@@ -159,6 +176,7 @@ class IndependentPurgeJournal:
             os.close(directory_fd)
 
     def append(self, *, action: str, barrier_id: str, plan_id: str, plan_hash: str, lineage_revision: int, protected_refs: list[str], task_id: str | None = None) -> dict[str, Any]:
+        self._require_writable()
         if action not in {"BARRIER_INSTALLED", "BARRIER_PARTIAL", "BARRIER_RELEASED"}:
             raise ValueError("unsupported purge journal action")
         if lineage_revision < 0 or len(plan_hash) != 64:
@@ -182,3 +200,7 @@ class IndependentPurgeJournal:
             if (created_here or not prior) and os.name != "nt":
                 self._fsync_posix_parent_directory()
             return body
+
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise ValueError("READ_ONLY_STORE_MUTATION_DENIED")

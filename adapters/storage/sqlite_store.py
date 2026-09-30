@@ -39,6 +39,10 @@ _MEMORY_INDEX_PREFIXES = ("raw_history_fts", "admitted_memory_fts")
 _RECOVERY_SESSIONS_MIGRATION = 17
 _INSTANCE_BINDING_MIGRATION = 28
 _BOOTSTRAP_LOGICAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_READ_ONLY_MUTATION_CAPABILITIES = frozenset({
+    "core_write", "run_execute", "trace_write", "memory_write", "effect_commit",
+    "egress", "learning_write",
+})
 
 
 class StartupPurpose(str, Enum):
@@ -77,6 +81,7 @@ class ObjectStore:
         migrations_dir: str | Path | None = None,
         independent_purge_journal_path: str | Path | None = None,
         startup_purpose: StartupPurpose | str = StartupPurpose.ORDINARY,
+        read_only: bool = False,
     ):
         self.data_root = Path(data_root).expanduser().resolve()
         self.database_path = self.data_root / "nexus.sqlite"
@@ -103,6 +108,7 @@ class ObjectStore:
         self._schemas: dict[str, dict[str, Any]] = {}
         self._journal_bootstrap_needed = False
         self._force_recovery = force_recovery
+        self.read_only = bool(read_only)
         self._mode_cache = "NORMAL"
         try:
             self.startup_purpose = StartupPurpose.RECOVERY if force_recovery else StartupPurpose(startup_purpose)
@@ -126,7 +132,8 @@ class ObjectStore:
         self._startup_intent = None
 
         if self.startup_purpose is StartupPurpose.ORDINARY:
-            self._reject_prebinding_legacy_before_migration()
+            if not self.read_only:
+                self._reject_prebinding_legacy_before_migration()
             if not self._configured_journal_path.parent.is_dir():
                 raise MigrationError("PURGE_JOURNAL_UNAVAILABLE")
         elif self.startup_purpose is StartupPurpose.INSTANCE_INITIALIZE:
@@ -148,12 +155,23 @@ class ObjectStore:
 
         from kernel.purge.journal import IndependentPurgeJournal
 
+        if self.read_only:
+            if not self.data_root.is_dir() or not self.database_path.is_file():
+                raise MigrationError("READ_ONLY_EXISTING_INSTANCE_REQUIRED")
+            if self.startup_purpose is not StartupPurpose.ORDINARY or force_recovery:
+                raise MigrationError("READ_ONLY_STARTUP_PURPOSE_UNSUPPORTED")
         try:
-            self.independent_purge_journal = IndependentPurgeJournal(self._configured_journal_path, self.data_root)
+            self.independent_purge_journal = IndependentPurgeJournal(
+                self._configured_journal_path, self.data_root, read_only=self.read_only
+            )
         except (OSError, ValueError) as exc:
-            raise MigrationError("PURGE_JOURNAL_PATH_INVALID") from exc
-        self._acquire_writer_lock()
+            reason = "PURGE_JOURNAL_UNAVAILABLE" if self.read_only else "PURGE_JOURNAL_PATH_INVALID"
+            raise MigrationError(reason) from exc
         try:
+            if self.read_only:
+                self._open_read_only_instance()
+                return
+            self._acquire_writer_lock()
             self._mode_cache = self._detect_startup_mode() if self.database_path.is_file() else "NORMAL"
             if self.startup_purpose is StartupPurpose.RECOVERY:
                 if not self._has_migration_table():
@@ -368,6 +386,50 @@ class ObjectStore:
 
     def _create_object_directories(self) -> None:
         self.blob_root.mkdir(parents=True, exist_ok=True)
+
+    def _open_read_only_instance(self) -> None:
+        """Open an existing bound instance without startup repair or filesystem writes."""
+        if not self._configured_journal_path.is_file():
+            raise MigrationError("PURGE_JOURNAL_UNAVAILABLE")
+        self._acquire_writer_lock(read_only=True)
+        self._assert_read_only_sqlite_state()
+        self._validate_database_read_only(require_current=True)
+        self._mode_cache = self._detect_startup_mode()
+        if self._mode_cache == "RECOVERY":
+            raise MigrationError("READ_ONLY_RUNTIME_MODE_UNSUPPORTED")
+        binding = self._read_instance_binding()
+        if binding is None:
+            raise MigrationError("INSTANCE_BINDING_MISSING_OR_AMBIGUOUS")
+        self._validate_instance_binding(binding)
+        self._validate_read_only_journal_binding()
+        self.instance_binding = binding
+        self.instance_binding_status = "BOUND"
+
+    def _assert_read_only_sqlite_state(self) -> None:
+        """Immutable SQLite reads ignore WAL, so reject any uncheckpointed WAL state."""
+        wal_path = Path(str(self.database_path) + "-wal")
+        rollback_journal_path = Path(str(self.database_path) + "-journal")
+        try:
+            if wal_path.exists() and wal_path.stat().st_size > 0:
+                raise MigrationError("READ_ONLY_WAL_STATE_UNSUPPORTED")
+            if rollback_journal_path.exists() and rollback_journal_path.stat().st_size > 0:
+                raise MigrationError("READ_ONLY_SQLITE_RECOVERY_REQUIRED")
+        except OSError as exc:
+            raise MigrationError("READ_ONLY_SQLITE_STATE_UNAVAILABLE") from exc
+
+    def _validate_read_only_journal_binding(self) -> None:
+        try:
+            sequence, record_hash = self.independent_purge_journal.verified_head()
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise MigrationError("PURGE_JOURNAL_INVALID") from exc
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT journal_identity,sequence,record_hash FROM independent_purge_journal_watermark WHERE singleton=1"
+            ).fetchone()
+        if not row:
+            raise MigrationError("PURGE_JOURNAL_WATERMARK_MISSING")
+        if tuple(row) != (self.independent_purge_journal.identity, sequence, record_hash):
+            raise MigrationError("PURGE_JOURNAL_WATERMARK_MISMATCH")
 
     def _read_instance_binding(self) -> dict[str, Any] | None:
         try:
@@ -771,13 +833,26 @@ class ObjectStore:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
             return bool(exists and conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone())
 
-    def _acquire_writer_lock(self) -> None:
+    def _acquire_writer_lock(self, *, read_only: bool = False) -> None:
         lock_path = self.data_root / "nexus.writer.lock"
-        self._writer_lock_file = lock_path.open("a+b")
-        self._writer_lock_file.seek(0, os.SEEK_END)
-        if self._writer_lock_file.tell() == 0:
-            self._writer_lock_file.write(b"\0")
-            self._writer_lock_file.flush()
+        if read_only:
+            if not lock_path.is_file() or lock_path.is_symlink():
+                raise MigrationError("NEXUS_WRITER_LOCK_MISSING_OR_INVALID")
+            try:
+                self._writer_lock_file = lock_path.open("r+b" if os.name == "nt" else "rb")
+            except OSError as exc:
+                raise MigrationError("NEXUS_WRITER_LOCK_UNAVAILABLE") from exc
+            self._writer_lock_file.seek(0, os.SEEK_END)
+            if self._writer_lock_file.tell() < 1:
+                self._writer_lock_file.close()
+                self._writer_lock_file = None
+                raise MigrationError("NEXUS_WRITER_LOCK_MISSING_OR_INVALID")
+        else:
+            self._writer_lock_file = lock_path.open("a+b")
+            self._writer_lock_file.seek(0, os.SEEK_END)
+            if self._writer_lock_file.tell() == 0:
+                self._writer_lock_file.write(b"\0")
+                self._writer_lock_file.flush()
         self._writer_lock_file.seek(0)
         try:
             if os.name == "nt":
@@ -787,7 +862,8 @@ class ObjectStore:
             else:
                 import fcntl
 
-                fcntl.flock(self._writer_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_kind = fcntl.LOCK_SH if read_only else fcntl.LOCK_EX
+                fcntl.flock(self._writer_lock_file.fileno(), lock_kind | fcntl.LOCK_NB)
         except OSError as exc:
             self._writer_lock_file.close()
             self._writer_lock_file = None
@@ -826,11 +902,20 @@ class ObjectStore:
     def _connect(self) -> sqlite3.Connection:
         if self._closed:
             raise RuntimeError("ObjectStore is closed")
-        conn = sqlite3.connect(self.database_path, timeout=10.0, isolation_level=None)
+        if getattr(self, "read_only", False):
+            conn = sqlite3.connect(
+                self._sqlite_readonly_uri(self.database_path, immutable=True),
+                uri=True, timeout=10.0, isolation_level=None,
+            )
+        else:
+            conn = sqlite3.connect(self.database_path, timeout=10.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 10000")
-        conn.execute("PRAGMA synchronous = FULL")
+        if getattr(self, "read_only", False):
+            conn.execute("PRAGMA query_only = ON")
+        else:
+            conn.execute("PRAGMA synchronous = FULL")
         conn.create_function("nexus_sha256", 1, lambda value: _sha256(str(value).encode("utf-8")))
         conn.create_function(
             "nexus_purge_redaction",
@@ -939,6 +1024,20 @@ class ObjectStore:
         return _canonical_json(old)
 
     def _sqlite_authorizer(self, action: int, arg1: str | None, arg2: str | None, database: str | None, source: str | None) -> int:
+        if getattr(self, "read_only", False):
+            mutation_actions = {
+                sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
+                sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TABLE, sqlite3.SQLITE_CREATE_TEMP_INDEX,
+                sqlite3.SQLITE_CREATE_TEMP_TABLE, sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
+                sqlite3.SQLITE_CREATE_TEMP_VIEW, sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
+                sqlite3.SQLITE_DROP_INDEX, sqlite3.SQLITE_DROP_TABLE, sqlite3.SQLITE_DROP_TEMP_INDEX,
+                sqlite3.SQLITE_DROP_TEMP_TABLE, sqlite3.SQLITE_DROP_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_VIEW,
+                sqlite3.SQLITE_DROP_TRIGGER, sqlite3.SQLITE_DROP_VIEW, sqlite3.SQLITE_ALTER_TABLE,
+                sqlite3.SQLITE_REINDEX, sqlite3.SQLITE_ANALYZE, sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH,
+                sqlite3.SQLITE_CREATE_VTABLE, sqlite3.SQLITE_DROP_VTABLE,
+            }
+            if action in mutation_actions or action == sqlite3.SQLITE_PRAGMA and arg2 is not None:
+                return sqlite3.SQLITE_DENY
         if self._instance_restricted:
             if getattr(self._bootstrap_schema_write_local, "depth", 0) > 0:
                 return sqlite3.SQLITE_OK
@@ -970,7 +1069,9 @@ class ObjectStore:
         if not self.database_path.exists():
             return "NORMAL"
         try:
-            with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
+            with closing(sqlite3.connect(
+                self._sqlite_readonly_uri(self.database_path, immutable=getattr(self, "read_only", False)), uri=True
+            )) as conn:
                 exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_mode_state'").fetchone()
                 if not exists:
                     return "NORMAL"
@@ -980,6 +1081,11 @@ class ObjectStore:
         if not row or row[0] not in {"NORMAL", "SAFE", "STATELESS", "RECOVERY"}:
             raise MigrationError("Runtime mode state is corrupt; startup denied.")
         return row[0]
+
+    @staticmethod
+    def _sqlite_readonly_uri(path: Path, *, immutable: bool = False) -> str:
+        query = "mode=ro&immutable=1" if immutable else "mode=ro"
+        return path.resolve().as_uri() + "?" + query
 
     def _has_migration_table(self) -> bool:
         with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
@@ -1162,11 +1268,22 @@ class ObjectStore:
 
     def _validate_recovery_database(self) -> None:
         """Read-only compatibility check; Recovery startup never applies migrations or cleans files."""
-        migrations = {path.name: path.read_bytes() for path in self.migrations_dir.glob("*.sql")}
-        with closing(sqlite3.connect(f"file:{self.database_path.as_posix()}?mode=ro", uri=True)) as conn:
-            rows = conn.execute("SELECT version,name,checksum FROM schema_migrations ORDER BY version").fetchall()
-            user_version = conn.execute("PRAGMA user_version").fetchone()[0]
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        self._validate_database_read_only(require_current=False)
+
+    def _validate_database_read_only(self, *, require_current: bool) -> None:
+        """Validate schema history through a SQLite read-only connection."""
+        try:
+            migrations = {path.name: path.read_bytes() for path in self.migrations_dir.glob("*.sql")}
+            with closing(sqlite3.connect(
+                self._sqlite_readonly_uri(self.database_path, immutable=getattr(self, "read_only", False)), uri=True
+            )) as conn:
+                rows = conn.execute("SELECT version,name,checksum FROM schema_migrations ORDER BY version").fetchall()
+                user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+                integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+        except (OSError, sqlite3.DatabaseError) as exc:
+            if require_current:
+                raise MigrationError("READ_ONLY_DATABASE_INVALID") from exc
+            raise
         if integrity != "ok":
             raise MigrationError("Recovery database integrity check failed.")
         if user_version != len(rows):
@@ -1174,6 +1291,19 @@ class ObjectStore:
         for version, name, checksum in rows:
             if name not in migrations or _sha256(migrations[name]) != checksum:
                 raise MigrationError("Recovery database migration checksum mismatch.")
+        if require_current and (
+            user_version != len(migrations)
+            or [row[0] for row in rows] != list(range(1, len(migrations) + 1))
+        ):
+            raise MigrationError("READ_ONLY_SCHEMA_NOT_CURRENT")
+
+    def _assert_writable(self) -> None:
+        if getattr(self, "read_only", False):
+            raise MigrationError("READ_ONLY_STORE_MUTATION_DENIED")
+
+    def _guard_read_only_capability(self, capability: str) -> None:
+        if capability in _READ_ONLY_MUTATION_CAPABILITIES:
+            self._assert_writable()
 
     @contextmanager
     def _recovery_maintenance(self):
@@ -1205,6 +1335,7 @@ class ObjectStore:
         return row["mode"]
 
     def _require_mode(self, capability: str) -> None:
+        self._guard_read_only_capability(capability)
         if self._instance_restricted and capability != "core_read":
             raise MigrationError("POLICY_BINDING_ADOPTION_REQUIRED")
         from kernel.runtime.modes import require_mode_permission

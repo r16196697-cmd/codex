@@ -39,12 +39,16 @@ def open_panel_application(
     policy_path: str | Path | None = None,
     independent_purge_journal_path: str | Path | None = None,
     writer_services: dict | None = None,
+    read_only: bool = False,
 ) -> PanelApplication:
     """Compose from writer-owned services or own a standalone store.
 
     The writer-owned command path injects its services; that composition never
     opens a second ObjectStore or attempts to acquire another writer lock.
+    ``read_only`` explicitly opens an existing bound instance without startup maintenance.
     """
+    if writer_services is not None and read_only:
+        raise ValueError("PANEL_READ_ONLY_WRITER_COMPOSITION_INVALID")
     root = Path(data_root).expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
         raise ValueError("No existing Nexus database at --data-root; the panel will not initialize one.")
@@ -63,6 +67,7 @@ def open_panel_application(
         root,
         policy=policy,
         independent_purge_journal_path=independent_purge_journal_path,
+        read_only=read_only,
     )
     try:
         authority = AuthorityService(store, store.policy)
@@ -92,7 +97,7 @@ def _compose_panel(*, store, services: dict, owns_store: bool) -> PanelApplicati
         runtime=services["runtime"], participation=services["participation"],
         panel_queries=services["panel_queries"], memory=services["memory"],
         context_packs=services["context_packs"], metering=services["metering"],
-        skills=services["skills"],
+        skills=services["skills"], read_only=bool(getattr(store, "read_only", False)),
     )
     return PanelApplication(store=store, view_model=view_model,
                             context_packs=services["context_packs"], metering=services["metering"],

@@ -24,7 +24,7 @@ def _metric(value=None, *, provenance=UNAVAILABLE, unit=None, basis=None, observ
 class PanelViewModel:
     """Compose narrow Core projections; the presentation layer sees no store."""
 
-    def __init__(self, *, runtime, participation, panel_queries, memory, context_packs=None, metering=None, skills=None):
+    def __init__(self, *, runtime, participation, panel_queries, memory, context_packs=None, metering=None, skills=None, read_only=False):
         self._runtime = runtime
         self._participation = participation
         self._panel_queries = panel_queries
@@ -32,6 +32,7 @@ class PanelViewModel:
         self._context_packs = context_packs
         self._metering = metering
         self._skills = skills
+        self.read_only = bool(read_only)
 
     def snapshot(self) -> dict:
         try:

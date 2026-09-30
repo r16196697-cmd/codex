@@ -15,6 +15,14 @@ This is a local, thin operator client over Nexus Runtime APIs. It does not query
 
 The grant must include the exact task, resource, action `INSPECT`, and audience `nexus-inspect`. Approval payload hashes and object integrity hashes require separate `INSPECT_PROTECTED` authorization and explicit `--show-payload-hash` or `--show-integrity-hash`. Object payload bytes are not exposed by this CLI.
 
+For observation-only cold-start inspection, the native Panel supports an explicit read-only open:
+
+```powershell
+.\.venv\Scripts\python.exe -m adapters.panel --data-root <existing-data-root> --policy <nexus-policy.json> --independent-purge-journal <journal-path> --read-only
+```
+
+Read-only Panel access is limited to an existing bound instance with a current, checkpointed SQLite database and matching independent Purge Journal. It validates binding, schema, database integrity, and journal freshness without running migrations, creating directories or lock sidecars, bootstrapping recovery, or cleaning orphan payloads. It holds the existing Nexus writer-lock boundary for the session; an active writer causes a prompt fail-closed error. Mutation APIs are denied by the store. A non-empty SQLite WAL is unsupported for this read-only path and is rejected rather than ignored. Use this mode for observation and cold-start reconstruction probes, not repair or recovery.
+
 `--policy` is optional and accepts an existing, secret-free `nexus.policy@1` JSON policy. It is loaded read-only and validated by the Core policy schema; it is never written back. Omit it only when the instance intentionally uses the repository's default fail-closed policy. The CLI does not create or initialize the data root.
 
 `UNKNOWN` is rendered as an unresolved fact requiring authoritative reconciliation, never as a failed/retryable commit. `PARTIAL` purge is shown as incomplete and its barrier remains visible. A mode change is authorized for both `RUNTIME_CONFIGURE` and `TRACE_APPEND`, and requires an existing Task Root `ORCHESTRATOR` Run using the same Grant. The supplied immutable `TRACE_EVENT` classification assertion must identify `evt-<command-id>` and fit the Root Run data boundary. The mode audit row, CommandLedger result, and `nexus.runtime.mode_changed` TraceEvent commit atomically; mode changes without valid trace context are denied.

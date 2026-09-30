@@ -95,6 +95,7 @@ class RuntimeModeService:
         return dict(row)
 
     def require(self, capability: str, *, effect_class: str | None = None, event_type: str | None = None) -> None:
+        self.store._guard_read_only_capability(capability)
         require_mode_permission(
             self.current()["mode"], capability, effect_class=effect_class, event_type=event_type
         )

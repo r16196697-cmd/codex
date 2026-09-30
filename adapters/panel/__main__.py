@@ -14,11 +14,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-root", required=True, type=Path, help="Existing Nexus data root; the panel will not initialize a database")
     parser.add_argument("--policy", type=Path, help="Optional existing Nexus policy JSON")
     parser.add_argument("--independent-purge-journal", type=Path, help="Optional configured independent purge journal")
+    parser.add_argument("--read-only", action="store_true", help="Open an existing bound instance without startup cleanup or mutation")
     args = parser.parse_args(argv)
     application = open_panel_application(
         args.data_root,
         policy_path=args.policy,
         independent_purge_journal_path=args.independent_purge_journal,
+        read_only=args.read_only,
     )
     try:
         launch_panel(application.view_model)
