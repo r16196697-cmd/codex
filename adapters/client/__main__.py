@@ -107,6 +107,11 @@ def _parser() -> argparse.ArgumentParser:
     git_source.add_argument("--repo", required=True, type=Path, help="process-local path to an existing local Git worktree; never persisted")
     git_source.add_argument("--plan", required=True, type=Path, help="process-local JSON import plan with logical IDs and exact commit/path")
 
+    task = commands.add_parser("task", help="explicit operator actions for an existing Nexus instance")
+    task_commands = task.add_subparsers(dest="task_action", required=True)
+    task_start = task_commands.add_parser("start", help="authorize and start one exact daily Task Root")
+    task_start.add_argument("--plan", required=True, type=Path, help="process-local strict JSON task-start plan")
+
     selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
     selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
     selfhost.add_argument("--plan", required=True, type=Path, help="process-local strict Stage 3 v2 manifest")
@@ -166,6 +171,39 @@ def _safe_context_read_error_reason(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _safe_task_start_error_reason(exc: Exception) -> str:
+    from adapters.client.task_start import DailyTaskStartError
+
+    reason = getattr(exc, "reason_code", None)
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason):
+        return reason
+    if isinstance(exc, DailyTaskStartError):
+        return "DAILY_TASK_START_FAILED"
+    return "DAILY_TASK_START_FAILED"
+
+
+def _require_daily_task_start_tty() -> None:
+    from adapters.client.task_start import DailyTaskStartError
+
+    try:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise DailyTaskStartError("INTERACTIVE_TTY_REQUIRED")
+    except DailyTaskStartError:
+        raise
+    except Exception:
+        raise DailyTaskStartError("INTERACTIVE_TTY_REQUIRED") from None
+
+
+def _confirm_daily_task_start(expected: str, summary: dict[str, Any]) -> bool:
+    _require_daily_task_start_tty()
+    print("Authorize this exact daily Task start:", file=sys.stdout)
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True), file=sys.stdout)
+    try:
+        return input(f"Type {expected} to confirm: ") == expected
+    except (EOFError, OSError):
+        return False
+
+
 def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
@@ -182,6 +220,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        task_start_plan = None
+        if args.command == "task" and args.task_action == "start":
+            from adapters.client.task_start import read_task_start_plan
+            task_start_plan = read_task_start_plan(args.plan)
+            # Refuse non-interactive starts before composing the ordinary
+            # writer store, whose startup path may perform writer-side work.
+            _require_daily_task_start_tty()
         if args.command == "context" and args.context_action == "read":
             from adapters.panel.application import open_panel_application
 
@@ -270,6 +315,16 @@ def main(argv: list[str] | None = None) -> int:
                 verifier=verifier, memory=memory, context_packs=context_packs,
                 repo_path=args.repo, manifest=read_stage3_manifest(args.plan),
             )
+        elif args.command == "task" and args.task_action == "start":
+            from adapters.client.task_start import start_daily_task
+            from kernel.verification import VerificationService
+
+            verifier = VerificationService(store, authority)
+            result = start_daily_task(
+                store=store, authority=authority, budget=_budget, trace=trace, runtime=runtime,
+                verifier=verifier, plan=task_start_plan,
+                confirmation=_confirm_daily_task_start,
+            )
         elif args.command == "skill" and args.skill_action == "register":
             result = skill_application.register_package(
                 source_scope=args.source_scope, source_namespace=args.source_namespace,
@@ -327,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
             reason = _safe_stage3_error_reason(exc)
         elif args.command == "context":
             reason = _safe_context_read_error_reason(exc)
+        elif args.command == "task":
+            reason = _safe_task_start_error_reason(exc)
         else:
             reason = str(getattr(exc, "args", [None])[0] or type(exc).__name__)
         print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
