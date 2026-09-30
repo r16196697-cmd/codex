@@ -17,12 +17,22 @@ _SOURCE_ORDER = {
     "artifact": 4, "verification": 5, "admitted_memory": 6,
 }
 _ALLOWED_OBJECT_TYPES = frozenset({"user_input", "task_contract", "evidence", "claim", "artifact", "verification"})
+_ALLOWED_PACK_SOURCE_TYPES = _ALLOWED_OBJECT_TYPES | {"admitted_memory"}
 _MAX_SOURCES = 50
 _MAX_PACK_BYTES = 262144
 
 
 def _canonical(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _strict_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON member")
+        result[key] = value
+    return result
 
 
 class ContextPackService:
@@ -33,6 +43,236 @@ class ContextPackService:
         self.memory = memory
         self.metering = metering or MeteringService(store, authority, participation)
         self.inspect = InspectService(store, authority)
+
+    def read_compiled(self, pack_ref: str) -> dict:
+        """Return one already compiled Context Pack after revalidating its read boundary.
+
+        This is intentionally the only Context Pack payload read surface. It does
+        not authorize execution, access arbitrary object payloads, or record
+        delivery/model visibility.
+        """
+        self.store._require_mode("core_read")
+        if not isinstance(pack_ref, str) or not pack_ref:
+            raise RuntimeDenied("CONTEXT_PACK_NOT_AVAILABLE")
+        with self.store._lock:
+            with self.store._connection() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM context_pack_records WHERE pack_ref=?", (pack_ref,)
+                ).fetchall()
+                if len(rows) != 1 or rows[0]["state"] != "COMPILED":
+                    raise RuntimeDenied("CONTEXT_PACK_NOT_AVAILABLE")
+                record = dict(rows[0])
+                run_rows = conn.execute(
+                    "SELECT r.run_id,r.task_id,r.data_boundary_json,r.classification_assertion_ref "
+                    "FROM runs r JOIN tasks t ON t.task_id=r.task_id "
+                    "WHERE r.run_id=? AND r.task_id=?",
+                    (record["run_id"], record["task_id"]),
+                ).fetchall()
+            if len(run_rows) != 1:
+                raise RuntimeDenied("CONTEXT_PACK_RUN_TASK_MISMATCH")
+            run = dict(run_rows[0])
+            boundary = self._read_boundary(run["data_boundary_json"])
+
+            pack_metadata = self._current_object_metadata(pack_ref, "CONTEXT_PACK_NOT_AVAILABLE")
+            if (pack_metadata.get("object_type") != "artifact"
+                    or pack_metadata.get("schema_id") != "nexus.object"
+                    or pack_metadata.get("schema_version") != 1
+                    or pack_metadata.get("created_by_run") != record["run_id"]
+                    or not isinstance(pack_metadata.get("classification_assertion_ref"), str)
+                    or (pack_metadata.get("payload_state"), pack_metadata.get("lifecycle"),
+                        pack_metadata.get("validity")) != ("AVAILABLE", "ACTIVE", "VALID")):
+                raise RuntimeDenied("CONTEXT_PACK_NOT_AVAILABLE")
+            self._validate_current_classification(
+                pack_metadata["classification_assertion_ref"], pack_ref, boundary,
+                "CONTEXT_PACK_CLASSIFICATION_INVALID",
+            )
+
+            try:
+                payload = self.store.get_payload(pack_ref)
+            except Exception as exc:
+                raise RuntimeDenied("CONTEXT_PACK_INTEGRITY_INVALID") from exc
+            integrity_hash = hashlib.sha256(payload).hexdigest()
+            if integrity_hash != pack_metadata.get("integrity_hash"):
+                raise RuntimeDenied("CONTEXT_PACK_INTEGRITY_INVALID")
+            try:
+                document = json.loads(payload.decode("utf-8", errors="strict"), object_pairs_hook=_strict_json_object)
+                self.store._validate("nexus.context_pack@1.schema.json", document)
+                canonical_payload = _canonical(document)
+            except Exception as exc:
+                raise RuntimeDenied("CONTEXT_PACK_PAYLOAD_INVALID") from exc
+            if not isinstance(document, dict) or canonical_payload != payload:
+                raise RuntimeDenied("CONTEXT_PACK_PAYLOAD_INVALID")
+
+            if (len(canonical_payload) > _MAX_PACK_BYTES
+                    or document["task_id"] != record["task_id"]
+                    or document["run_id"] != record["run_id"]
+                    or document["content_hash"] != record["content_hash"]
+                    or len(canonical_payload) != record["serialized_byte_size"]):
+                raise RuntimeDenied("CONTEXT_PACK_RECORD_BINDING_MISMATCH")
+            try:
+                persisted_basis = json.loads(record["selection_basis_json"], object_pairs_hook=_strict_json_object)
+                persisted_counts = json.loads(record["source_counts_json"], object_pairs_hook=_strict_json_object)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise RuntimeDenied("CONTEXT_PACK_RECORD_BINDING_MISMATCH") from exc
+            if (_canonical(document["selection_basis"]) != _canonical(persisted_basis)
+                    or not self._valid_selection_basis(document["selection_basis"], len(document["entries"]))):
+                raise RuntimeDenied("CONTEXT_PACK_RECORD_BINDING_MISMATCH")
+
+            entries = document["entries"]
+            refs = [entry["source_ref"] for entry in entries]
+            if (len(entries) > _MAX_SOURCES or len(refs) != len(set(refs))
+                    or any(entry["source_type"] not in _ALLOWED_PACK_SOURCE_TYPES for entry in entries)):
+                raise RuntimeDenied("CONTEXT_PACK_ENTRY_INVALID")
+            expected_order = sorted(
+                entries, key=lambda item: (_SOURCE_ORDER[item["source_type"]], item["source_ref"].encode("utf-8"))
+            )
+            if entries != expected_order:
+                raise RuntimeDenied("CONTEXT_PACK_ENTRY_ORDER_INVALID")
+            source_counts = dict(sorted(Counter(entry["source_type"] for entry in entries).items()))
+            if _canonical(source_counts) != _canonical(persisted_counts):
+                raise RuntimeDenied("CONTEXT_PACK_RECORD_BINDING_MISMATCH")
+
+            content_basis = {
+                "task_id": document["task_id"], "run_id": document["run_id"],
+                "selection_basis": document["selection_basis"], "entries": entries,
+            }
+            computed_content_hash = hashlib.sha256(_canonical(content_basis)).hexdigest()
+            if computed_content_hash != document["content_hash"]:
+                raise RuntimeDenied("CONTEXT_PACK_CONTENT_HASH_MISMATCH")
+
+            for entry in entries:
+                try:
+                    embedded_bytes = entry["content"].encode("utf-8", errors="strict")
+                except UnicodeEncodeError as exc:
+                    raise RuntimeDenied("CONTEXT_PACK_ENTRY_INTEGRITY_MISMATCH") from exc
+                if hashlib.sha256(embedded_bytes).hexdigest() != entry["source_integrity_sha256"]:
+                    raise RuntimeDenied("CONTEXT_PACK_ENTRY_INTEGRITY_MISMATCH")
+                self._validate_current_source(entry, record["run_id"], boundary)
+
+            return {
+                "status": "CONTEXT_PACK_READ",
+                "pack_id": pack_ref,
+                "task_id": record["task_id"],
+                "run_id": record["run_id"],
+                "content_hash": document["content_hash"],
+                "integrity_hash": integrity_hash,
+                "serialized_byte_size": len(canonical_payload),
+                "model_visible_exposure": document["model_visible_exposure"],
+                "entries": entries,
+            }
+
+    def read_latest_compiled(self) -> dict:
+        """Read the latest compiled pack using the existing latest ordering."""
+        self.store._require_mode("core_read")
+        with self.store._connection() as conn:
+            rows = conn.execute(
+                "SELECT pack_ref FROM context_pack_records WHERE state='COMPILED' "
+                "ORDER BY compiled_at DESC,record_id DESC LIMIT 1"
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeDenied("CONTEXT_PACK_NOT_AVAILABLE")
+        return self.read_compiled(rows[0]["pack_ref"])
+
+    @staticmethod
+    def _read_boundary(raw: str) -> dict:
+        try:
+            boundary = json.loads(raw, object_pairs_hook=_strict_json_object)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeDenied("CONTEXT_PACK_RUN_BOUNDARY_INVALID") from exc
+        if (not isinstance(boundary, dict)
+                or set(boundary) != {"allowed_classifications", "handling_tags"}
+                or not isinstance(boundary["allowed_classifications"], list)
+                or not isinstance(boundary["handling_tags"], list)
+                or any(not isinstance(value, str) for value in boundary["allowed_classifications"])
+                or any(not isinstance(value, str) for value in boundary["handling_tags"])
+                or len(boundary["allowed_classifications"]) != len(set(boundary["allowed_classifications"]))
+                or len(boundary["handling_tags"]) != len(set(boundary["handling_tags"]))):
+            raise RuntimeDenied("CONTEXT_PACK_RUN_BOUNDARY_INVALID")
+        return boundary
+
+    @staticmethod
+    def _valid_selection_basis(basis: dict, entry_count: int) -> bool:
+        expected_keys = {
+            "policy_id", "selection_rule", "ordering_rule", "source_ref_count",
+            "memory_query_sha256", "memory_limit", "ambient_host_memory_read", "academy_sources_read",
+        }
+        if not isinstance(basis, dict) or set(basis) != expected_keys:
+            return False
+        query_hash = basis.get("memory_query_sha256")
+        memory_limit = basis.get("memory_limit")
+        return (
+            basis.get("policy_id") == "NEXUS_CONTEXT_SELECTION_V1"
+            and basis.get("selection_rule") == "EXPLICIT_CANONICAL_REFS_PLUS_ADMITTED_MEMORY_QUERY"
+            and basis.get("ordering_rule") == "SOURCE_TYPE_FIXED_ORDER_THEN_SOURCE_REF_UTF8_BYTE_ORDER"
+            and basis.get("source_ref_count") == entry_count
+            and basis.get("ambient_host_memory_read") is False
+            and basis.get("academy_sources_read") is False
+            and (query_hash is None or isinstance(query_hash, str) and len(query_hash) == 64
+                 and all(character in "0123456789abcdef" for character in query_hash))
+            and ((query_hash is None and memory_limit is None)
+                 or (query_hash is not None and isinstance(memory_limit, int)
+                     and not isinstance(memory_limit, bool) and 1 <= memory_limit <= _MAX_SOURCES))
+        )
+
+    def _current_object_metadata(self, object_ref: str, failure_reason: str) -> dict:
+        try:
+            metadata = self.store.get_object_metadata(object_ref)
+        except Exception as exc:
+            raise RuntimeDenied(failure_reason) from exc
+        if metadata.get("payload_state") == "PURGED":
+            raise RuntimeDenied(failure_reason)
+        return metadata
+
+    def _validate_current_classification(
+        self, assertion_ref: str, object_ref: str, boundary: dict, failure_reason: str,
+    ) -> None:
+        with self.store._connection() as conn:
+            rows = conn.execute(
+                "SELECT assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,"
+                "policy_version,reason,actor_id,supersedes FROM classification_assertions WHERE assertion_id=?",
+                (assertion_ref,),
+            ).fetchall()
+        if len(rows) != 1:
+            raise RuntimeDenied(failure_reason)
+        row = dict(rows[0])
+        try:
+            tags = json.loads(row["handling_tags_json"], object_pairs_hook=_strict_json_object)
+            assertion = {
+                "schema_id": "nexus.classification_assertion", "schema_version": 1,
+                "assertion_id": row["assertion_id"], "subject_type": row["subject_type"],
+                "subject_ref": row["subject_ref"], "sensitivity_level": row["sensitivity_level"],
+                "handling_tags": tags, "policy_version": row["policy_version"],
+                "reason": row["reason"], "actor_id": row["actor_id"],
+            }
+            if row["supersedes"] is not None:
+                assertion["supersedes"] = row["supersedes"]
+            self.store._validate("nexus.classification_assertion@1.schema.json", assertion)
+        except Exception as exc:
+            raise RuntimeDenied(failure_reason) from exc
+        if (assertion["subject_type"] != "OBJECT" or assertion["subject_ref"] != object_ref
+                or not self.inspect._classification_visible(
+                    {"sensitivity_level": assertion["sensitivity_level"],
+                     "handling_tags_json": json.dumps(assertion["handling_tags"], ensure_ascii=False)},
+                    boundary,
+                )):
+            raise RuntimeDenied(failure_reason)
+
+    def _validate_current_source(self, entry: dict, run_id: str, boundary: dict) -> None:
+        source_ref = entry["source_ref"]
+        metadata = self._current_object_metadata(source_ref, "CONTEXT_PACK_SOURCE_UNAVAILABLE")
+        expected_type = "memory" if entry["source_type"] == "admitted_memory" else entry["source_type"]
+        if (metadata.get("object_type") != expected_type
+                or metadata.get("schema_id") != "nexus.object"
+                or metadata.get("schema_version") != 1
+                or (metadata.get("payload_state"), metadata.get("lifecycle"), metadata.get("validity"))
+                   != ("AVAILABLE", "ACTIVE", "VALID")
+                or metadata.get("integrity_hash") != entry["source_integrity_sha256"]
+                or metadata.get("classification_assertion_ref") != entry["classification_assertion_ref"]):
+            raise RuntimeDenied("CONTEXT_PACK_SOURCE_UNAVAILABLE")
+        self._validate_current_classification(
+            entry["classification_assertion_ref"], source_ref, boundary,
+            "CONTEXT_PACK_SOURCE_OUTSIDE_RUN_BOUNDARY",
+        )
 
     def compile(
         self, *, task_id: str, run_id: str, grant_id: str, pack_object_id: str,

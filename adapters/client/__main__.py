@@ -66,6 +66,13 @@ def _parser() -> argparse.ArgumentParser:
     complete.add_argument("--command-id", required=True)
     complete.add_argument("--purge-ledger", required=True, type=Path, help="independent Purge Ledger path outside --data-root")
 
+    context = commands.add_parser("context", help="read an already compiled Context Pack through the read-only operator surface")
+    context_commands = context.add_subparsers(dest="context_action", required=True)
+    context_read = context_commands.add_parser("read", help="return one validated compiled Context Pack")
+    context_target = context_read.add_mutually_exclusive_group(required=True)
+    context_target.add_argument("--pack-ref")
+    context_target.add_argument("--latest", action="store_true")
+
     skill = commands.add_parser("skill", help="governed Agent Skills registration, review, and resolution")
     skill_commands = skill.add_subparsers(dest="skill_action", required=True)
     register = skill_commands.add_parser("register", help="register one explicit package; registration does not enable it")
@@ -149,6 +156,16 @@ def _safe_stage3_error_reason(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _safe_context_read_error_reason(exc: Exception) -> str:
+    reason = getattr(exc, "reason_code", None)
+    if not isinstance(reason, str):
+        args = getattr(exc, "args", ())
+        reason = args[0] if args else None
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason):
+        return reason
+    return type(exc).__name__
+
+
 def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
@@ -165,6 +182,22 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        if args.command == "context" and args.context_action == "read":
+            from adapters.panel.application import open_panel_application
+
+            application = open_panel_application(
+                args.data_root,
+                policy_path=args.policy,
+                independent_purge_journal_path=args.independent_purge_journal,
+                read_only=True,
+            )
+            try:
+                result = (application.context_packs.read_latest_compiled() if args.latest
+                          else application.context_packs.read_compiled(args.pack_ref))
+            finally:
+                application.close()
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
         store, authority, _budget, trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
@@ -292,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
             reason = _safe_import_error_reason(exc)
         elif args.command == "project-nexus-selfhost":
             reason = _safe_stage3_error_reason(exc)
+        elif args.command == "context":
+            reason = _safe_context_read_error_reason(exc)
         else:
             reason = str(getattr(exc, "args", [None])[0] or type(exc).__name__)
         print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
