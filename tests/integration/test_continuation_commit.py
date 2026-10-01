@@ -251,6 +251,7 @@ class ContinuationCommitTests(unittest.TestCase):
             trace=self.fixture.trace, runtime=self.fixture.runtime, verifier=self.fixture.verifier,
             plan=plan, confirmation=lambda *_: True,
         )
+        current_ref = continuation_module._read_current_ref(self.store)
         continuation_plan = {
             "protocol_version": PROTOCOL_VERSION, "command_id": f"continuation-r{generation}",
             "instance_expectation": copy.deepcopy(plan["instance_expectation"]),
@@ -259,8 +260,7 @@ class ContinuationCommitTests(unittest.TestCase):
             "expected_previous_state": {
                 "ref_id": "project-nexus:current-state", "object_id": prior_state_id,
                 "integrity_sha256": prior_state_hash,
-                "current_ref_revision": continuation_module._read_current_ref(self.store)["revision"]
-                if generation > 2 else None,
+                "current_ref_revision": current_ref["revision"] if current_ref is not None else None,
                 "accepted_revision": continuation_module._canonical_prior_revision(
                     json.loads(self.store.get_payload(prior_state_id))),
             },
@@ -458,6 +458,84 @@ class ContinuationCommitTests(unittest.TestCase):
         self.assertTrue(replay["replayed"])
         self.assertEqual(replay, first | {"replayed": True})
         self.assertEqual(self._replay_commitment(), before)
+
+    def test_completed_historical_replay_after_later_continuation(self):
+        r2_plan = copy.deepcopy(self.plan)
+        r2_result = self._commit(r2_plan)
+        self._finish_active_task("finish-continuation")
+
+        r2_pack = self.context.read_compiled(r2_result["context_pack_ref"])
+        r2_snapshot_id = r2_plan["stable_sources"][0]["snapshot_object_id"]
+        r3_plan = self._start_task_for_previous_state(
+            "continuation-r3", 3, r2_result["new_current_state_ref"], r2_result["new_current_state_hash"],
+            r2_pack["pack_id"], r2_pack["content_hash"], r2_pack["integrity_hash"],
+            [(r2_snapshot_id, "artifact")],
+        )
+        r3_plan = copy.deepcopy(r3_plan)
+        r3_result = self._commit(r3_plan)
+        self._finish_active_task("finish-continuation-r3")
+
+        before = self._replay_commitment()
+        with self.store._connection() as conn:
+            current = conn.execute(
+                "SELECT current_object_id,revision FROM logical_refs WHERE ref_id='project-nexus:current-state'"
+            ).fetchone()
+        self.assertEqual(tuple(current), (r3_result["new_current_state_ref"], 3))
+        self.assertEqual(self.context.latest()["pack_id"], r3_result["context_pack_ref"])
+
+        with mock.patch.object(continuation_module, "_validate_git_fact",
+                               side_effect=AssertionError("historical replay must not re-read Git")):
+            preflight = prepare_continuation_commit(
+                store=self.store, authority=self.authority, context_packs=self.context,
+                plan=r2_plan, git_repo=self.repo_path,
+            )
+            self.assertTrue(preflight["request_bound"])
+            self.assertTrue(preflight["completed"])
+            self.assertIsNone(preflight["confirmation_phrase"])
+            r2_replay = self._commit(
+                r2_plan, confirmation=lambda *_: self.fail("historical r2 replay must not prompt"),
+            )
+            r3_replay = self._commit(
+                r3_plan, confirmation=lambda *_: self.fail("historical r3 replay must not prompt"),
+            )
+
+        self.assertEqual(r2_replay, r2_result | {"replayed": True})
+        self.assertEqual(r3_replay, r3_result | {"replayed": True})
+        self.assertEqual(self._replay_commitment(), before)
+        with self.store._connection() as conn:
+            current = conn.execute(
+                "SELECT current_object_id,revision FROM logical_refs WHERE ref_id='project-nexus:current-state'"
+            ).fetchone()
+        self.assertEqual(tuple(current), (r3_result["new_current_state_ref"], 3))
+        self.assertEqual(self.context.latest()["pack_id"], r3_result["context_pack_ref"])
+
+    def test_partial_bound_replay_cannot_resume_after_state_advanced(self):
+        r2_plan = copy.deepcopy(self.plan)
+        with self.assertRaises(ContinuationCommitError) as crashed:
+            self._commit(
+                r2_plan,
+                stage_hook=lambda stage: (_ for _ in ()).throw(RuntimeError(stage))
+                if stage == "request_bound" else None,
+            )
+        self.assertEqual(crashed.exception.reason_code, "CONTINUATION_COMMIT_FAILED")
+
+        # Advance state with a separate valid Task while r2 remains active and
+        # its Grant is still current; retry must fail only at stale-state gates.
+        r3_plan = self._start_task_for_previous_state(
+            "continuation-r3", 3, self.previous["state_id"], self.previous["state_hash"],
+            self.previous["pack_id"], self.previous["content_hash"], self.previous["integrity_hash"],
+            self.previous["sources"],
+        )
+        r3_plan = copy.deepcopy(r3_plan)
+        r3_result = self._commit(r3_plan)
+        self._finish_active_task("finish-continuation-r3")
+        before_retry = self._replay_commitment()
+
+        with self.assertRaises(ContinuationCommitError) as caught:
+            self._commit(r2_plan, confirmation=lambda *_: self.fail("bound request must not reprompt"))
+        self.assertEqual(caught.exception.reason_code, "CONTINUATION_CONTEXT_CONFLICT")
+        self.assertEqual(self._replay_commitment(), before_retry)
+        self.assertEqual(self.context.latest()["pack_id"], r3_result["context_pack_ref"])
 
     def test_partial_bound_request_cannot_resume_with_revoked_or_expired_grant(self):
         for mode in ("revoked", "expired"):
@@ -694,12 +772,17 @@ class ContinuationCommitTests(unittest.TestCase):
 
     def _replay_commitment(self):
         with self.store._connection() as conn:
-            current = conn.execute(
-                "SELECT current_object_id,revision FROM logical_refs WHERE ref_id='project-nexus:current-state'"
-            ).fetchone()
-            relations = conn.execute("SELECT COUNT(*) FROM object_relations").fetchone()[0]
-            classifications = conn.execute("SELECT COUNT(*) FROM classification_assertions").fetchone()[0]
-        return self._counts(), tuple(current) if current else None, relations, classifications
+            tables = (
+                "logical_refs", "objects", "object_envelopes", "object_states", "object_relations",
+                "classification_assertions", "context_pack_records", "delegation_grants", "tasks", "runs",
+                "command_ledger",
+            )
+            projections = {
+                table: tuple(sorted((tuple(row) for row in conn.execute(f"SELECT * FROM {table}").fetchall()),
+                                    key=repr))
+                for table in tables
+            }
+        return self._counts(), projections
 
     def _finish_active_task(self, command_id):
         result = finish_daily_task(

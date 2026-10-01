@@ -1110,12 +1110,15 @@ def _assert_ids_and_outputs(store, normalized: dict[str, Any], documents: dict[s
 
 
 def _prepare(store, authority, context_packs, plan: dict[str, Any], git_repo: str | Path,
-             *, request_bound_hint: bool | None = None) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], bool]:
+             *, request_bound_hint: bool | None = None,
+             historical_replay_candidate: bool = False) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], bool]:
     normalized = _validate_plan_shape(store, authority, plan)
     _validate_binding(store, normalized["instance_expectation"])
-    _validate_modes(store)
     has_request_binding = _request_binding_exists(store, normalized)
-    projection = _read_projection(store, normalized, allow_historical=has_request_binding)
+    historical_candidate = historical_replay_candidate and has_request_binding
+    if not historical_candidate:
+        _validate_modes(store)
+    projection = _read_projection(store, normalized, allow_historical=historical_candidate)
     request_bound = request_bound_hint if request_bound_hint is not None else False
     try:
         _check_work_closure(store, normalized["task_id"])
@@ -1144,9 +1147,10 @@ def _prepare(store, authority, context_packs, plan: dict[str, Any], git_repo: st
     _validate_scope(projection, normalized, normalized["prior"]["object_id"])
     request = _request_document(normalized, projection, documents)
     bound = _read_request(store, normalized, request)
-    if not bound:
-        if has_request_binding:
+    if historical_candidate:
+        if not bound:
             _fail("CONTINUATION_REQUEST_BINDING_INVALID")
+    else:
         _grant_chain(authority, normalized, projection, require_current=True)
     # A durable HUMAN-confirmed request owns its frozen Git observation. Exact
     # recovery must not depend on the repository still having that live state.
@@ -1155,38 +1159,54 @@ def _prepare(store, authority, context_packs, plan: dict[str, Any], git_repo: st
     # A new compiled pack must sort newer than its predecessor under the
     # existing ContextPackService.latest ordering. Exact bound replay may
     # already have compiled this very output pack.
-    try:
-        latest = context_packs.latest()
+    if not historical_candidate:
+        try:
+            latest = context_packs.latest()
+        except ContinuationCommitError:
+            raise
+        except Exception:
+            _fail("CONTINUATION_PREVIOUS_CONTEXT_UNAVAILABLE")
+        if not bound and latest.get("pack_id") != normalized["prior_context"]["pack_ref"]:
+            _fail("CONTINUATION_CONTEXT_CONFLICT")
+        if bound and latest.get("pack_id") not in {
+            normalized["prior_context"]["pack_ref"], normalized["output_ids"]["context_pack_object_id"],
+        }:
+            _fail("CONTINUATION_CONTEXT_CONFLICT")
         if latest.get("pack_id") != normalized["output_ids"]["context_pack_object_id"]:
             latest_compiled = _timestamp(latest["compiled_at"])
             if normalized["as_of_dt"] <= latest_compiled:
                 _fail("CONTINUATION_TIMESTAMP_NOT_MONOTONIC")
-    except ContinuationCommitError:
-        raise
-    except Exception:
-        _fail("CONTINUATION_PREVIOUS_CONTEXT_UNAVAILABLE")
-    if not bound and latest.get("pack_id") != normalized["prior_context"]["pack_ref"]:
-        _fail("CONTINUATION_CONTEXT_CONFLICT")
-    if bound and latest.get("pack_id") not in {
-        normalized["prior_context"]["pack_ref"], normalized["output_ids"]["context_pack_object_id"],
-    }:
-        _fail("CONTINUATION_CONTEXT_CONFLICT")
-    _check_pointer(store, normalized, request_bound=bound)
+        _check_pointer(store, normalized, request_bound=bound)
     if request_bound_hint is not None and bound != request_bound_hint:
         _fail("CONTINUATION_REQUEST_BINDING_INVALID")
     _assert_ids_and_outputs(store, normalized, documents, request_bound=bound)
     return normalized, projection, documents, request, bound
 
 
+def _prepare_replay_or_resume(*, store, authority, context_packs, plan: dict[str, Any],
+                              git_repo: str | Path):
+    """Prefer a complete immutable replay proof; otherwise enforce current write eligibility."""
+    prepared = _prepare(store, authority, context_packs, plan, git_repo,
+                        historical_replay_candidate=True)
+    normalized, _projection, documents, _request, request_bound = prepared
+    if not request_bound:
+        return prepared, None
+    completed = _complete_replay(store, context_packs, normalized, documents, require_current=False)
+    if completed is not None:
+        return prepared, completed
+    return _prepare(store, authority, context_packs, plan, git_repo), None
+
+
 def prepare_continuation_commit(*, store, authority, context_packs, plan: dict[str, Any],
                                 git_repo: str | Path) -> dict[str, Any]:
     """Read-only preflight; returns only a sanitized confirmation summary."""
     try:
-        normalized, projection, documents, _request, bound = _prepare(
-            store, authority, context_packs, plan, git_repo,
+        (normalized, projection, documents, _request, bound), completed = _prepare_replay_or_resume(
+            store=store, authority=authority, context_packs=context_packs, plan=plan, git_repo=git_repo,
         )
         return {
             "request_bound": bound,
+            "completed": completed is not None,
             "confirmation_phrase": None if bound else "COMMIT CONTINUATION " + normalized["task_id"],
             "summary": _confirmation_summary(normalized, projection, documents),
         }
@@ -1263,7 +1283,8 @@ def _result(normalized: dict[str, Any], documents: dict[str, Any], *, replayed: 
     }
 
 
-def _complete_replay(store, context_packs, normalized: dict[str, Any], documents: dict[str, Any]) -> dict[str, Any] | None:
+def _complete_replay(store, context_packs, normalized: dict[str, Any], documents: dict[str, Any],
+                     *, require_current: bool = True) -> dict[str, Any] | None:
     command_id = normalized["command_id"]
     operation_specs = [
         (command_id + ":put-current-state", "put_object", {
@@ -1302,14 +1323,17 @@ def _complete_replay(store, context_packs, normalized: dict[str, Any], documents
         "ref_id": CURRENT_STATE_REF, "expected_revision": (normalized["prior"]["current_ref_revision"] or 1),
         "new_object_id": normalized["output_ids"]["current_state_object_id"], "updated_by_run": normalized["run_id"],
     })
-    if relation is None or ref_cas is None:
+    expected_revision = (normalized["prior"]["current_ref_revision"] or 1) + 1
+    if (relation != {"from_id": normalized["output_ids"]["current_state_object_id"],
+                     "relation_type": "supersedes", "to_id": normalized["prior"]["object_id"]}
+            or ref_cas != {"ref_id": CURRENT_STATE_REF, "revision": expected_revision}):
         return None
-    current_ref = _read_current_ref(store)
-    expected_current_revision = (normalized["prior"]["current_ref_revision"] or 1) + 1
-    if (not current_ref or current_ref["ref_type"] != "artifact"
-            or current_ref["current_object_id"] != normalized["output_ids"]["current_state_object_id"]
-            or current_ref["revision"] != expected_current_revision):
-        return None
+    if require_current:
+        current_ref = _read_current_ref(store)
+        if (not current_ref or current_ref["ref_type"] != "artifact"
+                or current_ref["current_object_id"] != normalized["output_ids"]["current_state_object_id"]
+                or current_ref["revision"] != expected_revision):
+            return None
     with store._connection() as conn:
         supersession_exists = conn.execute(
             "SELECT 1 FROM object_relations WHERE from_id=? AND relation_type='supersedes' AND to_id=?",
@@ -1342,12 +1366,12 @@ def _complete_replay(store, context_packs, normalized: dict[str, Any], documents
         return None
     try:
         verified_context = context_packs.read_compiled(normalized["output_ids"]["context_pack_object_id"])
-        latest = context_packs.latest()
+        latest = context_packs.latest() if require_current else None
     except Exception:
         return None
     expected_refs = [entry["source_ref"] for entry in documents["context_doc"]["entries"]]
-    if (latest.get("pack_id") != normalized["output_ids"]["context_pack_object_id"]
-            or latest.get("model_visible_exposure") != "UNKNOWN"
+    if ((require_current and latest.get("pack_id") != normalized["output_ids"]["context_pack_object_id"])
+            or verified_context.get("model_visible_exposure") != "UNKNOWN"
             or verified_context.get("content_hash") != documents["context_hash"]
             or verified_context.get("integrity_hash") != documents["context_integrity_hash"]
             or verified_context.get("serialized_byte_size") != len(documents["context_payload"])
@@ -1364,13 +1388,11 @@ def commit_continuation(*, store, authority, context_packs, plan: dict[str, Any]
     store_locked = False
     human_confirmed = False
     try:
-        normalized, projection, documents, request, request_bound = _prepare(
-            store, authority, context_packs, plan, git_repo,
+        (normalized, projection, documents, request, request_bound), completed = _prepare_replay_or_resume(
+            store=store, authority=authority, context_packs=context_packs, plan=plan, git_repo=git_repo,
         )
-        if request_bound:
-            completed = _complete_replay(store, context_packs, normalized, documents)
-            if completed is not None:
-                return completed
+        if completed is not None:
+            return completed
         if not request_bound:
             phrase = "COMMIT CONTINUATION " + normalized["task_id"]
             if not confirmation(phrase, _confirmation_summary(normalized, projection, documents)):
@@ -1383,14 +1405,12 @@ def commit_continuation(*, store, authority, context_packs, plan: dict[str, Any]
         # the in-process optimistic-CAS race as well.
         store._lock.acquire()
         store_locked = True
-        normalized, projection, documents, request, request_bound = _prepare(
-            store, authority, context_packs, plan, git_repo,
+        (normalized, projection, documents, request, request_bound), completed = _prepare_replay_or_resume(
+            store=store, authority=authority, context_packs=context_packs, plan=plan, git_repo=git_repo,
         )
-        if request_bound:
-            completed = _complete_replay(store, context_packs, normalized, documents)
-            if completed is not None:
-                return completed
-        else:
+        if completed is not None:
+            return completed
+        if not request_bound:
             if not human_confirmed:
                 _fail("CONTINUATION_REQUEST_BINDING_INVALID")
             store.bind_command_request(command_id=normalized["request_command_id"],
