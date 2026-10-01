@@ -22,7 +22,7 @@ from kernel.skills import compose_skill_application, default_codex_skill_roots
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nexus", description="Codex-hosted Nexus local operator surface")
-    parser.add_argument("--data-root", required=True, type=Path, help="Existing Nexus data root; the CLI never initializes a database")
+    parser.add_argument("--data-root", type=Path, help="Existing Nexus data root; the CLI never initializes a database")
     parser.add_argument("--policy", type=Path, help="Optional existing nexus.policy@1 JSON file; read-only and schema-validated")
     parser.add_argument("--independent-purge-journal", type=Path, help="Configured independent Purge Journal; defaults to NEXUS_INDEPENDENT_PURGE_JOURNAL or a sibling of --data-root")
     parser.add_argument("--repo-skill-root", type=Path, default=Path(".agents/skills"),
@@ -124,6 +124,14 @@ def _parser() -> argparse.ArgumentParser:
     continuation_commit.add_argument("--plan", required=True, type=Path, help="process-local strict JSON continuation plan")
     continuation_commit.add_argument("--repo", required=True, type=Path,
                                      help="process-local repository used to verify the declared Git fact; never persisted")
+
+    project = commands.add_parser("project", help="locate or attach this repository to an existing host-local Nexus instance")
+    project_commands = project.add_subparsers(dest="project_action", required=True)
+    project_attach = project_commands.add_parser("attach", help="HUMAN-confirm an existing Nexus instance attachment")
+    project_attach.add_argument("--project-root", type=Path, help="repository root (default: current directory)")
+    project_attach.add_argument("--project-id", help="portable Nexus project identity")
+    project_locate = project_commands.add_parser("locate", help="resolve the nearest Project Manifest and verify its host binding")
+    project_locate.add_argument("--project-root", type=Path, help="directory from which to search upward (default: current directory)")
 
     selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
     selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
@@ -272,6 +280,28 @@ def _confirm_continuation(expected: str, summary: dict[str, Any]) -> bool:
         return False
 
 
+def _require_project_attach_tty() -> None:
+    from adapters.client.project_locator import ProjectLocatorError
+
+    try:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise ProjectLocatorError("INTERACTIVE_TTY_REQUIRED")
+    except ProjectLocatorError:
+        raise
+    except Exception:
+        raise ProjectLocatorError("INTERACTIVE_TTY_REQUIRED") from None
+
+
+def _confirm_project_attach(expected: str, summary: dict[str, Any]) -> bool:
+    _require_project_attach_tty()
+    print("Attach this Project to the verified existing Nexus instance:", file=sys.stdout)
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True), file=sys.stdout)
+    try:
+        return input(f"Type {expected} to confirm: ") == expected
+    except (EOFError, OSError):
+        return False
+
+
 def _safe_continuation_error_reason(exc: Exception) -> str:
     reason = getattr(exc, "reason_code", None)
     if not isinstance(reason, str):
@@ -298,6 +328,46 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        if args.command == "project":
+            from adapters.client.project_locator import attach_project, locate_project
+
+            if args.project_action == "locate":
+                if args.data_root is not None or args.policy is not None or args.independent_purge_journal is not None:
+                    from adapters.client.project_locator import ProjectLocatorError
+                    raise ProjectLocatorError("PROJECT_LOCATE_PATH_ARGUMENTS_UNSUPPORTED")
+                result = locate_project(start_dir=args.project_root)
+            else:
+                if args.data_root is None:
+                    from adapters.client.project_locator import ProjectLocatorError
+                    raise ProjectLocatorError("PROJECT_DATA_ROOT_REQUIRED")
+                if args.independent_purge_journal is None:
+                    from adapters.client.project_locator import ProjectLocatorError
+                    raise ProjectLocatorError("PROJECT_JOURNAL_REQUIRED")
+                result = attach_project(
+                    project_root=args.project_root or Path.cwd(),
+                    project_id=args.project_id,
+                    data_root=args.data_root,
+                    policy_path=args.policy,
+                    independent_purge_journal_path=args.independent_purge_journal,
+                    confirmation=_confirm_project_attach,
+                )
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+
+        if args.data_root is None:
+            from adapters.client.project_locator import ProjectLocatorError, resolve_project_runtime
+
+            if (
+                args.policy is not None
+                or args.independent_purge_journal is not None
+                or (args.command == "recovery" and args.purge_ledger is not None)
+            ):
+                raise ProjectLocatorError("PROJECT_LOCATOR_PATHS_REQUIRE_DATA_ROOT")
+            resolved = resolve_project_runtime()
+            args.data_root = Path(resolved["data_root"])
+            args.policy = Path(resolved["policy_path"]) if resolved["policy_path"] is not None else None
+            args.independent_purge_journal = Path(resolved["independent_purge_journal_path"])
+
         task_start_plan = None
         if args.command == "task" and args.task_action == "start":
             from adapters.client.task_start import read_task_start_plan
@@ -514,7 +584,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        if args.command == "import-git-source":
+        if args.command == "project":
+            reason = _safe_context_read_error_reason(exc)
+        elif args.data_root is None:
+            reason = _safe_context_read_error_reason(exc)
+        elif args.command == "import-git-source":
             reason = _safe_import_error_reason(exc)
         elif args.command == "continuation":
             reason = _safe_continuation_error_reason(exc)

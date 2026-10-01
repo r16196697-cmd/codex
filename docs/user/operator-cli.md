@@ -2,6 +2,8 @@
 
 This is a local, thin operator client over Nexus Runtime APIs. It does not query or mutate SQLite itself, and it refuses to create a database implicitly. It is available after Nexus has been initialized at a reviewed data root:
 
+An existing repository can be attached to an already initialized instance with the HUMAN-confirmed `project attach` command. Once attached on this host, commands may resolve the instance from the current directory without explicit path arguments. See [Project Locator and Attach](project-locator-attach.md). Explicit `--data-root` workflows below remain supported.
+
 ```powershell
 .\.venv\Scripts\python.exe -m adapters.client --data-root <existing-data-root> --policy <nexus-policy.json> mode show
 .\.venv\Scripts\python.exe -m adapters.client --data-root <existing-data-root> --policy <nexus-policy.json> mode set SAFE --command-id <unique-id> --grant-id <grant-id> --task-id <task-id> --classification-assertion-ref <trace-event-classification>
