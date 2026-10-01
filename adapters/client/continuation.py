@@ -341,7 +341,7 @@ def _read_current_ref(store) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def _read_projection(store, normalized: dict[str, Any]) -> dict[str, Any]:
+def _read_projection(store, normalized: dict[str, Any], *, allow_historical: bool = False) -> dict[str, Any]:
     with store._connection() as conn:
         task = conn.execute(
             "SELECT task_id,requester_id,status,root_run_id FROM tasks WHERE task_id=?",
@@ -359,17 +359,18 @@ def _read_projection(store, normalized: dict[str, Any]) -> dict[str, Any]:
         _fail("CONTINUATION_TASK_BINDING_MISMATCH")
     if (task["task_id"] != normalized["task_id"] or task["requester_id"] != normalized["operator_id"]
             or task["root_run_id"] != normalized["run_id"]
-            or task["status"] != "ACTIVE" or run["run_id"] != normalized["run_id"]
-            or run["task_id"] != normalized["task_id"] or run["parent_run_id"] is not None
-            or run["executor_kind"] != "ORCHESTRATOR" or run["status"] != "RUNNING"
-            or run["grant_id"] != normalized["grant_id"]):
+            or run["run_id"] != normalized["run_id"] or run["task_id"] != normalized["task_id"]
+            or run["parent_run_id"] is not None or run["executor_kind"] != "ORCHESTRATOR"
+            or run["grant_id"] != normalized["grant_id"]
+            or (not allow_historical and (task["status"] != "ACTIVE" or run["status"] != "RUNNING"))):
         _fail("CONTINUATION_TASK_NOT_ACTIVE")
-    if (not operator or tuple(operator) != ("HUMAN", "ACTIVE")
-            or normalized["operator_id"] not in store.policy.get("trust_anchors", [])
-            or not anchor or anchor["policy_ref"] != store.policy["policy_version"]):
-        _fail("CONTINUATION_OPERATOR_UNTRUSTED")
-    if not runtime or tuple(runtime) != ("SERVICE", "ACTIVE"):
-        _fail("CONTINUATION_RUNTIME_PRINCIPAL_INVALID")
+    if not allow_historical:
+        if (not operator or tuple(operator) != ("HUMAN", "ACTIVE")
+                or normalized["operator_id"] not in store.policy.get("trust_anchors", [])
+                or not anchor or anchor["policy_ref"] != store.policy["policy_version"]):
+            _fail("CONTINUATION_OPERATOR_UNTRUSTED")
+        if not runtime or tuple(runtime) != ("SERVICE", "ACTIVE"):
+            _fail("CONTINUATION_RUNTIME_PRINCIPAL_INVALID")
     try:
         boundary = json.loads(run["data_boundary_json"])
         scope = {
@@ -478,6 +479,78 @@ def _prior_fact(document: dict[str, Any], keys: tuple[str, ...]) -> str:
 def _pack_entry(pack: dict[str, Any], ref: str) -> dict[str, Any] | None:
     found = [entry for entry in pack.get("entries", []) if entry.get("source_ref") == ref]
     return found[0] if len(found) == 1 else None
+
+
+_SNAPSHOT_ENTRY_SCHEMA = "nexus.continuation_snapshot_entry"
+_SNAPSHOT_ENTRY_KEYS = {
+    "schema_id", "schema_version", "source_ref", "source_type",
+    "classification_assertion_ref", "source_integrity_sha256", "content",
+}
+_SNAPSHOT_ENTRY_KEYS_WITH_ID = _SNAPSHOT_ENTRY_KEYS | {"snapshot_object_id"}
+_STABLE_SOURCE_TYPES = {"artifact", "evidence", "claim", "verification"}
+
+
+def _decode_snapshot_entry(content: str, *, expected_snapshot_id: str) -> dict[str, Any] | None:
+    """Return the original source payload represented by a verified snapshot wrapper.
+
+    A Context Pack read has already verified the immediate snapshot object's bytes.
+    Here every wrapper layer is additionally required to be canonical and to bind
+    the next embedded content bytes to its declared source integrity hash.
+    """
+    try:
+        current_bytes = content.encode("utf-8", errors="strict")
+    except Exception:
+        _fail("CONTINUATION_CONTEXT_SOURCE_INVALID")
+    try:
+        current = json.loads(current_bytes.decode("utf-8"), object_pairs_hook=_pairs_no_duplicates,
+                             parse_constant=_reject_constant)
+    except Exception:
+        return None
+    if not isinstance(current, dict) or current.get("schema_id") != _SNAPSHOT_ENTRY_SCHEMA:
+        return None
+
+    expected_id = expected_snapshot_id
+    while True:
+        current_keys = set(current)
+        if (current_keys != _SNAPSHOT_ENTRY_KEYS and current_keys != _SNAPSHOT_ENTRY_KEYS_WITH_ID
+                or current.get("schema_id") != _SNAPSHOT_ENTRY_SCHEMA
+                or type(current.get("schema_version")) is not int or current["schema_version"] != 1
+                or not _logical_id(current.get("source_ref"))
+                or current.get("source_type") not in _STABLE_SOURCE_TYPES
+                or not _logical_id(current.get("classification_assertion_ref"))
+                or not isinstance(current.get("source_integrity_sha256"), str)
+                or _SHA256.fullmatch(current["source_integrity_sha256"]) is None
+                or not isinstance(current.get("content"), str)):
+            _fail("CONTINUATION_SNAPSHOT_ENTRY_INVALID")
+        if "snapshot_object_id" in current and (
+                not _logical_id(current["snapshot_object_id"])
+                or (expected_id is not None and current["snapshot_object_id"] != expected_id)):
+            _fail("CONTINUATION_SNAPSHOT_ENTRY_INVALID")
+        if _canonical_json(current) != current_bytes:
+            _fail("CONTINUATION_SNAPSHOT_ENTRY_INVALID")
+        try:
+            embedded_bytes = current["content"].encode("utf-8", errors="strict")
+        except Exception:
+            _fail("CONTINUATION_SNAPSHOT_ENTRY_INVALID")
+        if _sha256(embedded_bytes) != current["source_integrity_sha256"]:
+            _fail("CONTINUATION_SNAPSHOT_ENTRY_INTEGRITY_INVALID")
+        try:
+            nested = json.loads(embedded_bytes.decode("utf-8"), object_pairs_hook=_pairs_no_duplicates,
+                                parse_constant=_reject_constant)
+        except Exception:
+            nested = None
+        if not isinstance(nested, dict) or nested.get("schema_id") != _SNAPSHOT_ENTRY_SCHEMA:
+            return current
+        expected_id = current["source_ref"]
+        current_bytes = embedded_bytes
+        current = nested
+
+
+def _request_binding_exists(store, normalized: dict[str, Any]) -> bool:
+    """A ledger row only selects relaxed read validation; its digest is still checked later."""
+    with store._connection() as conn:
+        return conn.execute("SELECT 1 FROM command_ledger WHERE command_id=?",
+                            (normalized["request_command_id"],)).fetchone() is not None
 
 
 def _prior_context(context_packs, normalized: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -649,8 +722,7 @@ def _build_documents(store, normalized: dict[str, Any], projection: dict[str, An
                                         prior_state_entry["classification_assertion_ref"], projection["boundary"])
     for item in normalized["stable_sources"]:
         entry = _pack_entry(prior_pack, item["source_ref"])
-        if (entry is None or entry.get("source_type") not in {"artifact", "evidence", "claim", "verification"}
-                or entry.get("source_type") == "admitted_memory"):
+        if entry is None or entry.get("source_type") not in _STABLE_SOURCE_TYPES:
             _fail("CONTINUATION_CONTEXT_SOURCE_INVALID")
         try:
             source_bytes = entry["content"].encode("utf-8", errors="strict")
@@ -661,6 +733,16 @@ def _build_documents(store, normalized: dict[str, Any], projection: dict[str, An
         source_meta = _source_classification(store, item["source_ref"], entry["classification_assertion_ref"], projection["boundary"])
         if source_meta["metadata"]["integrity_hash"] != entry["source_integrity_sha256"]:
             _fail("CONTINUATION_CONTEXT_SOURCE_INTEGRITY_INVALID")
+        if source_meta["metadata"].get("object_type") != entry["source_type"]:
+            _fail("CONTINUATION_CONTEXT_SOURCE_INVALID")
+        origin = _decode_snapshot_entry(entry["content"], expected_snapshot_id=item["source_ref"])
+        if origin is None:
+            origin = {
+                "source_ref": item["source_ref"], "source_type": entry["source_type"],
+                "classification_assertion_ref": entry["classification_assertion_ref"],
+                "source_integrity_sha256": entry["source_integrity_sha256"],
+                "content": entry["content"],
+            }
         classification = _snapshot_classification(item, projection["runtime_principal_id"],
                                                   store.policy["policy_version"], source_meta["classification"])
         try:
@@ -669,10 +751,11 @@ def _build_documents(store, normalized: dict[str, Any], projection: dict[str, An
             _fail("CONTINUATION_CLASSIFICATION_INVALID")
         snapshot_doc = {
             "schema_id": "nexus.continuation_snapshot_entry", "schema_version": 1,
-            "source_ref": item["source_ref"], "source_type": entry["source_type"],
-            "classification_assertion_ref": entry["classification_assertion_ref"],
-            "source_integrity_sha256": entry["source_integrity_sha256"],
-            "content": entry["content"],
+            "snapshot_object_id": item["snapshot_object_id"],
+            "source_ref": origin["source_ref"], "source_type": origin["source_type"],
+            "classification_assertion_ref": origin["classification_assertion_ref"],
+            "source_integrity_sha256": origin["source_integrity_sha256"],
+            "content": origin["content"],
         }
         snapshot_bytes = _canonical_json(snapshot_doc)
         snapshot_entries.append({
@@ -894,7 +977,8 @@ def _request_document(normalized: dict[str, Any], projection: dict[str, Any], do
             "policy_version": projection["grant"]["policy_version"],
             "issued_at": projection["grant"]["issued_at"],
             "expires_at": projection["grant"]["expires_at"],
-            "status": projection["grant"]["status"],
+            **({"credential_ref": projection["grant"]["credential_ref"]}
+               if projection["grant"].get("credential_ref") is not None else {}),
             "task_scope": projection["scope"]["task_scope"],
             "resource_scope": projection["scope"]["resource_scope"],
             "action_scope": projection["scope"]["action_scope"],
@@ -989,7 +1073,7 @@ def _assert_ids_and_outputs(store, normalized: dict[str, Any], documents: dict[s
         normalized["output_ids"]["context_pack_object_id"]: ("artifact", documents["context_integrity_hash"], normalized["run_id"], normalized["classes"]["context_pack_classification"]["assertion_id"]),
     }
     expected_objects.update({
-        item["snapshot_object_id"]: (documents["original_entries"][item["source_ref"]]["source_type"],
+        item["snapshot_object_id"]: ("artifact",
                                      _sha256(documents["snapshot_payloads"][item["snapshot_object_id"]]),
                                      normalized["run_id"], item["classification_assertion_id"])
         for item in normalized["stable_sources"]
@@ -1030,9 +1114,9 @@ def _prepare(store, authority, context_packs, plan: dict[str, Any], git_repo: st
     normalized = _validate_plan_shape(store, authority, plan)
     _validate_binding(store, normalized["instance_expectation"])
     _validate_modes(store)
-    projection = _read_projection(store, normalized)
+    has_request_binding = _request_binding_exists(store, normalized)
+    projection = _read_projection(store, normalized, allow_historical=has_request_binding)
     request_bound = request_bound_hint if request_bound_hint is not None else False
-    _grant_chain(authority, normalized, projection, require_current=True)
     try:
         _check_work_closure(store, normalized["task_id"])
     except Exception as exc:
@@ -1060,6 +1144,10 @@ def _prepare(store, authority, context_packs, plan: dict[str, Any], git_repo: st
     _validate_scope(projection, normalized, normalized["prior"]["object_id"])
     request = _request_document(normalized, projection, documents)
     bound = _read_request(store, normalized, request)
+    if not bound:
+        if has_request_binding:
+            _fail("CONTINUATION_REQUEST_BINDING_INVALID")
+        _grant_chain(authority, normalized, projection, require_current=True)
     # A durable HUMAN-confirmed request owns its frozen Git observation. Exact
     # recovery must not depend on the repository still having that live state.
     if not bound:
