@@ -4,12 +4,14 @@ import contextlib
 import hashlib
 import io
 import json
+import multiprocessing
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from adapters.client import project_locator
 from adapters.client.__main__ import _parser, main
 from adapters.client.project_locator import (
     ProjectLocatorError,
@@ -22,6 +24,37 @@ from adapters.client.project_locator import (
     resolve_project_registry_path,
 )
 from tests.support.test_store import open_test_store
+
+
+def _concurrent_attach_worker(
+    project_root: str, project_id: str, data_root: str, policy_path: str,
+    journal_path: str, registry_path: str, confirmation_barrier, result_queue,
+) -> None:
+    try:
+        def confirm(_expected, _summary):
+            confirmation_barrier.wait(timeout=30)
+            return True
+
+        result = attach_project(
+            project_root=project_root,
+            project_id=project_id,
+            data_root=data_root,
+            policy_path=policy_path,
+            independent_purge_journal_path=journal_path,
+            registry_path=registry_path,
+            confirmation=confirm,
+        )
+        result_queue.put(("ok", result["status"], project_id))
+    except ProjectLocatorError as exc:
+        result_queue.put(("error", exc.reason_code, project_id))
+    except BaseException as exc:
+        result_queue.put(("unexpected", type(exc).__name__, project_id))
+
+
+def _exit_while_holding_registry_lock(registry_path: str, acquired_event) -> None:
+    with project_locator._registry_mutation_lock(Path(registry_path)):
+        acquired_event.set()
+        os._exit(0)
 
 
 def _files_commitment(*roots: Path) -> dict[str, str]:
@@ -157,6 +190,7 @@ class ProjectLocatorTests(unittest.TestCase):
             self._attach(confirmation=lambda _expected, _summary: False)
         self.assertFalse((self.repo / ".nexus").exists())
         self.assertFalse(self.registry_path.exists())
+        self.assertFalse(self.registry_path.with_name(self.registry_path.name + ".lock").exists())
         self.assertEqual(_files_commitment(self.data_root, self.journal.parent), before_instance)
 
     def test_missing_confirmation_fails_without_writes(self):
@@ -172,9 +206,18 @@ class ProjectLocatorTests(unittest.TestCase):
     def test_exact_attach_replay_never_prompts_or_rewrites_files(self):
         self._attach()
         manifest = self.repo / ".nexus" / "project.json"
-        before = (manifest.read_bytes(), self.registry_path.read_bytes(), manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns)
+        lock_path = self.registry_path.with_name(self.registry_path.name + ".lock")
+        before = (
+            manifest.read_bytes(), self.registry_path.read_bytes(), lock_path.read_bytes(),
+            manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns,
+            lock_path.stat().st_mtime_ns,
+        )
         result = self._attach(confirmation=lambda *_args: self.fail("exact replay prompted"))
-        after = (manifest.read_bytes(), self.registry_path.read_bytes(), manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns)
+        after = (
+            manifest.read_bytes(), self.registry_path.read_bytes(), lock_path.read_bytes(),
+            manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns,
+            lock_path.stat().st_mtime_ns,
+        )
         self.assertEqual(result["status"], "PROJECT_ALREADY_ATTACHED")
         self.assertEqual(after, before)
 
@@ -213,13 +256,122 @@ class ProjectLocatorTests(unittest.TestCase):
         nested = self.repo / "pkg" / "module"
         nested.mkdir(parents=True)
         before = _files_commitment(self.data_root, self.journal.parent)
-        result = locate_project(start_dir=nested, registry_path=self.registry_path)
+        with mock.patch.object(
+            project_locator, "_registry_mutation_lock",
+            side_effect=AssertionError("locate must not acquire mutation lock"),
+        ):
+            result = locate_project(start_dir=nested, registry_path=self.registry_path)
         after = _files_commitment(self.data_root, self.journal.parent)
         self.assertEqual(result["status"], "PROJECT_LOCATED")
         self.assertEqual(result["project_id"], "project-test")
         self.assertEqual(result["instance_id"], self.store_instance_id())
         self.assertEqual(result["data_root"], str(self.data_root.resolve()))
         self.assertEqual(after, before)
+
+    def _make_concurrent_fixture(self, label: str, *, project_id: str | None = None):
+        repo = self.base / f"repo-{label}"
+        repo.mkdir()
+        data_root = self.base / f"instance-{label}"
+        journal = self.base / f"journal-{label}" / "purge.jsonl"
+        store = open_test_store(data_root, independent_purge_journal_path=journal)
+        store.close()
+        policy = data_root.parent / f".{data_root.name}.test-policy.json"
+        return repo, data_root, policy, journal
+
+    def _run_two_process_attaches(self, first, second):
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        processes = [
+            context.Process(
+                target=_concurrent_attach_worker,
+                args=(
+                    fixture[0], fixture[4], fixture[1], fixture[2], fixture[3],
+                    self.registry_path, barrier, result_queue,
+                ),
+            )
+            for fixture in (first, second)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(45)
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                self.fail("concurrent attach process did not finish")
+            self.assertEqual(process.exitcode, 0)
+        results = [result_queue.get(timeout=5) for _ in processes]
+        result_queue.close()
+        result_queue.join_thread()
+        return results
+
+    def test_concurrent_different_projects_preserve_both_registry_entries(self):
+        first = self._make_concurrent_fixture("parallel-a")
+        second = self._make_concurrent_fixture("parallel-b")
+        results = self._run_two_process_attaches(
+            (*first, "project-parallel-a"), (*second, "project-parallel-b"),
+        )
+        self.assertEqual({result[0] for result in results}, {"ok"})
+        self.assertEqual({result[1] for result in results}, {"PROJECT_ATTACHED"})
+        registry = read_host_registry(self.registry_path)
+        self.assertEqual(
+            set(registry["projects"]), {"project-parallel-a", "project-parallel-b"},
+        )
+
+    def test_concurrent_same_project_different_bindings_has_one_winner(self):
+        first = self._make_concurrent_fixture("same-a")
+        second = self._make_concurrent_fixture("same-b")
+        results = self._run_two_process_attaches(
+            (*first, "project-shared"), (*second, "project-shared"),
+        )
+        self.assertEqual(sum(result[0] == "ok" for result in results), 1, results)
+        self.assertEqual(sum(result == ("error", "PROJECT_ATTACHMENT_CONFLICT", "project-shared") for result in results), 1, results)
+        registry = read_host_registry(self.registry_path)
+        self.assertEqual(set(registry["projects"]), {"project-shared"})
+        winner_root = Path(registry["projects"]["project-shared"]["data_root"])
+        attached_roots = [fixture[1].resolve() for fixture in (first, second)]
+        self.assertIn(winner_root, attached_roots)
+        manifest_count = sum((fixture[0] / ".nexus" / "project.json").is_file() for fixture in (first, second))
+        self.assertEqual(manifest_count, 1)
+
+    def test_registry_updated_after_preflight_is_reread_under_lock(self):
+        concurrent_record = project_locator._attachment_record(project_locator._verified_binding(
+            data_root=self.data_root, policy_path=self.policy_path,
+            journal_path=self.journal,
+        ))
+
+        def confirm(expected, _summary):
+            self.assertEqual(expected, "ATTACH project-test")
+            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+            self.registry_path.write_bytes(project_locator._canonical_json({
+                "schema_id": "nexus.host_project_registry",
+                "schema_version": 1,
+                "projects": {"project-concurrent": concurrent_record},
+            }))
+            return True
+
+        result = self._attach(confirmation=confirm)
+        self.assertEqual(result["status"], "PROJECT_ATTACHED")
+        registry = read_host_registry(self.registry_path)
+        self.assertEqual(set(registry["projects"]), {"project-concurrent", "project-test"})
+
+    def test_registry_kernel_lock_is_released_after_process_termination(self):
+        context = multiprocessing.get_context("spawn")
+        acquired = context.Event()
+        process = context.Process(
+            target=_exit_while_holding_registry_lock,
+            args=(str(self.registry_path), acquired),
+        )
+        process.start()
+        self.assertTrue(acquired.wait(15), "child never acquired registry lock")
+        process.join(15)
+        self.assertEqual(process.exitcode, 0)
+        # The persistent sidecar is not a stale lease: the OS released its
+        # advisory lock when the process exited without running finally.
+        with project_locator._registry_mutation_lock(self.registry_path):
+            self.assertTrue(self.registry_path.with_name(self.registry_path.name + ".lock").is_file())
 
     def test_same_project_manifest_in_another_clone_uses_project_id_only(self):
         self._attach()

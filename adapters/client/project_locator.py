@@ -11,9 +11,10 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -321,6 +322,78 @@ def _write_atomic(path: Path, content: bytes) -> None:
         _fail("PROJECT_REGISTRY_WRITE_FAILED")
 
 
+@contextmanager
+def _registry_mutation_lock(registry_path: Path) -> Iterator[None]:
+    """Serialize host-registry mutations across processes.
+
+    The persistent sidecar is only a lock target; ownership is held by the OS
+    lock, not by stale PID/lease data.  Kernel locks are released when a
+    process exits, so an interrupted attach cannot leave a permanent lock.
+    Read-only locate deliberately does not use or create this file.
+    """
+    lock_path = registry_path.with_name(registry_path.name + ".lock")
+    handle = None
+    acquired = False
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if lock_path.is_symlink():
+            _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
+        flags = os.O_CREAT | os.O_RDWR
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(lock_path, flags, 0o600)
+        handle = os.fdopen(descriptor, "r+b", buffering=0)
+
+        # msvcrt locks a byte range at the current file position.  Ensure the
+        # shared byte exists before locking; concurrent initializers both
+        # write the same single zero byte, then serialize on offset zero.
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            os.fsync(handle.fileno())
+
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        acquired = True
+    except ProjectLocatorError:
+        if handle is not None:
+            handle.close()
+        _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
+    except Exception:
+        if handle is not None:
+            handle.close()
+        _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
+
+    try:
+        yield
+    finally:
+        if handle is not None:
+            if acquired:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    # Closing the descriptor still releases the OS lock.
+                    pass
+            handle.close()
+
+
 def _manifest_document(project_id: str) -> dict[str, Any]:
     return {"schema_id": "nexus.project_manifest", "schema_version": 1, "project_id": project_id}
 
@@ -394,32 +467,44 @@ def attach_project(
     if not confirmation(expected, summary):
         _fail("PROJECT_ATTACH_CONFIRMATION_DENIED")
 
-    # Re-check all conflict and binding conditions after HUMAN confirmation.
-    existing_manifest = _read_existing_manifest(root)
-    if existing_manifest is not None and existing_manifest.project_id != selected_id:
-        _fail("PROJECT_ALREADY_ATTACHED_DIFFERENT_PROJECT")
-    registry = _read_registry_document(registry_file)
-    prior = registry["projects"].get(selected_id)
-    if prior is not None and prior != record:
-        _fail("PROJECT_ATTACHMENT_CONFLICT")
-    binding_after_confirmation = _verified_binding(
-        data_root=data_root, policy_path=policy_path,
-        journal_path=independent_purge_journal_path, opener=opener,
-    )
-    if binding_after_confirmation != binding:
-        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
-    if existing_manifest is not None and prior == record:
-        return {"status": "PROJECT_ALREADY_ATTACHED", "project_id": selected_id, **record}
+    # The complete read-check-modify-write transaction is serialized.  Never
+    # commit the registry snapshot read before HUMAN confirmation or before
+    # lock acquisition: another attach may have updated it in the meantime.
+    with _registry_mutation_lock(registry_file):
+        registry = _read_registry_document(registry_file)
+        prior = registry["projects"].get(selected_id)
+        if prior is not None and prior != record:
+            _fail("PROJECT_ATTACHMENT_CONFLICT")
 
-    manifest_path = root / ".nexus" / "project.json"
-    manifest_bytes = _canonical_json(_manifest_document(selected_id))
-    if existing_manifest is None:
-        _write_atomic(manifest_path, manifest_bytes)
-    registry["projects"][selected_id] = record
-    registry_bytes = _canonical_json(registry)
-    if not registry_file.exists() or registry_file.read_bytes() != registry_bytes:
-        _write_atomic(registry_file, registry_bytes)
-    return {"status": "PROJECT_ATTACHED", "project_id": selected_id, **record}
+        existing_manifest = _read_existing_manifest(root)
+        if existing_manifest is not None and existing_manifest.project_id != selected_id:
+            _fail("PROJECT_ALREADY_ATTACHED_DIFFERENT_PROJECT")
+
+        binding_after_confirmation = _verified_binding(
+            data_root=data_root, policy_path=policy_path,
+            journal_path=independent_purge_journal_path, opener=opener,
+        )
+        if binding_after_confirmation != binding:
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+        record = _attachment_record(binding_after_confirmation)
+        prior = registry["projects"].get(selected_id)
+        if prior is not None and prior != record:
+            _fail("PROJECT_ATTACHMENT_CONFLICT")
+        if existing_manifest is not None and prior == record:
+            return {"status": "PROJECT_ALREADY_ATTACHED", "project_id": selected_id, **record}
+
+        manifest_path = root / ".nexus" / "project.json"
+        manifest_bytes = _canonical_json(_manifest_document(selected_id))
+        if existing_manifest is None:
+            _write_atomic(manifest_path, manifest_bytes)
+
+        # `registry` was loaded after taking the lock.  It is the latest
+        # document, so concurrent attachments for other projects are retained.
+        registry["projects"][selected_id] = record
+        registry_bytes = _canonical_json(registry)
+        if not registry_file.exists() or registry_file.read_bytes() != registry_bytes:
+            _write_atomic(registry_file, registry_bytes)
+        return {"status": "PROJECT_ATTACHED", "project_id": selected_id, **record}
 
 
 def locate_project(
