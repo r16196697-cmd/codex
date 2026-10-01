@@ -114,6 +114,17 @@ def _parser() -> argparse.ArgumentParser:
     task_finish = task_commands.add_parser("finish", help="finish one exact daily Task Root and revoke its original Grant")
     task_finish.add_argument("--plan", required=True, type=Path, help="process-local strict JSON task-finish plan")
 
+    continuation = commands.add_parser(
+        "continuation", help="commit one HUMAN-authorized continuation state from an active daily Task",
+    )
+    continuation_commands = continuation.add_subparsers(dest="continuation_action", required=True)
+    continuation_commit = continuation_commands.add_parser(
+        "commit", help="write Current State + What Changed and compile a fresh Context Pack",
+    )
+    continuation_commit.add_argument("--plan", required=True, type=Path, help="process-local strict JSON continuation plan")
+    continuation_commit.add_argument("--repo", required=True, type=Path,
+                                     help="process-local repository used to verify the declared Git fact; never persisted")
+
     selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
     selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
     selfhost.add_argument("--plan", required=True, type=Path, help="process-local strict Stage 3 v2 manifest")
@@ -239,6 +250,38 @@ def _confirm_daily_task_finish(expected: str, summary: dict[str, Any]) -> bool:
         return False
 
 
+def _require_continuation_tty() -> None:
+    from adapters.client.continuation import ContinuationCommitError
+
+    try:
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise ContinuationCommitError("INTERACTIVE_TTY_REQUIRED")
+    except ContinuationCommitError:
+        raise
+    except Exception:
+        raise ContinuationCommitError("INTERACTIVE_TTY_REQUIRED") from None
+
+
+def _confirm_continuation(expected: str, summary: dict[str, Any]) -> bool:
+    _require_continuation_tty()
+    print("Confirm this exact continuation commit:", file=sys.stdout)
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True), file=sys.stdout)
+    try:
+        return input(f"Type {expected} to confirm: ") == expected
+    except (EOFError, OSError):
+        return False
+
+
+def _safe_continuation_error_reason(exc: Exception) -> str:
+    reason = getattr(exc, "reason_code", None)
+    if not isinstance(reason, str):
+        args = getattr(exc, "args", ())
+        reason = args[0] if args else None
+    if isinstance(reason, str) and re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason):
+        return reason
+    return "CONTINUATION_COMMIT_FAILED"
+
+
 def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery: bool = False, independent_purge_journal_path: Path | None = None):
     root = data_root.expanduser().resolve()
     if not (root / "nexus.sqlite").is_file():
@@ -269,6 +312,53 @@ def main(argv: list[str] | None = None) -> int:
             # Refuse non-interactive finishes before composing the ordinary
             # writer store. The application skips phrase entry on exact replay.
             _require_daily_task_finish_tty()
+        if args.command == "continuation" and args.continuation_action == "commit":
+            from adapters.client.continuation import (
+                ContinuationCommitError, commit_continuation, prepare_continuation_commit,
+                read_continuation_plan,
+            )
+            from adapters.panel.application import open_panel_application
+            from kernel.authority import AuthorityService
+
+            plan = read_continuation_plan(args.plan)
+            read_app = open_panel_application(
+                args.data_root, policy_path=args.policy,
+                independent_purge_journal_path=args.independent_purge_journal,
+                read_only=True,
+            )
+            try:
+                read_authority = AuthorityService(read_app.store, read_app.store.policy)
+                preflight = prepare_continuation_commit(
+                    store=read_app.store, authority=read_authority,
+                    context_packs=read_app.context_packs, plan=plan, git_repo=args.repo,
+                )
+            finally:
+                read_app.close()
+            human_confirmed = False
+            if not preflight["request_bound"]:
+                if not _confirm_continuation(preflight["confirmation_phrase"], preflight["summary"]):
+                    raise ContinuationCommitError("CONTINUATION_CONFIRMATION_DENIED")
+                human_confirmed = True
+
+            store, authority, _budget, _trace, _runtime_instance = _runtime(
+                args.data_root, args.policy, independent_purge_journal_path=args.independent_purge_journal,
+            )
+            from kernel.context import ContextPackService
+            from kernel.metering import MeteringService
+
+            participation = ParticipationModeService(store)
+            memory = MemoryService(store, authority, verifier=None)
+            context_packs = ContextPackService(
+                store=store, authority=authority, participation=participation,
+                memory=memory, metering=MeteringService(store, authority, participation),
+            )
+            result = commit_continuation(
+                store=store, authority=authority, context_packs=context_packs,
+                plan=plan, git_repo=args.repo,
+                confirmation=lambda *_: human_confirmed,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         if args.command == "context" and args.context_action == "read":
             from adapters.panel.application import open_panel_application
 
@@ -426,6 +516,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         if args.command == "import-git-source":
             reason = _safe_import_error_reason(exc)
+        elif args.command == "continuation":
+            reason = _safe_continuation_error_reason(exc)
         elif args.command == "project-nexus-selfhost":
             reason = _safe_stage3_error_reason(exc)
         elif args.command == "context":
