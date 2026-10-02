@@ -132,6 +132,10 @@ def _parser() -> argparse.ArgumentParser:
     project_attach.add_argument("--project-id", help="portable Nexus project identity")
     project_locate = project_commands.add_parser("locate", help="resolve the nearest Project Manifest and verify its host binding")
     project_locate.add_argument("--project-root", type=Path, help="directory from which to search upward (default: current directory)")
+    project_repair = project_commands.add_parser(
+        "repair-policy", help="HUMAN-confirm relocation of an attached policy into the durable host policy store",
+    )
+    project_repair.add_argument("--project-root", type=Path, help="directory from which to find the Project Manifest")
 
     selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
     selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
@@ -302,6 +306,16 @@ def _confirm_project_attach(expected: str, summary: dict[str, Any]) -> bool:
         return False
 
 
+def _confirm_project_policy_relocation(expected: str, summary: dict[str, Any]) -> bool:
+    _require_project_attach_tty()
+    print("Relocate this attachment's verified policy into the durable host policy store:", file=sys.stdout)
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True), file=sys.stdout)
+    try:
+        return input(f"Type {expected} to confirm: ") == expected
+    except (EOFError, OSError):
+        return False
+
+
 def _safe_continuation_error_reason(exc: Exception) -> str:
     reason = getattr(exc, "reason_code", None)
     if not isinstance(reason, str):
@@ -329,13 +343,21 @@ def main(argv: list[str] | None = None) -> int:
     store = None
     try:
         if args.command == "project":
-            from adapters.client.project_locator import attach_project, locate_project
+            from adapters.client.project_locator import attach_project, locate_project, repair_project_policy
 
             if args.project_action == "locate":
                 if args.data_root is not None or args.policy is not None or args.independent_purge_journal is not None:
                     from adapters.client.project_locator import ProjectLocatorError
                     raise ProjectLocatorError("PROJECT_LOCATE_PATH_ARGUMENTS_UNSUPPORTED")
                 result = locate_project(start_dir=args.project_root)
+            elif args.project_action == "repair-policy":
+                if args.data_root is not None or args.policy is not None or args.independent_purge_journal is not None:
+                    from adapters.client.project_locator import ProjectLocatorError
+                    raise ProjectLocatorError("PROJECT_REPAIR_PATH_ARGUMENTS_UNSUPPORTED")
+                result = repair_project_policy(
+                    start_dir=args.project_root,
+                    confirmation=_confirm_project_policy_relocation,
+                )
             else:
                 if args.data_root is None:
                     from adapters.client.project_locator import ProjectLocatorError

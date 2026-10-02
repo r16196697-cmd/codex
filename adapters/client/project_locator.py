@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterator
 
+from kernel.instance_binding import parse_json_object, policy_sha256
+
 
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MANIFEST_KEYS = {"schema_id", "schema_version", "project_id"}
@@ -24,6 +26,11 @@ _ENTRY_KEYS = {
     "instance_id", "policy_version", "policy_sha256", "journal_identity",
     "data_root", "policy_path", "independent_purge_journal_path",
 }
+_POLICY_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_IMMUTABLE_BINDING_KEYS = (
+    "instance_id", "policy_version", "policy_sha256", "journal_identity",
+    "data_root", "independent_purge_journal_path",
+)
 
 
 class ProjectLocatorError(Exception):
@@ -241,6 +248,115 @@ def _existing_path(value: str | Path, reason: str) -> Path:
     return path
 
 
+def _has_symlink_component(value: str | Path) -> bool:
+    """Check the supplied lexical path before resolve() can follow a link."""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    parts = path.parts
+    if not parts:
+        return False
+    current = Path(parts[0])
+    for part in parts[1:]:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if current.is_symlink():
+                return True
+            current = current.parent
+            continue
+        current = current / part
+        if current.is_symlink():
+            return True
+    return current.is_symlink()
+
+
+def _read_policy_source(value: str | Path) -> tuple[Path, bytes, dict[str, Any], str]:
+    """Read a strict policy input without following a source symlink."""
+    source = Path(value).expanduser()
+    if _has_symlink_component(source):
+        _fail("PROJECT_POLICY_SOURCE_INVALID")
+    try:
+        path = source.resolve(strict=True)
+        if not path.is_file():
+            _fail("PROJECT_POLICY_SOURCE_INVALID")
+        raw = path.read_bytes()
+        policy = parse_json_object(raw)
+        digest = policy_sha256(policy)
+    except ProjectLocatorError:
+        raise
+    except Exception:
+        _fail("PROJECT_POLICY_SOURCE_INVALID")
+    return path, raw, policy, digest
+
+
+def _managed_policy_path(registry_path: Path, policy_digest: str) -> Path:
+    if _POLICY_SHA256.fullmatch(policy_digest) is None:
+        _fail("PROJECT_POLICY_SOURCE_INVALID")
+    return registry_path.parent / "policies-v1" / f"{policy_digest}.json"
+
+
+def _read_managed_policy(path: Path, expected_digest: str) -> bytes:
+    """Validate one content-addressed host policy without following links."""
+    if _has_symlink_component(path):
+        _fail("PROJECT_MANAGED_POLICY_INVALID")
+    try:
+        if not path.exists():
+            _fail("PROJECT_MANAGED_POLICY_MISSING")
+        if not path.is_file():
+            _fail("PROJECT_MANAGED_POLICY_INVALID")
+        raw = path.read_bytes()
+        policy = parse_json_object(raw)
+        if policy_sha256(policy) != expected_digest:
+            _fail("PROJECT_MANAGED_POLICY_CONFLICT")
+        return raw
+    except ProjectLocatorError:
+        raise
+    except Exception:
+        _fail("PROJECT_MANAGED_POLICY_INVALID")
+
+
+def _materialize_managed_policy(
+    registry_path: Path, source_bytes: bytes, policy_digest: str,
+) -> Path:
+    """Write-once copy of a verified policy, keyed by canonical identity."""
+    target = _managed_policy_path(registry_path, policy_digest)
+    policy_dir = target.parent
+    if _has_symlink_component(policy_dir):
+        _fail("PROJECT_MANAGED_POLICY_INVALID")
+    if policy_dir.exists() and not policy_dir.is_dir():
+        _fail("PROJECT_MANAGED_POLICY_INVALID")
+    try:
+        policy_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        _fail("PROJECT_POLICY_STORE_UNAVAILABLE")
+    if _has_symlink_component(policy_dir) or not policy_dir.is_dir():
+        _fail("PROJECT_MANAGED_POLICY_INVALID")
+    if target.exists() or target.is_symlink():
+        _read_managed_policy(target, policy_digest)
+        return target
+    _write_atomic(target, source_bytes)
+    _read_managed_policy(target, policy_digest)
+    return target
+
+
+def _same_immutable_binding(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return all(left.get(key) == right.get(key) for key in _IMMUTABLE_BINDING_KEYS)
+
+
+def _verify_policy_binding(
+    *, data_root: str | Path, policy_path: str | Path,
+    journal_path: str | Path, expected_digest: str, opener=None,
+) -> dict[str, Any]:
+    binding = _verified_binding(
+        data_root=data_root, policy_path=policy_path,
+        journal_path=journal_path, opener=opener,
+    )
+    if binding["policy_sha256"] != expected_digest:
+        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+    return binding
+
+
 def _verified_binding(
     *, data_root: str | Path, policy_path: str | Path | None,
     journal_path: str | Path, opener=None,
@@ -424,7 +540,7 @@ def attach_project(
     confirmation: Callable[[str, dict[str, Any]], bool] | None = None,
     opener=None,
 ) -> dict[str, Any]:
-    """Read-only verify, explicitly confirm, then attach manifest and registry."""
+    """Verify, explicitly confirm, then attach to a durable host policy copy."""
     try:
         root = _existing_path(project_root, "PROJECT_NOT_ATTACHED")
     except ProjectLocatorError:
@@ -440,26 +556,59 @@ def attach_project(
 
     registry_file = resolve_project_registry_path(registry_path)
     registry = _read_registry_document(registry_file)
-    binding = _verified_binding(
-        data_root=data_root, policy_path=policy_path,
-        journal_path=independent_purge_journal_path, opener=opener,
-    )
-    record = _attachment_record(binding)
+    source_path = None
+    source_bytes = None
+    source_digest = None
+    if policy_path is None:
+        binding = _verified_binding(
+            data_root=data_root, policy_path=None,
+            journal_path=independent_purge_journal_path, opener=opener,
+        )
+        proposed_binding = binding
+    else:
+        source_path, source_bytes, _source_policy, source_digest = _read_policy_source(policy_path)
+        binding = _verify_policy_binding(
+            data_root=data_root, policy_path=source_path,
+            journal_path=independent_purge_journal_path,
+            expected_digest=source_digest, opener=opener,
+        )
+        reread_path, reread_bytes, _reread_policy, reread_digest = _read_policy_source(source_path)
+        if (reread_path, reread_bytes, reread_digest) != (source_path, source_bytes, source_digest):
+            _fail("PROJECT_POLICY_SOURCE_CHANGED")
+        managed_path = _managed_policy_path(registry_file, binding["policy_sha256"])
+        if managed_path.exists() or managed_path.is_symlink():
+            _read_managed_policy(managed_path, binding["policy_sha256"])
+        proposed_binding = {**binding, "policy_path": str(managed_path)}
+    record = _attachment_record(proposed_binding)
     prior = registry["projects"].get(selected_id)
     if prior is not None and prior != record:
         _fail("PROJECT_ATTACHMENT_CONFLICT")
     exact_replay = existing_manifest is not None and prior == record
     if exact_replay:
+        if policy_path is None:
+            actual = _verified_binding(
+                data_root=data_root, policy_path=None,
+                journal_path=independent_purge_journal_path, opener=opener,
+            )
+        else:
+            _read_managed_policy(managed_path, binding["policy_sha256"])
+            actual = _verify_policy_binding(
+                data_root=data_root, policy_path=managed_path,
+                journal_path=independent_purge_journal_path,
+                expected_digest=binding["policy_sha256"], opener=opener,
+            )
+        if not _same_immutable_binding(record, actual):
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
         return {"status": "PROJECT_ALREADY_ATTACHED", "project_id": selected_id, **record}
 
     summary = {
         "project_id": selected_id,
         "project_root": str(root),
-        "instance_id": binding["instance_id"],
-        "data_root": binding["data_root"],
-        "policy_version": binding["policy_version"],
-        "policy_sha256": binding["policy_sha256"],
-        "journal_identity": binding["journal_identity"],
+        "instance_id": proposed_binding["instance_id"],
+        "data_root": proposed_binding["data_root"],
+        "policy_version": proposed_binding["policy_version"],
+        "policy_sha256": proposed_binding["policy_sha256"],
+        "journal_identity": proposed_binding["journal_identity"],
     }
     expected = f"ATTACH {selected_id}"
     if confirmation is None:
@@ -473,25 +622,53 @@ def attach_project(
     with _registry_mutation_lock(registry_file):
         registry = _read_registry_document(registry_file)
         prior = registry["projects"].get(selected_id)
-        if prior is not None and prior != record:
-            _fail("PROJECT_ATTACHMENT_CONFLICT")
-
         existing_manifest = _read_existing_manifest(root)
         if existing_manifest is not None and existing_manifest.project_id != selected_id:
             _fail("PROJECT_ALREADY_ATTACHED_DIFFERENT_PROJECT")
-
-        binding_after_confirmation = _verified_binding(
-            data_root=data_root, policy_path=policy_path,
-            journal_path=independent_purge_journal_path, opener=opener,
-        )
-        if binding_after_confirmation != binding:
-            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
-        record = _attachment_record(binding_after_confirmation)
-        prior = registry["projects"].get(selected_id)
         if prior is not None and prior != record:
             _fail("PROJECT_ATTACHMENT_CONFLICT")
         if existing_manifest is not None and prior == record:
+            if policy_path is not None:
+                _read_managed_policy(managed_path, binding["policy_sha256"])
+                actual = _verify_policy_binding(
+                    data_root=data_root, policy_path=managed_path,
+                    journal_path=independent_purge_journal_path,
+                    expected_digest=binding["policy_sha256"], opener=opener,
+                )
+                if not _same_immutable_binding(record, actual):
+                    _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
             return {"status": "PROJECT_ALREADY_ATTACHED", "project_id": selected_id, **record}
+
+        if policy_path is None:
+            binding_after_confirmation = _verified_binding(
+                data_root=data_root, policy_path=None,
+                journal_path=independent_purge_journal_path, opener=opener,
+            )
+            if not _same_immutable_binding(binding, binding_after_confirmation):
+                _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+            record = _attachment_record(binding_after_confirmation)
+        else:
+            locked_path, locked_bytes, _locked_policy, locked_digest = _read_policy_source(policy_path)
+            if (locked_path, locked_bytes, locked_digest) != (source_path, source_bytes, source_digest):
+                _fail("PROJECT_POLICY_SOURCE_CHANGED")
+            source_binding = _verify_policy_binding(
+                data_root=data_root, policy_path=locked_path,
+                journal_path=independent_purge_journal_path,
+                expected_digest=source_digest, opener=opener,
+            )
+            if not _same_immutable_binding(binding, source_binding):
+                _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+            managed_path = _materialize_managed_policy(
+                registry_file, locked_bytes, source_digest,
+            )
+            managed_binding = _verify_policy_binding(
+                data_root=data_root, policy_path=managed_path,
+                journal_path=independent_purge_journal_path,
+                expected_digest=source_digest, opener=opener,
+            )
+            if not _same_immutable_binding(binding, managed_binding):
+                _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+            record = _attachment_record(managed_binding)
 
         manifest_path = root / ".nexus" / "project.json"
         manifest_bytes = _canonical_json(_manifest_document(selected_id))
@@ -505,6 +682,129 @@ def attach_project(
         if not registry_file.exists() or registry_file.read_bytes() != registry_bytes:
             _write_atomic(registry_file, registry_bytes)
         return {"status": "PROJECT_ATTACHED", "project_id": selected_id, **record}
+
+
+def repair_project_policy(
+    *, start_dir: str | Path | None = None, registry_path: str | Path | None = None,
+    confirmation: Callable[[str, dict[str, Any]], bool] | None = None,
+    opener=None,
+) -> dict[str, Any]:
+    """Move only an existing attachment's policy path into the host policy store."""
+    manifest = find_project_manifest(start_dir)
+    registry_file = resolve_project_registry_path(registry_path)
+    registry = _read_registry_document(registry_file)
+    prior = registry["projects"].get(manifest.project_id)
+    if prior is None:
+        _fail("PROJECT_HOST_BINDING_MISSING")
+    if prior["policy_path"] is None:
+        _fail("PROJECT_POLICY_NOT_RELOCATABLE")
+
+    managed_path = _managed_policy_path(registry_file, prior["policy_sha256"])
+    if prior["policy_path"] == str(managed_path):
+        _read_managed_policy(managed_path, prior["policy_sha256"])
+        actual = _verify_policy_binding(
+            data_root=prior["data_root"], policy_path=managed_path,
+            journal_path=prior["independent_purge_journal_path"],
+            expected_digest=prior["policy_sha256"], opener=opener,
+        )
+        if not _same_immutable_binding(prior, actual):
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+        return {
+            "status": "PROJECT_POLICY_ALREADY_DURABLE",
+            "project_id": manifest.project_id,
+            **prior,
+            "replayed": True,
+        }
+
+    source_path, source_bytes, _source_policy, source_digest = _read_policy_source(prior["policy_path"])
+    if source_digest != prior["policy_sha256"]:
+        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+    source_binding = _verify_policy_binding(
+        data_root=prior["data_root"], policy_path=source_path,
+        journal_path=prior["independent_purge_journal_path"],
+        expected_digest=source_digest, opener=opener,
+    )
+    if not _same_immutable_binding(prior, source_binding):
+        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+    if managed_path.exists() or managed_path.is_symlink():
+        _read_managed_policy(managed_path, source_digest)
+
+    expected = f"RELOCATE POLICY {manifest.project_id}"
+    summary = {
+        "project_id": manifest.project_id,
+        "instance_id": prior["instance_id"],
+        "policy_version": prior["policy_version"],
+        "policy_sha256": prior["policy_sha256"],
+        "policy_path_change": "registered source path to host-local content-addressed policy store",
+    }
+    if confirmation is None:
+        _fail("INTERACTIVE_TTY_REQUIRED")
+    if not confirmation(expected, summary):
+        _fail("PROJECT_POLICY_RELOCATION_DENIED")
+
+    with _registry_mutation_lock(registry_file):
+        registry = _read_registry_document(registry_file)
+        current = registry["projects"].get(manifest.project_id)
+        if current is None:
+            _fail("PROJECT_HOST_BINDING_MISSING")
+        if current["policy_path"] == str(managed_path):
+            if not _same_immutable_binding(prior, current):
+                _fail("PROJECT_ATTACHMENT_CONFLICT")
+            _read_managed_policy(managed_path, current["policy_sha256"])
+            actual = _verify_policy_binding(
+                data_root=current["data_root"], policy_path=managed_path,
+                journal_path=current["independent_purge_journal_path"],
+                expected_digest=current["policy_sha256"], opener=opener,
+            )
+            if not _same_immutable_binding(current, actual):
+                _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+            return {
+                "status": "PROJECT_POLICY_ALREADY_DURABLE",
+                "project_id": manifest.project_id,
+                **current,
+                "replayed": True,
+            }
+        if current != prior:
+            _fail("PROJECT_ATTACHMENT_CONFLICT")
+        current_manifest = _read_existing_manifest(manifest.project_root)
+        if current_manifest is None or current_manifest.project_id != manifest.project_id:
+            _fail("PROJECT_MANIFEST_INVALID")
+
+        locked_path, locked_bytes, _locked_policy, locked_digest = _read_policy_source(current["policy_path"])
+        if (locked_path, locked_bytes, locked_digest) != (source_path, source_bytes, source_digest):
+            _fail("PROJECT_POLICY_SOURCE_CHANGED")
+        locked_binding = _verify_policy_binding(
+            data_root=current["data_root"], policy_path=locked_path,
+            journal_path=current["independent_purge_journal_path"],
+            expected_digest=source_digest, opener=opener,
+        )
+        if not _same_immutable_binding(current, locked_binding):
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+
+        materialized = _materialize_managed_policy(registry_file, locked_bytes, source_digest)
+        managed_binding = _verify_policy_binding(
+            data_root=current["data_root"], policy_path=materialized,
+            journal_path=current["independent_purge_journal_path"],
+            expected_digest=source_digest, opener=opener,
+        )
+        if not _same_immutable_binding(current, managed_binding):
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+        updated = _attachment_record(managed_binding)
+        if not _same_immutable_binding(current, updated):
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+        if updated["policy_path"] != str(managed_path):
+            _fail("PROJECT_MANAGED_POLICY_INVALID")
+
+        registry["projects"][manifest.project_id] = updated
+        registry_bytes = _canonical_json(registry)
+        if not registry_file.exists() or registry_file.read_bytes() != registry_bytes:
+            _write_atomic(registry_file, registry_bytes)
+        return {
+            "status": "PROJECT_POLICY_RELOCATED",
+            "project_id": manifest.project_id,
+            **updated,
+            "replayed": False,
+        }
 
 
 def locate_project(

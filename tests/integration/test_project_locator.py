@@ -21,8 +21,10 @@ from adapters.client.project_locator import (
     locate_project,
     read_host_registry,
     read_project_manifest,
+    repair_project_policy,
     resolve_project_registry_path,
 )
+from kernel.instance_binding import parse_json_object, policy_sha256
 from tests.support.test_store import open_test_store
 
 
@@ -49,6 +51,50 @@ def _concurrent_attach_worker(
         result_queue.put(("error", exc.reason_code, project_id))
     except BaseException as exc:
         result_queue.put(("unexpected", type(exc).__name__, project_id))
+
+
+def _concurrent_policy_repair_worker(
+    project_root: str, registry_path: str, expected_binding: dict[str, str],
+    confirmation_barrier, result_queue,
+) -> None:
+    try:
+        def opener(data_root, *, policy_path, independent_purge_journal_path, read_only):
+            if not read_only or str(data_root) != expected_binding["data_root"]:
+                raise AssertionError("repair must use the expected read-only fixture binding")
+            if str(independent_purge_journal_path) != expected_binding["independent_purge_journal_path"]:
+                raise AssertionError("repair changed journal binding")
+            actual_policy = parse_json_object(Path(policy_path).read_bytes())
+            digest = policy_sha256(actual_policy)
+            if digest != expected_binding["policy_sha256"]:
+                raise AssertionError("repair changed policy content")
+            status = {
+                "state": "FRESH_BOUND_INSTANCE",
+                "policy_content_binding": "BOUND",
+                "instance_id": expected_binding["instance_id"],
+                "policy_version": expected_binding["policy_version"],
+                "policy_sha256": digest,
+                "journal_identity": expected_binding["journal_identity"],
+            }
+            return type("FixtureApp", (), {
+                "store": type("FixtureStore", (), {"get_instance_binding_status": lambda _self: status})(),
+                "close": lambda _self: None,
+            })()
+
+        def confirm(_expected, _summary):
+            confirmation_barrier.wait(timeout=30)
+            return True
+
+        result = repair_project_policy(
+            start_dir=project_root,
+            registry_path=registry_path,
+            confirmation=confirm,
+            opener=opener,
+        )
+        result_queue.put(("ok", result["status"]))
+    except ProjectLocatorError as exc:
+        result_queue.put(("error", exc.reason_code))
+    except BaseException as exc:
+        result_queue.put(("unexpected", type(exc).__name__))
 
 
 def _exit_while_holding_registry_lock(registry_path: str, acquired_event) -> None:
@@ -97,6 +143,28 @@ class ProjectLocatorTests(unittest.TestCase):
             registry_path=self.registry_path,
             confirmation=confirmation or (lambda expected, _summary: expected == f"ATTACH {project_id}"),
         )
+
+    def _attach_legacy_record(self, *, project_id="project-test"):
+        binding = project_locator._verified_binding(
+            data_root=self.data_root, policy_path=self.policy_path,
+            journal_path=self.journal,
+        )
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        self.registry_path.write_bytes(project_locator._canonical_json({
+            "schema_id": "nexus.host_project_registry",
+            "schema_version": 1,
+            "projects": {project_id: project_locator._attachment_record(binding)},
+        }))
+        manifest_dir = self.repo / ".nexus"
+        manifest_dir.mkdir()
+        (manifest_dir / "project.json").write_bytes(
+            project_locator._canonical_json(project_locator._manifest_document(project_id))
+        )
+
+    def _policy_store_path(self):
+        raw = self.policy_path.read_bytes()
+        digest = policy_sha256(parse_json_object(raw))
+        return self.registry_path.parent / "policies-v1" / f"{digest}.json"
 
     def test_manifest_discovery_walks_up_and_nearest_manifest_wins(self):
         (self.repo / ".nexus").mkdir()
@@ -182,6 +250,11 @@ class ProjectLocatorTests(unittest.TestCase):
         self.assertNotIn(str(self.data_root), manifest_path.read_text(encoding="utf-8"))
         self.assertNotIn(str(self.journal), manifest_path.read_text(encoding="utf-8"))
         self.assertTrue(self.registry_path.is_file())
+        record = read_host_registry(self.registry_path)["projects"]["project-test"]
+        managed = self._policy_store_path()
+        self.assertEqual(Path(record["policy_path"]), managed.resolve())
+        self.assertEqual(managed.read_bytes(), self.policy_path.read_bytes())
+        self.assertEqual(policy_sha256(parse_json_object(managed.read_bytes())), record["policy_sha256"])
         self.assertEqual(_files_commitment(self.data_root, self.journal.parent), before_instance)
 
     def test_denied_confirmation_leaves_manifest_registry_and_instance_unchanged(self):
@@ -191,6 +264,7 @@ class ProjectLocatorTests(unittest.TestCase):
         self.assertFalse((self.repo / ".nexus").exists())
         self.assertFalse(self.registry_path.exists())
         self.assertFalse(self.registry_path.with_name(self.registry_path.name + ".lock").exists())
+        self.assertFalse((self.registry_path.parent / "policies-v1").exists())
         self.assertEqual(_files_commitment(self.data_root, self.journal.parent), before_instance)
 
     def test_missing_confirmation_fails_without_writes(self):
@@ -202,24 +276,215 @@ class ProjectLocatorTests(unittest.TestCase):
             )
         self.assertFalse((self.repo / ".nexus").exists())
         self.assertFalse(self.registry_path.exists())
+        self.assertFalse((self.registry_path.parent / "policies-v1").exists())
 
     def test_exact_attach_replay_never_prompts_or_rewrites_files(self):
         self._attach()
         manifest = self.repo / ".nexus" / "project.json"
         lock_path = self.registry_path.with_name(self.registry_path.name + ".lock")
+        managed_path = self._policy_store_path()
         before = (
             manifest.read_bytes(), self.registry_path.read_bytes(), lock_path.read_bytes(),
+            managed_path.read_bytes(), managed_path.stat().st_mtime_ns,
             manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns,
             lock_path.stat().st_mtime_ns,
         )
         result = self._attach(confirmation=lambda *_args: self.fail("exact replay prompted"))
         after = (
             manifest.read_bytes(), self.registry_path.read_bytes(), lock_path.read_bytes(),
+            managed_path.read_bytes(), managed_path.stat().st_mtime_ns,
             manifest.stat().st_mtime_ns, self.registry_path.stat().st_mtime_ns,
             lock_path.stat().st_mtime_ns,
         )
         self.assertEqual(result["status"], "PROJECT_ALREADY_ATTACHED")
         self.assertEqual(after, before)
+
+    def test_locate_survives_removal_of_original_temp_like_policy_source(self):
+        self._attach()
+        managed_path = self._policy_store_path()
+        self.assertTrue(managed_path.is_file())
+        self.policy_path.unlink()
+        result = locate_project(start_dir=self.repo, registry_path=self.registry_path)
+        self.assertEqual(result["status"], "PROJECT_LOCATED")
+        self.assertEqual(Path(result["policy_path"]), managed_path.resolve())
+        self.assertEqual(
+            policy_sha256(parse_json_object(managed_path.read_bytes())),
+            result["policy_sha256"],
+        )
+
+    def test_conflicting_managed_policy_fails_before_confirmation_or_attachment(self):
+        managed_path = self._policy_store_path()
+        managed_path.parent.mkdir(parents=True)
+        managed_path.write_text("not-json", encoding="utf-8")
+        before = _files_commitment(self.registry_path.parent, self.repo)
+        with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_MANAGED_POLICY_INVALID"):
+            self._attach(confirmation=lambda *_args: self.fail("invalid managed policy prompted"))
+        self.assertEqual(_files_commitment(self.registry_path.parent, self.repo), before)
+
+    def test_policy_source_symlink_is_rejected_without_following_it(self):
+        link = self.base / "source-policy-link.json"
+        try:
+            link.symlink_to(self.policy_path)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows runner cannot create file symlinks")
+        before = _files_commitment(self.registry_path.parent, self.repo)
+        with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_POLICY_SOURCE_INVALID"):
+            attach_project(
+                project_root=self.repo, project_id="project-test", data_root=self.data_root,
+                policy_path=link, independent_purge_journal_path=self.journal,
+                registry_path=self.registry_path,
+                confirmation=lambda *_args: self.fail("symlink policy source prompted"),
+            )
+        self.assertEqual(_files_commitment(self.registry_path.parent, self.repo), before)
+
+    def test_managed_policy_symlink_is_rejected_without_following_it(self):
+        managed_path = self._policy_store_path()
+        managed_path.parent.mkdir(parents=True)
+        try:
+            managed_path.symlink_to(self.policy_path)
+        except (OSError, NotImplementedError):
+            self.skipTest("Windows runner cannot create file symlinks")
+        with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_MANAGED_POLICY_INVALID"):
+            self._attach(confirmation=lambda *_args: self.fail("managed policy symlink prompted"))
+
+    def test_policy_repair_changes_only_policy_path_and_survives_source_removal(self):
+        self._attach_legacy_record()
+        manifest = self.repo / ".nexus" / "project.json"
+        manifest_before = manifest.read_bytes()
+        old = read_host_registry(self.registry_path)["projects"]["project-test"]
+        confirmed = []
+        result = repair_project_policy(
+            start_dir=self.repo,
+            registry_path=self.registry_path,
+            confirmation=lambda phrase, summary: confirmed.append((phrase, summary)) or True,
+        )
+        updated = read_host_registry(self.registry_path)["projects"]["project-test"]
+        managed_path = self._policy_store_path()
+        self.assertEqual(result["status"], "PROJECT_POLICY_RELOCATED")
+        self.assertFalse(result["replayed"])
+        self.assertEqual(confirmed[0][0], "RELOCATE POLICY project-test")
+        self.assertEqual(set(old) - {"policy_path"}, set(updated) - {"policy_path"})
+        self.assertEqual({k: old[k] for k in old if k != "policy_path"},
+                         {k: updated[k] for k in updated if k != "policy_path"})
+        self.assertEqual(Path(updated["policy_path"]), managed_path.resolve())
+        self.assertEqual(manifest.read_bytes(), manifest_before)
+        self.assertEqual(managed_path.read_bytes(), self.policy_path.read_bytes())
+        self.assertEqual(
+            policy_sha256(parse_json_object(managed_path.read_bytes())), old["policy_sha256"],
+        )
+        self.assertEqual(locate_project(start_dir=self.repo, registry_path=self.registry_path)["status"],
+                         "PROJECT_LOCATED")
+        self.policy_path.unlink()
+        self.assertEqual(locate_project(start_dir=self.repo, registry_path=self.registry_path)["status"],
+                         "PROJECT_LOCATED")
+
+    def test_policy_repair_exact_replay_does_not_prompt_or_rewrite(self):
+        self._attach_legacy_record()
+        repair_project_policy(
+            start_dir=self.repo, registry_path=self.registry_path,
+            confirmation=lambda *_args: True,
+        )
+        managed_path = self._policy_store_path()
+        manifest = self.repo / ".nexus" / "project.json"
+        lock_path = self.registry_path.with_name(self.registry_path.name + ".lock")
+        paths = (manifest, self.registry_path, lock_path, managed_path)
+        before = tuple((p.read_bytes(), p.stat().st_mtime_ns) for p in paths)
+        replay = repair_project_policy(
+            start_dir=self.repo, registry_path=self.registry_path,
+            confirmation=lambda *_args: self.fail("exact policy repair replay prompted"),
+        )
+        after = tuple((p.read_bytes(), p.stat().st_mtime_ns) for p in paths)
+        self.assertEqual(replay["status"], "PROJECT_POLICY_ALREADY_DURABLE")
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(after, before)
+
+    def test_denied_policy_repair_has_zero_host_mutation(self):
+        self._attach_legacy_record()
+        before = _files_commitment(self.repo, self.registry_path.parent)
+        with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_POLICY_RELOCATION_DENIED"):
+            repair_project_policy(
+                start_dir=self.repo, registry_path=self.registry_path,
+                confirmation=lambda *_args: False,
+            )
+        self.assertEqual(_files_commitment(self.repo, self.registry_path.parent), before)
+
+    def test_policy_repair_refuses_every_immutable_binding_change(self):
+        self._attach_legacy_record()
+        other_root = self.base / "other-instance"
+        other_journal = self.base / "other-journal" / "purge.jsonl"
+        other_store = open_test_store(other_root, independent_purge_journal_path=other_journal)
+        other_store.close()
+        baseline = json.loads(self.registry_path.read_text(encoding="utf-8"))
+        changes = {
+            "instance_id": "different-instance",
+            "data_root": str(other_root.resolve()),
+            "policy_sha256": "f" * 64,
+            "journal_identity": "e" * 64,
+            "independent_purge_journal_path": str(other_journal.resolve()),
+        }
+        for key, value in changes.items():
+            with self.subTest(key=key):
+                candidate = json.loads(json.dumps(baseline))
+                candidate["projects"]["project-test"][key] = value
+                self.registry_path.write_bytes(project_locator._canonical_json(candidate))
+                before = _files_commitment(self.registry_path.parent, self.repo)
+                with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_INSTANCE_BINDING_MISMATCH"):
+                    repair_project_policy(
+                        start_dir=self.repo, registry_path=self.registry_path,
+                        confirmation=lambda *_args: self.fail(f"{key} mismatch prompted"),
+                    )
+                self.assertEqual(_files_commitment(self.registry_path.parent, self.repo), before)
+                self.registry_path.write_bytes(project_locator._canonical_json(baseline))
+
+    def test_policy_repair_rereads_registry_under_lock_and_preserves_other_attachments(self):
+        self._attach_legacy_record()
+        original = read_host_registry(self.registry_path)["projects"]["project-test"]
+
+        def confirm(expected, _summary):
+            self.assertEqual(expected, "RELOCATE POLICY project-test")
+            registry = read_host_registry(self.registry_path)
+            registry["projects"]["project-concurrent"] = original
+            self.registry_path.write_bytes(project_locator._canonical_json(registry))
+            return True
+
+        repair_project_policy(start_dir=self.repo, registry_path=self.registry_path, confirmation=confirm)
+        registry = read_host_registry(self.registry_path)
+        self.assertEqual(set(registry["projects"]), {"project-test", "project-concurrent"})
+        self.assertEqual(
+            registry["projects"]["project-test"]["policy_path"],
+            str(self._policy_store_path().resolve()),
+        )
+
+    def test_concurrent_policy_repairs_serialize_and_exactly_one_relocates(self):
+        self._attach_legacy_record()
+        expected_binding = read_host_registry(self.registry_path)["projects"]["project-test"]
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        result_queue = context.Queue()
+        processes = [
+            context.Process(
+                target=_concurrent_policy_repair_worker,
+                args=(str(self.repo), str(self.registry_path), expected_binding, barrier, result_queue),
+            )
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(45)
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                self.fail("concurrent policy repair did not finish")
+            self.assertEqual(process.exitcode, 0)
+        results = [result_queue.get(timeout=5) for _ in processes]
+        result_queue.close()
+        result_queue.join_thread()
+        self.assertEqual(sum(r == ("ok", "PROJECT_POLICY_RELOCATED") for r in results), 1, results)
+        self.assertEqual(sum(r == ("ok", "PROJECT_POLICY_ALREADY_DURABLE") for r in results), 1, results)
+        record = read_host_registry(self.registry_path)["projects"]["project-test"]
+        self.assertEqual(Path(record["policy_path"]), self._policy_store_path().resolve())
 
     def test_existing_manifest_for_another_project_fails_closed(self):
         self._attach()
@@ -437,6 +702,19 @@ class ProjectLocatorTests(unittest.TestCase):
         self.assertFalse((self.repo / ".nexus").exists())
         self.assertFalse(self.registry_path.exists())
 
+    def test_cli_policy_repair_rejects_non_tty_without_writing(self):
+        self._attach_legacy_record()
+        output = io.StringIO()
+        errors = io.StringIO()
+        before = _files_commitment(self.repo, self.registry_path.parent)
+        with mock.patch("sys.stdin", io.StringIO("")), \
+             mock.patch.dict(os.environ, {"NEXUS_PROJECT_REGISTRY": str(self.registry_path)}), \
+             contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            code = main(["project", "repair-policy", "--project-root", str(self.repo)])
+        self.assertEqual(code, 2)
+        self.assertIn("INTERACTIVE_TTY_REQUIRED", errors.getvalue())
+        self.assertEqual(_files_commitment(self.repo, self.registry_path.parent), before)
+
     def test_cli_automatic_context_resolution_uses_attached_project(self):
         self._attach()
         nested = self.repo / "nested"
@@ -478,7 +756,7 @@ class ProjectLocatorTests(unittest.TestCase):
         self.assertEqual(result["project_id"], "project-test")
         self.assertEqual(result["data_root"], str(self.data_root.resolve()))
 
-    def test_locate_rejects_every_changed_registered_identity_or_path(self):
+    def test_locate_rejects_changed_registered_identity_and_attach_uses_managed_policy_identity(self):
         self._attach()
         other_root = self.base / "other-instance"
         other_journal = self.base / "other-journal" / "purge.jsonl"
@@ -506,12 +784,23 @@ class ProjectLocatorTests(unittest.TestCase):
                     locate_project(start_dir=self.repo, registry_path=self.registry_path)
         self.registry_path.write_text(json.dumps(baseline), encoding="utf-8")
 
-        with self.assertRaisesRegex(ProjectLocatorError, "PROJECT_ATTACHMENT_CONFLICT"):
-            attach_project(
-                project_root=self.repo, project_id="project-test", data_root=self.data_root,
-                policy_path=policy_copy, independent_purge_journal_path=self.journal,
-                registry_path=self.registry_path, confirmation=lambda *_args: self.fail("path conflict prompted"),
-            )
+        managed_path = self._policy_store_path()
+        before = (
+            self.registry_path.read_bytes(), managed_path.read_bytes(),
+            self.registry_path.stat().st_mtime_ns, managed_path.stat().st_mtime_ns,
+        )
+        result = attach_project(
+            project_root=self.repo, project_id="project-test", data_root=self.data_root,
+            policy_path=policy_copy, independent_purge_journal_path=self.journal,
+            registry_path=self.registry_path,
+            confirmation=lambda *_args: self.fail("canonical-equivalent exact attach replay prompted"),
+        )
+        after = (
+            self.registry_path.read_bytes(), managed_path.read_bytes(),
+            self.registry_path.stat().st_mtime_ns, managed_path.stat().st_mtime_ns,
+        )
+        self.assertEqual(result["status"], "PROJECT_ALREADY_ATTACHED")
+        self.assertEqual(after, before)
 
     def test_explicit_data_root_parser_remains_supported_and_root_is_optional(self):
         explicit = _parser().parse_args(["--data-root", "existing", "context", "read", "--latest"])
