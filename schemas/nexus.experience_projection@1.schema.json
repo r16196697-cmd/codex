@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.local/schemas/nexus.experience_projection@1",
+  "title": "Nexus deterministic ExperienceProjection v1 (non-persisted)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id", "schema_version", "projection_kind", "projection_status", "identity", "lifecycle",
+    "subtasks_and_attempts", "trace_summary", "verification", "effects", "approvals", "budget", "metering",
+    "routing_and_capabilities", "skill_resolution", "context", "memory_participation", "continuation",
+    "failure_signals", "governance_coverage", "human_signals", "unknowns", "source_refs", "provenance"
+  ],
+  "properties": {
+    "schema_id": {"const": "nexus.experience_projection"},
+    "schema_version": {"const": 1},
+    "projection_kind": {"const": "DETERMINISTIC_READ_MODEL"},
+    "projection_status": {"const": "AVAILABLE"},
+    "identity": {"$ref": "#/$defs/identity"},
+    "lifecycle": {"$ref": "#/$defs/lifecycle"},
+    "subtasks_and_attempts": {"$ref": "#/$defs/subtasksAndAttempts"},
+    "trace_summary": {"$ref": "#/$defs/traceSummary"},
+    "verification": {"$ref": "#/$defs/verification"},
+    "effects": {"$ref": "#/$defs/effects"},
+    "approvals": {"$ref": "#/$defs/approvals"},
+    "budget": {"$ref": "#/$defs/budget"},
+    "metering": {"$ref": "#/$defs/metering"},
+    "routing_and_capabilities": {"$ref": "#/$defs/routingAndCapabilities"},
+    "skill_resolution": {"$ref": "#/$defs/skillResolution"},
+    "context": {"$ref": "#/$defs/context"},
+    "memory_participation": {"$ref": "#/$defs/memoryParticipation"},
+    "continuation": {"$ref": "#/$defs/continuation"},
+    "failure_signals": {"$ref": "#/$defs/boundedFailureSignals"},
+    "governance_coverage": {"$ref": "#/$defs/governanceCoverage"},
+    "human_signals": {"$ref": "#/$defs/humanSignals"},
+    "unknowns": {"$ref": "#/$defs/unknowns"},
+    "source_refs": {"$ref": "#/$defs/sourceRefs"},
+    "provenance": {"$ref": "#/$defs/provenance"}
+  },
+  "$defs": {
+    "ref": {"type": "string", "minLength": 1, "maxLength": 128},
+    "nullableRef": {"type": ["string", "null"], "maxLength": 128},
+    "timestamp": {"type": "string", "minLength": 1, "format": "date-time"},
+    "count": {"type": "integer", "minimum": 0},
+    "countMap": {"type": "object", "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}, "additionalProperties": {"$ref": "#/$defs/count"}},
+    "boundedRefs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["items", "total_count", "truncated"],
+      "properties": {
+        "items": {"type": "array", "maxItems": 100, "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+        "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}
+      }
+    },
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "requester_id", "root_run_id", "created_at"],
+      "properties": {
+        "task_id": {"$ref": "#/$defs/ref"}, "requester_id": {"$ref": "#/$defs/ref"},
+        "root_run_id": {"$ref": "#/$defs/ref"}, "created_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "parent_run_id", "subtask_id", "executor_kind", "status", "grant_id", "grant_status", "created_at"],
+      "properties": {
+        "run_id": {"$ref": "#/$defs/ref"}, "parent_run_id": {"$ref": "#/$defs/nullableRef"},
+        "subtask_id": {"$ref": "#/$defs/nullableRef"}, "executor_kind": {"enum": ["ORCHESTRATOR", "MODEL", "TOOL"]},
+        "status": {"enum": ["CREATED", "READY", "RUNNING", "WAITING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED"]},
+        "grant_id": {"$ref": "#/$defs/ref"}, "grant_status": {"enum": ["PROPOSED", "ACTIVE", "EXPIRED", "REVOKED"]},
+        "created_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "lifecycle": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_status", "root_run_status", "task_created_at", "runs", "outcome_interpretation", "semantic_quality"],
+      "properties": {
+        "task_status": {"enum": ["CREATED", "ACTIVE", "WAITING", "SUCCEEDED", "FAILED", "CANCELLED"]},
+        "root_run_status": {"enum": ["CREATED", "READY", "RUNNING", "WAITING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED"]},
+        "task_created_at": {"$ref": "#/$defs/timestamp"},
+        "runs": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"],
+          "properties": {"items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/run"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+        "outcome_interpretation": {"const": "LIFECYCLE_ONLY"}, "semantic_quality": {"const": "UNKNOWN"}
+      }
+    },
+    "subtask": {
+      "type": "object", "additionalProperties": false,
+      "required": ["subtask_id", "node_index", "status", "final_attempt_id", "final_outcome", "finalized_at", "attempt_count", "created_at"],
+      "properties": {
+        "subtask_id": {"$ref": "#/$defs/ref"}, "node_index": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["PENDING", "READY", "RUNNING", "WAITING", "SUCCEEDED", "FAILED", "CANCELLED", "STALE"]},
+        "final_attempt_id": {"$ref": "#/$defs/nullableRef"},
+        "final_outcome": {"enum": ["SUCCEEDED", "FAILED", "CANCELLED", "POLICY_DENIED", "BUDGET_DENIED", "INCONCLUSIVE", null]},
+        "finalized_at": {"$ref": "#/$defs/nullableTimestamp"}, "attempt_count": {"$ref": "#/$defs/count"},
+        "created_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "nullableTimestamp": {"type": ["string", "null"], "format": "date-time"},
+    "attempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempt_id", "subtask_id", "attempt_no", "run_id", "requested_capability", "attempt_reason", "predecessor_attempt_id", "outcome", "created_at"],
+      "properties": {
+        "attempt_id": {"$ref": "#/$defs/ref"}, "subtask_id": {"$ref": "#/$defs/ref"},
+        "attempt_no": {"type": "integer", "minimum": 1}, "run_id": {"$ref": "#/$defs/ref"},
+        "requested_capability": {"$ref": "#/$defs/ref"},
+        "attempt_reason": {"enum": ["INITIAL", "RETRY", "UNSPECIFIED", "CODEX_HOST_DECLARED", "CODEX_HOST_TOOL_DECLARED", "LEGACY_SINGLE_RUN", "LEGACY_SINGLE_RUN_BACKFILL", "VERIFIER_REQUIRED_ESCALATION", "POLICY_DENIED", "BUDGET_DENIED", "AUTHORIZATION_DENIED", "DAILY_TASK_RESOURCE_SCOPE_INVALID", "DAILY_TASK_LOGICAL_ID_CONFLICT", "CONTINUATION_PLAN_INVALID", "CONTINUATION_STATE_CONFLICT", "UNKNOWN"]},
+        "predecessor_attempt_id": {"$ref": "#/$defs/nullableRef"},
+        "outcome": {"enum": ["CREATED", "READY", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "POLICY_DENIED", "BUDGET_DENIED", "INCONCLUSIVE"]},
+        "created_at": {"$ref": "#/$defs/timestamp"}, "route_decision": {"$ref": "#/$defs/nullableRef"}
+      }
+    },
+    "routeV1": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route_decision_id", "schema_version", "subtask_id", "task_class", "risk_class", "quality_requirement", "selected_model_class", "reason_codes", "created_at", "availability"],
+      "properties": {
+        "route_decision_id": {"$ref": "#/$defs/ref"}, "schema_version": {"const": 1}, "subtask_id": {"$ref": "#/$defs/ref"},
+        "task_class": {"$ref": "#/$defs/ref"}, "risk_class": {"enum": ["LOW", "STANDARD", "HIGH", "CRITICAL"]}, "quality_requirement": {"enum": ["ROUTINE", "STANDARD", "CRITICAL"]},
+        "selected_model_class": {"enum": ["E0", "E1", "E2", "specialist", "local_private"]}, "reason_codes": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/ref"}},
+        "created_at": {"$ref": "#/$defs/timestamp"}, "availability": {"const": "AVAILABLE"}
+      }
+    },
+    "routeV2": {
+      "type": "object", "additionalProperties": false,
+      "required": ["route_decision_id", "schema_version", "subtask_id", "attempt_no", "requested_capability", "actual_executor_kind", "execution_source", "model_identity_status", "reason_codes", "created_at", "availability"],
+      "properties": {
+        "route_decision_id": {"$ref": "#/$defs/ref"}, "schema_version": {"const": 2}, "subtask_id": {"$ref": "#/$defs/ref"},
+        "attempt_no": {"type": "integer", "minimum": 1}, "requested_capability": {"enum": ["TOOL", "E0", "E1", "E2", "UNSPECIFIED"]},
+        "actual_executor_kind": {"enum": ["MODEL", "TOOL"]}, "execution_source": {"enum": ["CODEX_HOST_DECLARED", "CODEX_HOST_TOOL_DECLARED", "DETERMINISTIC_RUNTIME"]},
+        "model_identity_status": {"enum": ["OBSERVED", "UNAVAILABLE", "NOT_APPLICABLE"]}, "reason_codes": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/ref"}},
+        "created_at": {"$ref": "#/$defs/timestamp"}, "availability": {"const": "AVAILABLE"}
+      }
+    },
+    "redactedRoute": {
+      "type": "object", "additionalProperties": false, "required": ["route_decision_id", "availability"],
+      "properties": {"route_decision_id": {"enum": ["REDACTED", "REDACTED_PURGED"]}, "availability": {"enum": ["REDACTED", "REDACTED_PURGED"]}}
+    },
+    "boundedRoutes": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "NONE_RECORDED"]},
+        "items": {"type": "array", "maxItems": 100, "items": {"oneOf": [{"$ref": "#/$defs/routeV1"}, {"$ref": "#/$defs/routeV2"}]}},
+        "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}
+      }
+    },
+    "redactedRoutes": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated"],
+      "properties": {"status": {"const": "REDACTED"}, "items": {"type": "array", "maxItems": 0}, "total_count": {"type": "null"}, "truncated": {"const": false}}
+    },
+    "subtasksAndAttempts": {
+      "type": "object", "additionalProperties": false, "required": ["subtasks", "attempts", "routing"],
+      "properties": {
+        "subtasks": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"], "properties": {"items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/subtask"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+        "attempts": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"], "properties": {"items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/attempt"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+        "routing": {"oneOf": [{"$ref": "#/$defs/boundedRoutes"}, {"$ref": "#/$defs/redactedRoutes"}]}
+      }
+    },
+    "traceItem": {
+      "type": "object", "additionalProperties": false, "required": ["event_id", "run_id", "seq_no", "event_type", "occurred_at"],
+      "properties": {"event_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "seq_no": {"$ref": "#/$defs/count"}, "event_type": {"$ref": "#/$defs/ref"}, "occurred_at": {"$ref": "#/$defs/timestamp"}}
+    },
+    "traceSummary": {
+      "type": "object", "additionalProperties": false, "required": ["status", "event_count", "counts_by_event_type", "items", "truncated", "event_types_truncated"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "NONE_RECORDED", "REDACTED"]}, "event_count": {"type": ["integer", "null"], "minimum": 0},
+        "counts_by_event_type": {"$ref": "#/$defs/countMap"}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/traceItem"}},
+        "truncated": {"type": "boolean"}, "event_types_truncated": {"type": "boolean"}
+      }
+    },
+    "verificationItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["verification_id", "run_id", "target_ref", "target_scope", "verdict", "verifier_kind", "attester_principal_id", "approval_ref", "created_at", "evidence_ref_count", "missing_evidence_count", "conflict_count"],
+      "properties": {
+        "verification_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "target_ref": {"$ref": "#/$defs/ref"},
+        "target_scope": {"const": "TARGET_SPECIFIC"}, "verdict": {"enum": ["PASS", "FAIL", "INCONCLUSIVE"]},
+        "verifier_kind": {"enum": ["T1_DETERMINISTIC", "T2_AUTHORITATIVE", "T3_HUMAN_OR_DOMAIN", "T4_EVIDENCE_CONSTRAINED_MODEL", "T5_SELF_CHECK"]},
+        "attester_principal_id": {"$ref": "#/$defs/nullableRef"}, "approval_ref": {"$ref": "#/$defs/nullableRef"},
+        "created_at": {"$ref": "#/$defs/timestamp"}, "evidence_ref_count": {"$ref": "#/$defs/count"},
+        "missing_evidence_count": {"$ref": "#/$defs/count"}, "conflict_count": {"$ref": "#/$defs/count"}
+      }
+    },
+    "verification": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated", "verifier_kind_counts", "whole_task_verification", "semantic_quality"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "NONE_RECORDED", "REDACTED"]}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/verificationItem"}},
+        "total_count": {"type": ["integer", "null"], "minimum": 0}, "truncated": {"type": "boolean"},
+        "verifier_kind_counts": {"oneOf": [{"$ref": "#/$defs/countMap"}, {"type": "null"}]},
+        "whole_task_verification": {"enum": ["UNKNOWN", "NONE"]}, "semantic_quality": {"const": "UNKNOWN"}
+      }
+    },
+    "effectItem": {
+      "type": "object", "additionalProperties": false, "required": ["effect_id", "run_id", "tool_id", "action_type", "execution_state", "effect_outcome", "reconciliation_status", "approval_ref", "created_at", "updated_at"],
+      "properties": {
+        "effect_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "tool_id": {"$ref": "#/$defs/ref"}, "action_type": {"$ref": "#/$defs/ref"},
+        "execution_state": {"enum": ["DECLARED", "PREPARED", "AUTHORIZED", "COMMITTING", "FINISHED", "CANCELLED"]},
+        "effect_outcome": {"enum": ["UNDETERMINED", "COMMITTED", "NOT_COMMITTED", "UNKNOWN"]},
+        "reconciliation_status": {"enum": ["NOT_REQUIRED", "PENDING", "RETRYING", "EXHAUSTED", "HUMAN_REQUIRED", "BLOCK_AND_ALERT", "RESOLVED"]},
+        "approval_ref": {"$ref": "#/$defs/nullableRef"}, "created_at": {"$ref": "#/$defs/timestamp"}, "updated_at": {"$ref": "#/$defs/timestamp"}
+      }
+    },
+    "effects": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated", "counts_by_outcome"],
+      "properties": {"status": {"enum": ["AVAILABLE", "NONE_RECORDED"]}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/effectItem"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}, "counts_by_outcome": {"$ref": "#/$defs/countMap"}}
+    },
+    "approvalItem": {
+      "type": "object", "additionalProperties": false, "required": ["approval_id", "approver_principal_id", "target_type", "effect_id", "decision", "policy_version", "issued_at", "expires_at", "association_basis"],
+      "properties": {"approval_id": {"$ref": "#/$defs/ref"}, "approver_principal_id": {"$ref": "#/$defs/nullableRef"}, "target_type": {"$ref": "#/$defs/ref"}, "effect_id": {"$ref": "#/$defs/nullableRef"}, "decision": {"enum": ["APPROVE", "DENY"]}, "policy_version": {"$ref": "#/$defs/ref"}, "issued_at": {"$ref": "#/$defs/timestamp"}, "expires_at": {"$ref": "#/$defs/nullableTimestamp"}, "association_basis": {"const": "TASK_EFFECT_OR_OBJECT_OR_RUN_TARGET"}}
+    },
+    "approvals": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated", "decision_counts"],
+      "properties": {"status": {"enum": ["AVAILABLE", "NONE_RECORDED", "REDACTED"]}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/approvalItem"}}, "total_count": {"type": ["integer", "null"], "minimum": 0}, "truncated": {"type": "boolean"}, "decision_counts": {"oneOf": [{"$ref": "#/$defs/countMap"}, {"type": "null"}]}}
+    },
+    "budgetAvailable": {
+      "type": "object", "additionalProperties": false, "required": ["status", "account_id", "limits", "current_counters", "reservations", "actual_spend", "interpretation"],
+      "properties": {
+        "status": {"const": "AVAILABLE"}, "account_id": {"$ref": "#/$defs/ref"},
+        "limits": {"type": "object", "additionalProperties": false, "required": ["amount_limit", "unit", "unit_status", "model_call_limit", "tool_call_limit", "child_run_limit"], "properties": {"amount_limit": {"type": "number", "minimum": 0}, "unit": {"enum": ["tokens", "milliseconds", "bytes", "runs", "records", "candidates", "credits", "microcredits", "calls", "boolean", "USD", "EUR", "GBP", "CNY", "JPY", "OTHER"]}, "unit_status": {"enum": ["KNOWN_SAFE", "REDACTED"]}, "model_call_limit": {"$ref": "#/$defs/count"}, "tool_call_limit": {"$ref": "#/$defs/count"}, "child_run_limit": {"$ref": "#/$defs/count"}}},
+        "current_counters": {"type": "object", "additionalProperties": false, "required": ["reserved", "consumed", "model_calls_reserved", "model_calls_consumed", "tool_calls_reserved", "tool_calls_consumed", "child_runs_reserved", "child_runs_consumed"], "properties": {"reserved": {"type": "number", "minimum": 0}, "consumed": {"type": "number", "minimum": 0}, "model_calls_reserved": {"$ref": "#/$defs/count"}, "model_calls_consumed": {"$ref": "#/$defs/count"}, "tool_calls_reserved": {"$ref": "#/$defs/count"}, "tool_calls_consumed": {"$ref": "#/$defs/count"}, "child_runs_reserved": {"$ref": "#/$defs/count"}, "child_runs_consumed": {"$ref": "#/$defs/count"}}},
+        "reservations": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"], "properties": {"items": {"type": "array", "maxItems": 100, "items": {"type": "object", "additionalProperties": false, "required": ["reservation_id", "run_id", "amount", "model_calls", "tool_calls", "child_runs", "state", "created_at"], "properties": {"reservation_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "amount": {"type": "number", "minimum": 0}, "model_calls": {"$ref": "#/$defs/count"}, "tool_calls": {"$ref": "#/$defs/count"}, "child_runs": {"$ref": "#/$defs/count"}, "state": {"enum": ["RESERVED", "CONSUMED", "RELEASED"]}, "created_at": {"$ref": "#/$defs/timestamp"}}}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+        "actual_spend": {"const": "UNKNOWN"}, "interpretation": {"const": "BUDGET_RESERVATION_IS_NOT_PROVIDER_SPEND"}
+      }
+    },
+    "budgetUnavailable": {"type": "object", "additionalProperties": false, "required": ["status", "reason", "actual_spend"], "properties": {"status": {"const": "UNAVAILABLE"}, "reason": {"const": "NO_BUDGET_ACCOUNT_RECORDED"}, "actual_spend": {"const": "UNKNOWN"}}},
+    "budget": {"oneOf": [{"$ref": "#/$defs/budgetAvailable"}, {"$ref": "#/$defs/budgetUnavailable"}]},
+    "metricBasis": {"type": "object", "additionalProperties": false, "required": ["present"], "properties": {"present": {"type": "boolean"}}},
+    "safeMetric": {
+      "type": "object", "additionalProperties": false, "required": ["value", "value_status", "provenance", "unit", "unit_status", "basis", "estimate_status", "estimation_basis"],
+      "properties": {
+        "value": {"type": ["number", "boolean", "null"]}, "value_status": {"enum": ["AVAILABLE", "UNAVAILABLE", "REDACTED"]},
+        "provenance": {"enum": ["OBSERVED", "HOST_DECLARED", "DERIVED", "UNAVAILABLE"]},
+        "unit": {"type": ["string", "null"], "enum": ["tokens", "milliseconds", "bytes", "runs", "records", "candidates", "credits", "microcredits", "calls", "boolean", "USD", "EUR", "GBP", "CNY", "JPY", "OTHER", null]},
+        "unit_status": {"enum": ["KNOWN_SAFE", "NOT_RECORDED", "REDACTED"]}, "basis": {"$ref": "#/$defs/metricBasis"},
+        "estimate_status": {"enum": ["NOT_ESTIMATED", "ESTIMATED", "UNAVAILABLE"]},
+        "estimation_basis": {"$ref": "#/$defs/metricBasis"}
+      }
+    },
+    "meteringItem": {
+      "type": "object", "additionalProperties": false, "required": ["record_id", "task_id", "run_id", "record_source", "participation_mode", "context_pack_ref", "metrics_sha256", "recorded_at", "metrics", "unrecognized_metric_count", "sensitive_text_redacted"],
+      "properties": {
+        "record_id": {"$ref": "#/$defs/ref"}, "task_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"},
+        "record_source": {"enum": ["NEXUS_CONTEXT_COMPILER", "HOST_DECLARED", "HOST_OBSERVED"]}, "participation_mode": {"enum": ["ACTIVE", "OBSERVE"]},
+        "context_pack_ref": {"$ref": "#/$defs/nullableRef"}, "metrics_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "recorded_at": {"$ref": "#/$defs/timestamp"},
+        "metrics": {"type": "object", "propertyNames": {"enum": ["model_visible_input_tokens", "host_total_turn_input_tokens", "cached_input_tokens", "cache_write_input_tokens", "uncached_input_tokens", "output_tokens", "reasoning_tokens", "latency_ms", "context_pack_bytes", "context_pack_token_count", "skill_instruction_tokens", "duplicate_work_reused_count", "duplicate_work_avoided_count", "actual_cost", "estimated_cost", "token_savings", "nexus_influenced_execution"]}, "additionalProperties": {"$ref": "#/$defs/safeMetric"}},
+        "unrecognized_metric_count": {"$ref": "#/$defs/count"}, "sensitive_text_redacted": {"type": "boolean"}
+      }
+    },
+    "metering": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reason", "total_count", "items", "truncated", "counts_by_source", "metric_interpretation"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "UNAVAILABLE"]}, "reason": {"type": ["string", "null"], "enum": ["NO_METERING_RECORDS", null]},
+        "total_count": {"$ref": "#/$defs/count"}, "items": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/meteringItem"}},
+        "truncated": {"type": "boolean"}, "counts_by_source": {"type": "object", "additionalProperties": false, "properties": {"NEXUS_CONTEXT_COMPILER": {"$ref": "#/$defs/count"}, "HOST_DECLARED": {"$ref": "#/$defs/count"}, "HOST_OBSERVED": {"$ref": "#/$defs/count"}}},
+        "metric_interpretation": {"const": "TYPED_METRICS_PRESERVED_FREE_TEXT_REDACTED"}
+      }
+    },
+    "routingAndCapabilities": {
+      "type": "object", "additionalProperties": false, "required": ["run_executor_counts", "requested_capability_counts", "route_decision_count", "grant_action_scopes", "host_native_tool_coverage"],
+      "properties": {
+        "run_executor_counts": {"type": "object", "additionalProperties": false, "properties": {"ORCHESTRATOR": {"$ref": "#/$defs/count"}, "MODEL": {"$ref": "#/$defs/count"}, "TOOL": {"$ref": "#/$defs/count"}}},
+        "requested_capability_counts": {"$ref": "#/$defs/countMap"}, "route_decision_count": {"type": ["integer", "null"], "minimum": 0},
+        "grant_action_scopes": {"$ref": "#/$defs/boundedGrantScopes"}, "host_native_tool_coverage": {"const": "UNKNOWN"}
+      }
+    },
+    "grantScope": {
+      "type": "object", "additionalProperties": false, "required": ["grant_id", "actions", "unrecognized_action_count", "audiences", "unrecognized_audience_count", "task_scope_exact_for_projection"],
+      "properties": {
+        "grant_id": {"$ref": "#/$defs/ref"}, "actions": {"type": "array", "uniqueItems": true, "maxItems": 32, "items": {"enum": ["RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY", "INSPECT", "VERIFY", "MEMORY_ADMIT", "MEMORY_SEARCH", "TOOL_READ", "EFFECT_PREPARE", "EFFECT_COMMIT", "DELEGATE", "EGRESS", "RUNTIME_CONFIGURE", "INSPECT_PROTECTED", "SKILL_ADMIN"]}},
+        "unrecognized_action_count": {"$ref": "#/$defs/count"}, "audiences": {"type": "array", "uniqueItems": true, "maxItems": 2, "items": {"enum": ["nexus-runtime", "nexus-inspect"]}},
+        "unrecognized_audience_count": {"$ref": "#/$defs/count"}, "task_scope_exact_for_projection": {"type": "boolean"}
+      }
+    },
+    "boundedGrantScopes": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"], "properties": {"items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/grantScope"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+    "skillResolutionItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["selection_id", "run_id", "candidate_count", "result_status", "resolution", "skill_id", "host_inventory_provenance", "host_native_availability", "instruction_object_ref", "instruction_sha256", "instruction_byte_size", "instruction_load_status", "delivery_status", "model_visible_exposure", "selection_latency_ms", "created_at", "instruction_integrity", "effectiveness"],
+      "properties": {
+        "selection_id": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "candidate_count": {"$ref": "#/$defs/count"},
+        "result_status": {"enum": ["RESOLVED", "NO_MATCH", "AMBIGUOUS", "UNSUPPORTED", "INACTIVE_MODE"]}, "resolution": {"enum": ["HOST_NATIVE", "NEXUS_FALLBACK", "UNSUPPORTED", null]},
+        "skill_id": {"$ref": "#/$defs/nullableRef"}, "host_inventory_provenance": {"enum": ["ADAPTER_DISCOVERY", "HOST_DECLARED", "UNKNOWN"]},
+        "host_native_availability": {"enum": ["AVAILABLE", "UNAVAILABLE", "UNKNOWN"]}, "instruction_object_ref": {"$ref": "#/$defs/ref"},
+        "instruction_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}, "instruction_byte_size": {"type": ["integer", "null"], "minimum": 0},
+        "instruction_load_status": {"enum": ["NOT_LOADED", "LOADED_TO_GOVERNED_ARTIFACT", "UNAVAILABLE"]},
+        "delivery_status": {"enum": ["UNKNOWN", "HOST_DECLARED_DELIVERY", "OBSERVED_DELIVERY"]}, "model_visible_exposure": {"enum": ["UNKNOWN", "UNAVAILABLE", "OBSERVED"]},
+        "selection_latency_ms": {"type": "number", "minimum": 0}, "created_at": {"$ref": "#/$defs/timestamp"},
+        "instruction_integrity": {"enum": ["VERIFIED", "UNAVAILABLE"]}, "effectiveness": {"const": "UNKNOWN"}
+      }
+    },
+    "skillResolution": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated", "model_consumption", "causal_effectiveness"],
+      "properties": {"status": {"enum": ["AVAILABLE", "NONE_RECORDED"]}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/skillResolutionItem"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}, "model_consumption": {"const": "UNKNOWN"}, "causal_effectiveness": {"const": "UNKNOWN"}}
+    },
+    "contextItem": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["pack_ref", "run_id", "state", "model_visible_exposure", "compiled_at"], "properties": {"pack_ref": {"const": "REDACTED_PURGED"}, "run_id": {"$ref": "#/$defs/ref"}, "state": {"const": "PURGED"}, "model_visible_exposure": {"const": "UNKNOWN"}, "compiled_at": {"$ref": "#/$defs/timestamp"}}},
+        {"type": "object", "additionalProperties": false, "required": ["pack_ref", "run_id", "state", "content_hash", "serialized_byte_size", "source_count", "source_type_counts", "model_visible_exposure", "compiled_at"], "properties": {"pack_ref": {"$ref": "#/$defs/ref"}, "run_id": {"$ref": "#/$defs/ref"}, "state": {"const": "COMPILED"}, "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "serialized_byte_size": {"$ref": "#/$defs/count"}, "source_count": {"$ref": "#/$defs/count"}, "source_type_counts": {"$ref": "#/$defs/countMap"}, "model_visible_exposure": {"const": "UNKNOWN"}, "compiled_at": {"$ref": "#/$defs/timestamp"}}}
+      ]
+    },
+    "context": {
+      "type": "object", "additionalProperties": false, "required": ["status", "reason", "items", "total_count", "truncated", "delivery", "model_consumption"],
+      "properties": {"status": {"enum": ["AVAILABLE", "UNAVAILABLE"]}, "reason": {"type": ["string", "null"], "enum": ["NO_CONTEXT_PACK_RECORDED", null]}, "items": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/contextItem"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}, "delivery": {"const": "UNKNOWN"}, "model_consumption": {"const": "UNKNOWN"}}
+    },
+    "memoryItem": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["candidate_id", "status", "truth_state", "verification_ref", "admitted"], "properties": {"candidate_id": {"enum": ["REDACTED", "REDACTED_PURGED"]}, "status": {"enum": ["REDACTED", "PURGED"]}, "truth_state": {"const": "UNKNOWN"}, "verification_ref": {"enum": ["REDACTED", "REDACTED_PURGED"]}, "admitted": {"type": "null"}}},
+        {"type": "object", "additionalProperties": false, "required": ["candidate_id", "status", "truth_state", "verification_ref", "claim_ref", "evidence_ref_count", "admitted", "admitted_object_ref", "created_at"], "properties": {"candidate_id": {"$ref": "#/$defs/ref"}, "status": {"$ref": "#/$defs/ref"}, "truth_state": {"$ref": "#/$defs/ref"}, "verification_ref": {"$ref": "#/$defs/ref"}, "claim_ref": {"$ref": "#/$defs/ref"}, "evidence_ref_count": {"$ref": "#/$defs/count"}, "admitted": {"type": "boolean"}, "admitted_object_ref": {"type": ["string", "null"], "maxLength": 128}, "created_at": {"$ref": "#/$defs/timestamp"}}
+        }
+      ]
+    },
+    "memoryParticipation": {
+      "type": "object", "additionalProperties": false, "required": ["status", "items", "total_count", "truncated", "counts_by_status", "mutated"],
+      "properties": {"status": {"enum": ["AVAILABLE", "NONE_RECORDED"]}, "items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/memoryItem"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}, "counts_by_status": {"$ref": "#/$defs/countMap"}, "mutated": {"const": false}}
+    },
+    "continuationCommit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["run_id", "object_ref", "current_state_integrity_sha256", "what_changed_ref", "what_changed_integrity_sha256", "supersedes_ref", "supersession_relation", "status", "official_commit_provenance"],
+      "properties": {
+        "run_id": {"$ref": "#/$defs/ref"}, "object_ref": {"$ref": "#/$defs/ref"}, "current_state_integrity_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "what_changed_ref": {"$ref": "#/$defs/nullableRef"}, "what_changed_integrity_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+        "supersedes_ref": {"$ref": "#/$defs/ref"}, "supersession_relation": {"enum": ["RECORDED", "UNKNOWN"]},
+        "status": {"enum": ["STRUCTURALLY_COMPLETE", "STRUCTURALLY_PARTIAL"]}, "official_commit_provenance": {"const": "NOT_VERIFIED_FROM_COMMAND_LEDGER"}
+      }
+    },
+    "continuation": {
+      "type": "object", "additionalProperties": false, "required": ["status", "commits", "total_count", "truncated", "operator_assertion_count", "lifecycle_requirement", "coverage", "unavailable_candidate_count", "unavailable_candidate_states", "provenance_scope"],
+      "properties": {
+        "status": {"enum": ["AVAILABLE", "NONE_RECORDED", "REDACTED", "PURGED", "UNAVAILABLE", "PARTIAL"]},
+        "commits": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/continuationCommit"}},
+        "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}, "operator_assertion_count": {"$ref": "#/$defs/count"},
+        "lifecycle_requirement": {"const": "OPTIONAL_INDEPENDENT_SURFACE"}, "coverage": {"enum": ["COMPLETE", "PARTIAL", "UNKNOWN"]},
+        "unavailable_candidate_count": {"$ref": "#/$defs/count"}, "unavailable_candidate_states": {"type": "object", "additionalProperties": false, "properties": {"REDACTED": {"$ref": "#/$defs/count"}, "PURGED": {"$ref": "#/$defs/count"}}},
+        "provenance_scope": {"const": "VISIBLE_PAYLOAD_TASK_RUN_SHAPE_ONLY; UNAVAILABLE_ARTIFACTS_ARE_POTENTIAL_CONTINUATION_CANDIDATES; OFFICIAL_COMMAND_LEDGER_NOT_VERIFIED"}
+      }
+    },
+    "failureSignal": {
+      "type": "object", "additionalProperties": false, "required": ["source_kind", "source_ref", "reason_code", "observed_state"],
+      "properties": {"source_kind": {"enum": ["TASK_LIFECYCLE", "RUN_LIFECYCLE", "SUBTASK_ATTEMPT", "EFFECT", "VERIFICATION", "AUTHORITY_EVENT"]}, "source_ref": {"$ref": "#/$defs/ref"}, "reason_code": {"$ref": "#/$defs/ref"}, "observed_state": {"$ref": "#/$defs/ref"}}
+    },
+    "boundedFailureSignals": {"type": "object", "additionalProperties": false, "required": ["items", "total_count", "truncated"], "properties": {"items": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/failureSignal"}}, "total_count": {"$ref": "#/$defs/count"}, "truncated": {"type": "boolean"}}},
+    "governanceCoverage": {
+      "type": "object", "additionalProperties": false, "required": ["status", "evidence", "complete_host_activity", "host_native_tool_coverage", "model_visible_context_consumption", "security_visibility"],
+      "properties": {"status": {"enum": ["NEXUS_GOVERNED", "UNKNOWN"]}, "evidence": {"type": "array", "uniqueItems": true, "maxItems": 3, "items": {"enum": ["CANONICAL_TASK", "TASK_BOUND_ROOT_RUN", "RUN_BOUND_GRANT"]}}, "complete_host_activity": {"const": "UNKNOWN"}, "host_native_tool_coverage": {"const": "UNKNOWN"}, "model_visible_context_consumption": {"const": "UNKNOWN"}, "security_visibility": {"const": "UNKNOWN"}}
+    },
+    "humanSignals": {
+      "type": "object", "additionalProperties": false, "required": ["interactive_tty_confirmation", "approval_decisions", "t3_human_or_domain_verifications", "continuation_operator_assertion"],
+      "properties": {
+        "interactive_tty_confirmation": {"const": "UNKNOWN"},
+        "approval_decisions": {"type": "object", "additionalProperties": false, "required": ["approve_count", "deny_count", "records"], "properties": {"approve_count": {"type": ["integer", "null"], "minimum": 0}, "deny_count": {"type": ["integer", "null"], "minimum": 0}, "records": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/approvalItem"}}}},
+        "t3_human_or_domain_verifications": {"type": ["integer", "null"], "minimum": 0}, "continuation_operator_assertion": {"enum": ["RECORDED", "UNKNOWN"]}
+      }
+    },
+    "unknowns": {
+      "type": "object", "additionalProperties": false, "required": ["semantic_task_quality", "whole_task_verification", "root_cause", "prompt_injection_presence_or_absence", "complete_host_activity", "model_context_consumption", "model_skill_consumption", "skill_effectiveness", "unpersisted_human_activity", "external_effect_truth", "provider_cost_if_missing"],
+      "properties": {"semantic_task_quality": {"const": "UNKNOWN"}, "whole_task_verification": {"enum": ["UNKNOWN", "NONE"]}, "root_cause": {"const": "UNKNOWN"}, "prompt_injection_presence_or_absence": {"const": "UNKNOWN"}, "complete_host_activity": {"const": "UNKNOWN"}, "model_context_consumption": {"const": "UNKNOWN"}, "model_skill_consumption": {"const": "UNKNOWN"}, "skill_effectiveness": {"const": "UNKNOWN"}, "unpersisted_human_activity": {"const": "UNKNOWN"}, "external_effect_truth": {"enum": ["UNKNOWN", "NOT_RECORDED"]}, "provider_cost_if_missing": {"const": "UNKNOWN"}}
+    },
+    "sourceRefs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task", "runs", "subtasks", "attempts", "trace_events", "verifications", "effects", "approval_decisions", "grants", "metering", "context_packs", "skill_resolutions", "route_decisions", "memory_candidates", "continuation"],
+      "properties": {"task": {"$ref": "#/$defs/boundedRefs"}, "runs": {"$ref": "#/$defs/boundedRefs"}, "subtasks": {"$ref": "#/$defs/boundedRefs"}, "attempts": {"$ref": "#/$defs/boundedRefs"}, "trace_events": {"$ref": "#/$defs/boundedRefs"}, "verifications": {"$ref": "#/$defs/boundedRefs"}, "effects": {"$ref": "#/$defs/boundedRefs"}, "approval_decisions": {"$ref": "#/$defs/boundedRefs"}, "grants": {"$ref": "#/$defs/boundedRefs"}, "metering": {"$ref": "#/$defs/boundedRefs"}, "context_packs": {"$ref": "#/$defs/boundedRefs"}, "skill_resolutions": {"$ref": "#/$defs/boundedRefs"}, "route_decisions": {"$ref": "#/$defs/boundedRefs"}, "memory_candidates": {"$ref": "#/$defs/boundedRefs"}, "continuation": {"$ref": "#/$defs/boundedRefs"}}
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false, "required": ["task_and_run", "trace", "verification", "metering", "context", "memory", "skill", "host_delivery", "continuation"],
+      "properties": {"task_and_run": {"const": "CANONICAL_LIFECYCLE_TABLES"}, "trace": {"const": "SCHEMA_VALIDATED_TRACE_EVENTS"}, "verification": {"const": "RUN_BOUND_VERIFICATION_RESULT"}, "metering": {"const": "HASH_AND_SCHEMA_VALIDATED_METERING_V2"}, "context": {"const": "CONTEXT_PACK_SERVICE_INTEGRITY_READ"}, "memory": {"const": "CANDIDATE_LINKED_THROUGH_VERIFICATION_RUN"}, "skill": {"const": "TASK_AND_RUN_BOUND_SKILL_RESOLUTION_RECORDS"}, "host_delivery": {"const": "NOT_INFERRED_FROM_SESSIONSTART_OR_CONTEXT_COMPILATION"}, "continuation": {"const": "VISIBLE_PAYLOAD_TASK_RUN_SHAPE_ONLY; UNAVAILABLE_ARTIFACTS_ARE_POTENTIAL_CONTINUATION_CANDIDATES; OFFICIAL_COMMAND_LEDGER_NOT_VERIFIED"}}
+    }
+  }
+}

@@ -155,6 +155,9 @@ def _parser() -> argparse.ArgumentParser:
 
     status = commands.add_parser("status", help="show verified read-only Project Nexus presence and continuity")
     status.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
+    experience = commands.add_parser("experience", help="show a bounded read-only projection of one governed Task")
+    experience.add_argument("task_id", help="exact Nexus Task ID")
+    experience.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
     continuation_view = commands.add_parser("continue", help="show a compact read-only Project Workspace")
     continuation_view.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
     doctor = commands.add_parser("doctor", help="diagnose Project Locator, Nexus and Codex Hook availability")
@@ -604,6 +607,35 @@ def main(argv: list[str] | None = None) -> int:
                 application.close()
             _emit_json_document(result)
             return 0
+        if args.command == "experience":
+            from adapters.panel.application import open_panel_application
+            from kernel.experience import ExperienceProjectionService, LocalOperatorReadContext
+
+            # Experience is deliberately composed over an already verified
+            # read-only instance. Explicit --data-root remains supported; when
+            # omitted, normal Project Locator resolution above supplies paths.
+            application = open_panel_application(
+                args.data_root, policy_path=args.policy,
+                independent_purge_journal_path=args.independent_purge_journal,
+                read_only=True,
+            )
+            try:
+                # This CLI is an explicit local-operator surface: the host OS
+                # user may inspect the verified instance. Task execution Grants
+                # do not authorize reads. Remote/MCP adapters must inject their
+                # own authenticated task reader context.
+                projection = ExperienceProjectionService(
+                    application.store, read_context=LocalOperatorReadContext(),
+                    context_packs=application.context_packs,
+                ).project_task(args.task_id)
+            finally:
+                application.close()
+            if args.json_output:
+                _emit_json_document(projection)
+            else:
+                from kernel.experience.service import render_experience
+                print(render_experience(projection))
+            return 0
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
         store, authority, _budget, trace, runtime = _runtime(args.data_root, args.policy, force_recovery=force_recovery, independent_purge_journal_path=journal_path)
@@ -766,6 +798,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "project-nexus-selfhost":
             reason = _safe_stage3_error_reason(exc)
         elif args.command == "context":
+            reason = _safe_context_read_error_reason(exc)
+        elif args.command == "experience":
             reason = _safe_context_read_error_reason(exc)
         elif args.command == "task" and args.task_action == "finish":
             reason = _safe_task_finish_error_reason(exc)
