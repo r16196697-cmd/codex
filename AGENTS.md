@@ -1,0 +1,1 @@
+This repository uses Project Nexus for governed continuity. If automatic Nexus context is unavailable, run `nexus continue` before substantial project work. This file is a fallback hint, not canonical project state.

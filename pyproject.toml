@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=65", "wheel>=0.40"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-nexus"
+version = "0.1.0"
+description = "Local governed continuity and operator surfaces for Project Nexus"
+requires-python = ">=3.11"
+dependencies = ["jsonschema==4.26.0", "PyYAML==6.0.3"]
+
+[project.scripts]
+nexus = "adapters.client.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["adapters*", "kernel*"]

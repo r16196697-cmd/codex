@@ -1,8 +1,10 @@
-# Nexus operator surface (Codex-hosted v0.1)
+# Nexus operator surface (Host-neutral v0.1)
 
 This is a local, thin operator client over Nexus Runtime APIs. It does not query or mutate SQLite itself, and it refuses to create a database implicitly. It is available after Nexus has been initialized at a reviewed data root:
 
 An existing repository can be attached to an already initialized instance with the HUMAN-confirmed `project attach` command. Once attached on this host, commands may resolve the instance from the current directory without explicit path arguments. See [Project Locator and Attach](project-locator-attach.md). Explicit `--data-root` workflows below remain supported.
+
+For read-only Project Presence, use `nexus status`, `nexus continue`, and `nexus doctor`. The optional `nexus host install codex` registration invokes the installed Nexus CLI at Codex SessionStart; it does not install repository scripts. See [Native Presence and Agent Host Integration](native-presence-host-integration.md).
 
 ```powershell
 .\.venv\Scripts\python.exe -m adapters.client --data-root <existing-data-root> --policy <nexus-policy.json> mode show

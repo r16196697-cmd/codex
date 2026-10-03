@@ -20,8 +20,24 @@ from kernel.runtime import DeterministicRuntime
 from kernel.skills import compose_skill_application, default_codex_skill_roots
 
 
+def _emit_json_document(document: dict, *, stream=None) -> None:
+    """Write machine JSON as UTF-8 when stdout/stderr is redirected.
+
+    Keep the active console encoding for an interactive operator terminal, but
+    don't let the Windows host code page corrupt JSON consumed by other tools.
+    """
+    target = sys.stdout if stream is None else stream
+    text = json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True)
+    buffer = getattr(target, "buffer", None)
+    if buffer is not None and not target.isatty():
+        buffer.write((text + "\n").encode("utf-8"))
+        buffer.flush()
+    else:
+        print(text, file=target)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="nexus", description="Codex-hosted Nexus local operator surface")
+    parser = argparse.ArgumentParser(prog="nexus", description="Nexus local operator and Agent Host Integration surface")
     parser.add_argument("--data-root", type=Path, help="Existing Nexus data root; the CLI never initializes a database")
     parser.add_argument("--policy", type=Path, help="Optional existing nexus.policy@1 JSON file; read-only and schema-validated")
     parser.add_argument("--independent-purge-journal", type=Path, help="Configured independent Purge Journal; defaults to NEXUS_INDEPENDENT_PURGE_JOURNAL or a sibling of --data-root")
@@ -136,6 +152,24 @@ def _parser() -> argparse.ArgumentParser:
         "repair-policy", help="HUMAN-confirm relocation of an attached policy into the durable host policy store",
     )
     project_repair.add_argument("--project-root", type=Path, help="directory from which to find the Project Manifest")
+
+    status = commands.add_parser("status", help="show verified read-only Project Nexus presence and continuity")
+    status.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
+    continuation_view = commands.add_parser("continue", help="show a compact read-only Project Workspace")
+    continuation_view.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
+    doctor = commands.add_parser("doctor", help="diagnose Project Locator, Nexus and Codex Hook availability")
+    doctor.add_argument("--json", action="store_true", dest="json_output", help="emit stable machine-readable JSON")
+    hook = commands.add_parser("hook", help=argparse.SUPPRESS)
+    hook_commands = hook.add_subparsers(dest="hook_action", required=True)
+    hook_commands.add_parser("session-start", help=argparse.SUPPRESS)
+
+    host = commands.add_parser("host", help="manage optional Agent Host lifecycle adapters")
+    host_commands = host.add_subparsers(dest="host_action", required=True)
+    for action in ("install", "status", "uninstall"):
+        host_command = host_commands.add_parser(action)
+        host_command.add_argument("host_name", choices=("codex",))
+        if action == "status":
+            host_command.add_argument("--json", action="store_true", dest="json_output")
 
     selfhost = commands.add_parser("project-nexus-selfhost", help="run/replay the frozen Project Nexus Stage 3 application plan")
     selfhost.add_argument("--repo", required=True, type=Path, help="process-local path to the frozen local source repository")
@@ -316,6 +350,47 @@ def _confirm_project_policy_relocation(expected: str, summary: dict[str, Any]) -
         return False
 
 
+def _confirm_host_adapter(expected: str, summary: dict[str, Any]) -> bool:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        from adapters.client.codex_host import CodexHostError
+        raise CodexHostError("INTERACTIVE_TTY_REQUIRED")
+    labels = {
+        "host": "Host",
+        "operation": "操作",
+        "target": "配置范围",
+        "event": "事件",
+        "sources": "来源",
+        "command": "命令",
+        "read_only": "只读",
+    }
+    print("确认修改用户级 Codex Hook 配置：", file=sys.stdout)
+    for key in ("host", "operation", "target", "event", "sources", "command", "read_only"):
+        value = summary.get(key)
+        if key == "read_only":
+            value = "是" if value else "否"
+        print(f"{labels[key]}  {', '.join(value) if isinstance(value, list) else value}", file=sys.stdout)
+    try:
+        return input(f"Type {expected} to confirm: ") == expected
+    except (EOFError, OSError):
+        return False
+
+
+def _render_host_status(result: dict[str, Any]) -> str:
+    labels = {
+        "NOT_INSTALLED": "未安装",
+        "INSTALLED": "已安装",
+        "INSTALLED_TRUST_UNKNOWN": "已安装；信任状态未知",
+        "CONFLICT": "配置冲突",
+        "UNAVAILABLE": "不可读取",
+    }
+    lines = ["Nexus Host Adapter · Codex", f"状态  {labels.get(result['status'], result['status'])}"]
+    if result["status"] == "INSTALLED_TRUST_UNKNOWN":
+        lines.append("信任  UNKNOWN（请在 Codex 中运行 /hooks 检查）")
+    if result.get("reason"):
+        lines.append(f"原因  {result['reason']}")
+    return "\n".join(lines)
+
+
 def _safe_continuation_error_reason(exc: Exception) -> str:
     reason = getattr(exc, "reason_code", None)
     if not isinstance(reason, str):
@@ -342,6 +417,68 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        if args.command == "hook" and args.hook_action == "session-start":
+            # This installed CLI is the Codex Host Adapter entrypoint. It never
+            # executes scripts or commands supplied by the current repository.
+            try:
+                from adapters.client.codex_host import parse_session_start_json, session_start_output
+                event = parse_session_start_json(sys.stdin.read(65537))
+                context = session_start_output(event)
+                if context:
+                    print(context)
+            except Exception:
+                pass
+            return 0
+
+        if args.command == "host":
+            if args.data_root is not None or args.policy is not None or args.independent_purge_journal is not None:
+                from adapters.client.codex_host import CodexHostError
+                raise CodexHostError("HOST_COMMAND_PATH_ARGUMENTS_UNSUPPORTED")
+            from adapters.client.codex_host import (
+                CodexHostError, codex_host_status, install_codex_host, uninstall_codex_host,
+            )
+            if args.host_action == "status":
+                result = codex_host_status()
+            elif args.host_action == "install":
+                result = install_codex_host(confirmation=_confirm_host_adapter)
+            else:
+                result = uninstall_codex_host(confirmation=_confirm_host_adapter)
+            if getattr(args, "json_output", False):
+                print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            elif args.host_action == "status":
+                print(_render_host_status(result))
+            else:
+                labels = {
+                    "HOST_ADAPTER_INSTALLED": "已安装",
+                    "HOST_ADAPTER_ALREADY_INSTALLED": "已安装（无需重写）",
+                    "HOST_ADAPTER_UNINSTALLED": "已卸载",
+                    "HOST_ADAPTER_NOT_INSTALLED": "未安装（无需修改）",
+                }
+                print(f"Nexus Host Adapter · Codex  {labels.get(result['status'], result['status'])}（{result['status']}）")
+            return 0
+
+        if args.command in {"status", "continue", "doctor"}:
+            if args.data_root is not None or args.policy is not None or args.independent_purge_journal is not None:
+                from adapters.client.project_locator import ProjectLocatorError
+                raise ProjectLocatorError("PRESENCE_PATH_ARGUMENTS_UNSUPPORTED")
+            from adapters.client.presence import (
+                build_project_workspace, doctor_project, render_continue, render_doctor, render_status,
+            )
+
+            if args.command == "doctor":
+                result = doctor_project()
+                if args.json_output:
+                    _emit_json_document(result)
+                else:
+                    print(render_doctor(result))
+                return 0
+            result = build_project_workspace()
+            if args.json_output:
+                _emit_json_document(result)
+            else:
+                print(render_status(result) if args.command == "status" else render_continue(result))
+            return 0
+
         if args.command == "project":
             from adapters.client.project_locator import attach_project, locate_project, repair_project_policy
 
@@ -373,7 +510,7 @@ def main(argv: list[str] | None = None) -> int:
                     independent_purge_journal_path=args.independent_purge_journal,
                     confirmation=_confirm_project_attach,
                 )
-            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            _emit_json_document(result)
             return 0
 
         if args.data_root is None:
@@ -465,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
                           else application.context_packs.read_compiled(args.pack_ref))
             finally:
                 application.close()
-            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            _emit_json_document(result)
             return 0
         force_recovery = args.command == "recovery" and args.recovery_action == "open"
         journal_path = getattr(args, "purge_ledger", None) or args.independent_purge_journal
@@ -606,7 +743,19 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        if args.command == "project":
+        if args.command in {"status", "continue", "doctor"}:
+            reason = _safe_context_read_error_reason(exc)
+            if getattr(args, "json_output", False):
+                print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
+            else:
+                label = {"status": "状态", "continue": "Continue", "doctor": "Doctor"}.get(args.command, "Nexus")
+                print(f"Nexus {label} 无法完成：{reason}", file=sys.stderr)
+            return 2
+        elif args.command == "host":
+            reason = _safe_context_read_error_reason(exc)
+            print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
+            return 2
+        elif args.command == "project":
             reason = _safe_context_read_error_reason(exc)
         elif args.data_root is None:
             reason = _safe_context_read_error_reason(exc)

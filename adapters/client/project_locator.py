@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterator
 
+from adapters.client.host_file_lock import HostFileLockError, path_mutation_lock
+
 from kernel.instance_binding import parse_json_object, policy_sha256
 
 
@@ -440,74 +442,16 @@ def _write_atomic(path: Path, content: bytes) -> None:
 
 @contextmanager
 def _registry_mutation_lock(registry_path: Path) -> Iterator[None]:
-    """Serialize host-registry mutations across processes.
-
-    The persistent sidecar is only a lock target; ownership is held by the OS
-    lock, not by stale PID/lease data.  Kernel locks are released when a
-    process exits, so an interrupted attach cannot leave a permanent lock.
-    Read-only locate deliberately does not use or create this file.
-    """
-    lock_path = registry_path.with_name(registry_path.name + ".lock")
-    handle = None
-    acquired = False
+    """Serialize host-registry mutations; read-only locate stays lock-free."""
+    context = path_mutation_lock(registry_path)
     try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        if lock_path.is_symlink():
-            _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
-        flags = os.O_CREAT | os.O_RDWR
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(lock_path, flags, 0o600)
-        handle = os.fdopen(descriptor, "r+b", buffering=0)
-
-        # msvcrt locks a byte range at the current file position.  Ensure the
-        # shared byte exists before locking; concurrent initializers both
-        # write the same single zero byte, then serialize on offset zero.
-        handle.seek(0, os.SEEK_END)
-        if handle.tell() == 0:
-            handle.write(b"\0")
-            os.fsync(handle.fileno())
-
-        if os.name == "nt":
-            import msvcrt
-
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        acquired = True
-    except ProjectLocatorError:
-        if handle is not None:
-            handle.close()
+        context.__enter__()
+    except HostFileLockError:
         _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
-    except Exception:
-        if handle is not None:
-            handle.close()
-        _fail("PROJECT_REGISTRY_LOCK_UNAVAILABLE")
-
     try:
         yield
     finally:
-        if handle is not None:
-            if acquired:
-                try:
-                    if os.name == "nt":
-                        import msvcrt
-
-                        handle.seek(0)
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        import fcntl
-
-                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                except OSError:
-                    # Closing the descriptor still releases the OS lock.
-                    pass
-            handle.close()
+        context.__exit__(None, None, None)
 
 
 def _manifest_document(project_id: str) -> dict[str, Any]:
