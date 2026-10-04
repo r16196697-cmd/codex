@@ -17,6 +17,8 @@ from typing import Any, Iterable
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from adapters.storage.migration_checksum import classify_migration_checksum
+
 from kernel.object_refs import known_object_refs, redact_governed_object_values, resolve_governed_object_resource
 from kernel.object.errors import (
     CommandConflict,
@@ -1289,8 +1291,8 @@ class ObjectStore:
         if user_version != len(rows):
             raise MigrationError("Recovery database migration state is inconsistent.")
         for version, name, checksum in rows:
-            if name not in migrations or _sha256(migrations[name]) != checksum:
-                raise MigrationError("Recovery database migration checksum mismatch.")
+            if name not in migrations or classify_migration_checksum(migrations[name], checksum) == "MISMATCH":
+                raise MigrationError("MIGRATION_CHECKSUM_MISMATCH")
         if require_current and (
             user_version != len(migrations)
             or [row[0] for row in rows] != list(range(1, len(migrations) + 1))
@@ -1365,8 +1367,8 @@ class ObjectStore:
                     "SELECT name, checksum FROM schema_migrations WHERE version = ?", (version,)
                 ).fetchone()
                 if applied:
-                    if applied["name"] != path.name or applied["checksum"] != checksum:
-                        raise MigrationError("An applied migration differs from its recorded checksum.")
+                    if applied["name"] != path.name or classify_migration_checksum(sql_bytes, applied["checksum"]) == "MISMATCH":
+                        raise MigrationError("MIGRATION_CHECKSUM_MISMATCH")
                     continue
                 sql = sql_bytes.decode("utf-8")
                 migration_name = path.name.replace("'", "''")
