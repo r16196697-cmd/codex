@@ -6,6 +6,8 @@ An existing repository can be attached to an already initialized instance with t
 
 For read-only Project Presence, use `nexus status`, `nexus continue`, and `nexus doctor`. The optional `nexus host install codex` registration invokes the installed Nexus CLI at Codex SessionStart; it does not install repository scripts. See [Native Presence and Agent Host Integration](native-presence-host-integration.md).
 
+项目 milestone 的治理写回可使用 `nexus checkpoint`：完整只读 preflight 后，一次 HUMAN 确认组合既有 Task Start / Continuation / Task Finish。内部计划自动冻结，原命令可安全重试。参见 [Checkpoint / Milestone](checkpoint.md)。
+
 ```powershell
 .\.venv\Scripts\python.exe -m adapters.client --data-root <existing-data-root> --policy <nexus-policy.json> mode show
 .\.venv\Scripts\python.exe -m adapters.client --data-root <existing-data-root> --policy <nexus-policy.json> mode set SAFE --command-id <unique-id> --grant-id <grant-id> --task-id <task-id> --classification-assertion-ref <trace-event-classification>

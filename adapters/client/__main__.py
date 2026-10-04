@@ -130,6 +130,14 @@ def _parser() -> argparse.ArgumentParser:
     task_finish = task_commands.add_parser("finish", help="finish one exact daily Task Root and revoke its original Grant")
     task_finish.add_argument("--plan", required=True, type=Path, help="process-local strict JSON task-finish plan")
 
+    checkpoint = commands.add_parser("checkpoint", help="一次 HUMAN 授权完成项目 Checkpoint")
+    checkpoint.add_argument("--proposal", type=Path, help="仅含四个产品语义字段的 UTF-8 JSON")
+    checkpoint.add_argument("--accepted-revision", help="已独立接受的 Git revision")
+    checkpoint.add_argument("--objective", help="当前 objective（HUMAN assertion）")
+    checkpoint.add_argument("--next", dest="next_step", help="下一步（HUMAN assertion）")
+    checkpoint.add_argument("--completed", help="本次完成摘要（HUMAN assertion）")
+    checkpoint.add_argument("--id", dest="checkpoint_id", help="可选公开 Checkpoint identity；相同请求直接重试")
+
     continuation = commands.add_parser(
         "continuation", help="commit one HUMAN-authorized continuation state from an active daily Task",
     )
@@ -416,10 +424,41 @@ def _runtime(data_root: Path, policy_path: Path | None = None, *, force_recovery
     return store, authority, budget, trace, DeterministicRuntime(store, authority, budget, trace)
 
 
+def _confirm_checkpoint(phrase: str, summary: dict) -> bool:
+    from adapters.client.checkpoint import CheckpointError
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise CheckpointError("INTERACTIVE_TTY_REQUIRED")
+    print("Project Nexus Checkpoint")
+    print(f"Current State: r{summary['previous_revision'] or 1} → r{summary['new_revision']}")
+    print(f"Accepted Git: {summary['accepted_revision']}")
+    print(f"完成摘要: {summary['recent_work']}")
+    print(f"当前目标: {summary['current_objective']}")
+    print(f"下一步: {summary['next_step']}")
+    print("授权范围: 一个 bounded Task；提交 Current State / What Changed / Context；完成 Task 并撤销原 Grant。")
+    print("上述工作摘要、目标和下一步为 HUMAN_OPERATOR_ASSERTION；不自动证明工作质量或模型可见性。")
+    return input(f"输入 {phrase} 确认: ") == phrase
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        if args.command == "checkpoint":
+            from adapters.client.checkpoint import CheckpointError, checkpoint_project, read_checkpoint_proposal
+            if any(value is not None for value in (args.data_root, args.policy, args.independent_purge_journal)):
+                raise CheckpointError("CHECKPOINT_PATH_ARGUMENTS_UNSUPPORTED")
+            semantics = (args.accepted_revision, args.objective, args.next_step, args.completed)
+            if args.proposal is not None:
+                if any(value is not None for value in semantics):
+                    raise CheckpointError("CHECKPOINT_PROPOSAL_INVALID")
+                proposal = read_checkpoint_proposal(args.proposal)
+            else:
+                proposal = dict(zip(("accepted_revision", "current_objective", "next_step", "recent_work"), semantics))
+            result = checkpoint_project(proposal=proposal, checkpoint_id=args.checkpoint_id,
+                confirmation=_confirm_checkpoint)
+            _emit_json_document(result)
+            return 0 if result["status"] == "CHECKPOINT_COMPLETED" else 3
+
         if args.command == "hook" and args.hook_action == "session-start":
             # This installed CLI is the Codex Host Adapter entrypoint. It never
             # executes scripts or commands supplied by the current repository.
@@ -787,6 +826,10 @@ def main(argv: list[str] | None = None) -> int:
             reason = _safe_context_read_error_reason(exc)
             print(json.dumps({"status": "DENIED_OR_FAILED", "reason": reason}, ensure_ascii=False), file=sys.stderr)
             return 2
+        elif args.command == "checkpoint":
+            reason = _safe_context_read_error_reason(exc)
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{0,95}", reason) is None:
+                reason = "CHECKPOINT_FAILED"
         elif args.command == "project":
             reason = _safe_context_read_error_reason(exc)
         elif args.data_root is None:
