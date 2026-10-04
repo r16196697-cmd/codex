@@ -262,7 +262,12 @@ def _normalized(store, authority, envelope):
         != (s["instance_expectation"], s["operator_id"], s["root"]["task_id"], s["root"]["root_run_id"], s["grant"]["grant_id"])
         for item in (c, f)) or f["outcome"] != "SUCCEEDED":
         _fail("CHECKPOINT_RECEIPT_INVALID")
-    if (c["git_fact"]["commit_sha"] != envelope["proposal"]["accepted_revision"] or c["human_assertions"] != {
+    # Checkpoint acceptance policy applies to frozen receipts too, including retries.
+    # Compare bound facts here; completed historical replay must not reread live Git.
+    if not (c["git_fact"]["commit_sha"] == c["git_fact"]["upstream_commit_sha"]
+            == envelope["proposal"]["accepted_revision"]):
+        _fail("CHECKPOINT_GIT_REVISION_NOT_UPSTREAM")
+    if (c["human_assertions"] != {
         key: envelope["proposal"][key] for key in _SEMANTICS - {"accepted_revision"}}):
         _fail("CHECKPOINT_RECEIPT_INVALID")
     if (s["command_id"] != prefix + "-start" or c["command_id"] != prefix + "-commit"

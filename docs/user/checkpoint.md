@@ -20,7 +20,16 @@ nexus checkpoint --accepted-revision <independently-accepted-sha> `
 }
 ```
 
-proposal 文件放在仓库外；Git worktree 必须严格 CLEAN。Git fact 验证本地 HEAD、branch、configured upstream tracking ref；不声称实时验证 remote。accepted revision 必须等于此次验证的 HEAD。工作摘要、objective 和 next step 保持 `HUMAN_OPERATOR_ASSERTION`，模型可见性仍为 `UNKNOWN`。
+proposal 文件放在仓库外；Git worktree 必须严格 CLEAN。Checkpoint 在 HUMAN 确认前要求以下 acceptance invariant；frozen receipt retry 同样检查。
+
+```text
+Checkpoint acceptance requires:
+accepted revision = local HEAD = configured upstream local tracking SHA.
+
+This does not fetch and does not claim a live remote observation.
+```
+
+独立 remote acceptance 仍由外部审查完成。已完成的 historical replay 验证冻结请求与 canonical completion evidence，不要求当前 HEAD / tracking ref 仍停留在历史 revision。工作摘要、objective 和 next step 保持 `HUMAN_OPERATOR_ASSERTION`，模型可见性仍为 `UNKNOWN`。
 
 ## 一次确认
 

@@ -85,6 +85,8 @@ class CheckpointTests(unittest.TestCase):
 
     def test_one_confirmation_happy_path_and_exact_historical_replay(self):
         envelope = self.envelope()
+        self.assertEqual(envelope["continuation"]["git_fact"]["commit_sha"], self.proposal["accepted_revision"])
+        self.assertEqual(envelope["continuation"]["git_fact"]["upstream_commit_sha"], self.proposal["accepted_revision"])
         calls = []
         result = self.execute(envelope, lambda phrase, summary: calls.append((phrase, summary)) or True)
         self.assertEqual(result["status"], "CHECKPOINT_COMPLETED")
@@ -107,12 +109,50 @@ class CheckpointTests(unittest.TestCase):
         # A later legitimate Checkpoint must not break historical replay.
         newer = self.execute(self.envelope("release-two"))
         self.assertEqual(newer["status"], "CHECKPOINT_COMPLETED", newer)
+        (self.repo / "later-release.txt").write_text("Later accepted release.\n", encoding="utf-8")
+        self.fixture._git("add", "later-release.txt")
+        self.fixture._git("commit", "-m", "fixture later accepted release")
+        advanced = self.fixture._git("rev-parse", "HEAD")
+        self.fixture._git("update-ref", "refs/remotes/origin/main", advanced)
+        self.assertNotEqual(advanced, self.proposal["accepted_revision"])
+        self.assertEqual(self.fixture._git("rev-parse", "@{u}"), advanced)
         before = self.canonical()
         with mock.patch.object(continuation, "_validate_git_fact", side_effect=AssertionError("live Git reread")):
             replay = self.execute(envelope, lambda *_: self.fail("confirmation on replay"))
         self.assertEqual(replay, {**result, "replayed": True})
         self.assertEqual(before, self.canonical())
         self.assertEqual(newer["state_revision"], 4)
+
+    def test_local_head_not_upstream_fails_before_confirmation_without_writes(self):
+        previous = self.fixture._git("rev-parse", "HEAD^")
+        self.fixture._git("update-ref", "refs/remotes/origin/main", previous)
+        self.assertEqual(self.fixture._git("rev-parse", "HEAD"), self.proposal["accepted_revision"])
+        before = self.canonical()
+        calls = []
+        with mock.patch.dict(os.environ, self.env):
+            with self.assertRaises(cp.CheckpointError) as error:
+                cp.checkpoint_project(proposal=self.proposal, start_dir=self.nested,
+                    confirmation=lambda *_: calls.append(True) or True)
+        self.assertEqual(error.exception.reason_code, "CHECKPOINT_GIT_REVISION_NOT_UPSTREAM")
+        self.assertEqual(calls, [])
+        self.assertEqual(before, self.canonical())
+
+    def test_receipt_git_fact_mismatch_fails_before_confirmation_without_writes(self):
+        envelope = self.envelope("receipt-mismatch")
+        envelope["continuation"]["git_fact"]["upstream_commit_sha"] = self.fixture._git("rev-parse", "HEAD^")
+        _, prefix = cp._identity(self.binding, self.proposal, "receipt-mismatch")
+        receipt = self.registry.parent / "checkpoints-v1" / self.binding["instance_id"] / (prefix + ".json")
+        receipt.parent.mkdir(parents=True)
+        receipt.write_bytes(cp._bytes(envelope))
+        before = self.canonical()
+        calls = []
+        with mock.patch.dict(os.environ, self.env):
+            with self.assertRaises(cp.CheckpointError) as error:
+                cp.checkpoint_project(proposal=self.proposal, checkpoint_id="receipt-mismatch",
+                    start_dir=self.nested, confirmation=lambda *_: calls.append(True) or True)
+        self.assertEqual(error.exception.reason_code, "CHECKPOINT_GIT_REVISION_NOT_UPSTREAM")
+        self.assertEqual(calls, [])
+        self.assertEqual(before, self.canonical())
 
     def test_denial_zero_canonical_writes(self):
         envelope = self.envelope()
