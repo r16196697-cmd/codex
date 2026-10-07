@@ -1,0 +1,22 @@
+{
+  "artifact_filename": "install_nexus_host.py",
+  "delivery_directory_name": "Nexus-Host-Bootstrap-MCP-2026-10-07",
+  "artifact_sha256": "f84a135afb9bc55b22899ed32f1e611a3d75df7744ad87495912c8985c3becd6",
+  "source_artifact_sha256": "0f18858bb0c7abe166760ee48f7c801373abc6239e433d6410bf74c7f721b740",
+  "patch": "tools/host-bootstrap-mcp-dependency.patch",
+  "patch_sha256": "451b7d881e733b85e35f25f49473a990fa7ec040865cb1f261c9995f41d78eab",
+  "patch_status": "PRESERVED_AS_PROVENANCE",
+  "semantic_change": "dependencies() mapping adds mcp -> mcp only",
+  "dependency_sources": [
+    "pyproject.toml",
+    "requirements.txt",
+    "requirements.lock.txt"
+  ],
+  "previous_runtime_test_sha": "690c7fe0f5cd5cadf12bdab133671f6845f37ca2",
+  "candidate_runtime_test_sha": "c10b2472332e1d082abce53ebccbeb1465666143",
+  "review_status": "AWAITING_INDEPENDENT_REVIEW",
+  "installer_in_repository": false,
+  "artifact_diff_filename": "exact-installer.diff",
+  "artifact_diff_sha256": "9b13810e7c3b0379b923c6b1475a020b6ca798625e10a34e4ace8754604eb553",
+  "historical_patch_hunk_offset": 1
+}

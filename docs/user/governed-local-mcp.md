@@ -114,6 +114,10 @@ exact version/import verification，不改变 installer architecture 或自动�
 安装新 runtime 或操作 production。未来 operator 需先在受控环境安装 exact
 runtime dependencies；Bootstrap 在缺依赖时仍 fail closed。
 
+后续窄 compatibility release 已生成新的外部 artifact candidate，旧 artifact
+和 patch 保留。参见 [Host Bootstrap compatibility](host-bootstrap-mcp-compatibility.md)
+及 `tools/host-bootstrap-mcp-compatibility.json`；独立审查完成前不部署。
+
 ## 验证范围
 
 隔离 fixture 测试覆盖官方 client initialize/list/call、真实 stdio subprocess、
