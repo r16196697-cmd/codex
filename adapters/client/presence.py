@@ -266,6 +266,7 @@ def _fit_workspace_budget(workspace: dict[str, Any]) -> dict[str, Any]:
 
 def build_project_workspace(
     *, start_dir: str | Path | None = None, locator=None, app_opener=None,
+    application=None, resolved_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve and verify one attached Project, then build a bounded workspace.
 
@@ -274,15 +275,19 @@ def build_project_workspace(
     never browsed. This function does not write Nexus state.
     """
     selected_locator = locator or locate_project
-    resolved = selected_locator(start_dir=start_dir)
-    if app_opener is None:
-        from adapters.panel.application import open_panel_application
-        app_opener = open_panel_application
-    application = app_opener(
-        resolved["data_root"], policy_path=resolved["policy_path"],
-        independent_purge_journal_path=resolved["independent_purge_journal_path"],
-        read_only=True,
-    )
+    resolved = resolved_binding if resolved_binding is not None else selected_locator(start_dir=start_dir)
+    owns_application = application is None
+    if owns_application:
+        if app_opener is None:
+            from adapters.panel.application import open_panel_application
+            app_opener = open_panel_application
+        application = app_opener(
+            resolved["data_root"], policy_path=resolved["policy_path"],
+            independent_purge_journal_path=resolved["independent_purge_journal_path"],
+            read_only=True,
+        )
+    elif Path(application.store.data_root).resolve() != Path(resolved["data_root"]).resolve():
+        raise ValueError("PROJECT_WORKSPACE_APPLICATION_BINDING_MISMATCH")
     try:
         snapshot = application.view_model.snapshot()
         context_meta = application.context_packs.latest()
@@ -291,7 +296,8 @@ def build_project_workspace(
             pack = application.context_packs.read_compiled(context_meta["pack_id"])
         state_doc, delta_doc, entry_refs = _read_continuity_documents(pack)
     finally:
-        application.close()
+        if owns_application:
+            application.close()
 
     state_ref = entry_refs.get("current_state")
     state_hash = entry_refs.get("current_state_hash")

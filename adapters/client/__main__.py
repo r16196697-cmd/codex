@@ -57,6 +57,17 @@ def _parser() -> argparse.ArgumentParser:
     mcp_serve.add_argument("--reader-profile", choices=["local-no-egress"],
                            help="Operator no-egress consumer assertion; never use with remote-model Hosts")
     mcp_serve.add_argument("--project-root", type=Path, help="Local operator-selected Project discovery start; defaults to cwd")
+    mcp_remote = mcp_commands.add_parser("remote-serve", help="Serve only the exact released Remote Read snapshot over local stdio")
+    mcp_remote.add_argument("--project-root", type=Path, help="Project discovery start; defaults to cwd")
+
+    remote_read = commands.add_parser("remote-read", help="Prepare or inspect a HUMAN-released immutable Remote Read snapshot")
+    remote_read_commands = remote_read.add_subparsers(dest="remote_read_action", required=True)
+    remote_prepare = remote_read_commands.add_parser("prepare", help="Preview and HUMAN-release one exact-hash selected snapshot")
+    remote_prepare.add_argument("--project-root", type=Path, help="Project discovery start; defaults to cwd")
+    remote_status = remote_read_commands.add_parser("status", help="Show the host-local Remote Read profile state")
+    remote_status.add_argument("--project-root", type=Path, help="Project discovery start; defaults to cwd")
+    remote_revoke = remote_read_commands.add_parser("revoke", help="Disable the host-local Remote Read profile")
+    remote_revoke.add_argument("--project-root", type=Path, help="Project discovery start; defaults to cwd")
 
     mode = commands.add_parser("mode")
     mode_commands = mode.add_subparsers(dest="mode_action", required=True)
@@ -446,6 +457,26 @@ def _confirm_checkpoint(phrase: str, summary: dict) -> bool:
     return input(f"输入 {phrase} 确认: ") == phrase
 
 
+def _confirm_remote_snapshot(phrase: str, summary: dict) -> bool:
+    from adapters.client.remote_read import RemoteReadError
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise RemoteReadError("INTERACTIVE_TTY_REQUIRED")
+    print("Nexus Remote Read 快照发布")
+    print(f"项目: {summary['project_id']}")
+    print(f"目标: {summary['target']}")
+    print(f"Current State revision: {summary['state_revision']}")
+    print(f"Accepted revision: {summary['accepted_revision']}")
+    print(f"发布字段: {', '.join(summary['selected_fields'])}")
+    print("将发布的实际字段值:")
+    print(json.dumps(summary["selected_projection"], ensure_ascii=False, indent=2, sort_keys=True))
+    print(f"能力: {', '.join(summary['abilities'])}")
+    print(f"分类目标: {summary['release_classification']}")
+    print(f"快照 SHA-256: {summary['snapshot_content_hash']}")
+    print(f"大小: {summary['estimated_bytes']} bytes")
+    print("快照文本会作为不可信数据提供；不会建立网络连接或授予写入能力。")
+    return input(f"输入 {phrase} 确认: ") == phrase
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
@@ -456,12 +487,35 @@ def main(argv: list[str] | None = None) -> int:
                 print("READ_PLANE_INVALID_ARGUMENT", file=sys.stderr)
                 return 3
             try:
-                from adapters.mcp.server import serve
-                serve(start_dir=args.project_root, reader_profile=args.reader_profile)
+                if args.mcp_action == "remote-serve":
+                    from adapters.mcp.remote_server import serve
+                    serve(start_dir=args.project_root)
+                else:
+                    from adapters.mcp.server import serve
+                    serve(start_dir=args.project_root, reader_profile=args.reader_profile)
                 return 0
             except Exception:
                 print("READ_PLANE_UNAVAILABLE", file=sys.stderr)
                 return 3
+        if args.command == "remote-read":
+            if any(value is not None for value in (args.data_root, args.policy, args.independent_purge_journal)):
+                from adapters.client.remote_read import RemoteReadError
+                raise RemoteReadError("REMOTE_READ_PATH_ARGUMENTS_UNSUPPORTED")
+            from adapters.client.remote_read import (
+                RemoteReadError, prepare_remote_read, remote_reader_status, revoke_remote_reader,
+            )
+            if args.remote_read_action == "prepare":
+                result = prepare_remote_read(start_dir=args.project_root, confirmation=_confirm_remote_snapshot)
+            elif args.remote_read_action == "status":
+                result = remote_reader_status(start_dir=args.project_root)
+            else:
+                result = revoke_remote_reader(start_dir=args.project_root)
+            _emit_json_document(result)
+            return 0 if result["status"] in {
+                "REMOTE_READ_SNAPSHOT_RELEASED", "REMOTE_READ_SNAPSHOT_ALREADY_RELEASED",
+                "REMOTE_READER_ACTIVE", "REMOTE_READER_NOT_CONFIGURED", "REMOTE_READER_REVOKED",
+                "REMOTE_READER_EXPIRED",
+            } else 3
         if args.command == "checkpoint":
             from adapters.client.checkpoint import CheckpointError, checkpoint_project, read_checkpoint_proposal
             if any(value is not None for value in (args.data_root, args.policy, args.independent_purge_journal)):

@@ -30,7 +30,7 @@ _TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 # needs the first five. The remaining actions have existing consumers in Core.
 _ALLOWED_ACTIONS = frozenset({
     "RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY",
-    "INSPECT", "VERIFY", "MEMORY_ADMIT", "MEMORY_SEARCH", "TOOL_READ",
+    "CLASSIFICATION_LOWER", "INSPECT", "VERIFY", "MEMORY_ADMIT", "MEMORY_SEARCH", "TOOL_READ",
 })
 _ROOT_ACTIONS = frozenset({
     "RUN_CREATE", "RUN_TRANSITION", "TRACE_APPEND", "OBJECT_WRITE", "CLASSIFY",
