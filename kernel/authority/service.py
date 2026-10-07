@@ -10,6 +10,9 @@ from kernel.authority.errors import ApprovalDenied, AuthorizationDenied, Invalid
 from adapters.storage import ObjectStore
 
 KERNEL_RECOVERY_PRINCIPAL_ID = "nexus-core-recovery"
+_CLASSIFICATION_HISTORY_LIMIT = 256
+_EGRESS_OBJECT_LIMIT = 256
+_CLASSIFICATION_TAG_LIMIT = 128
 
 
 def _now() -> datetime:
@@ -486,32 +489,144 @@ class AuthorityService:
         tags = set().union(*(set(json.loads(row["handling_tags_json"])) for row in rows))
         return level, tags
 
-    def evaluate_egress(self, destination: str, object_ids: list[str]) -> bool:
-        self.store._require_mode("egress")
-        if not object_ids:
-            return False
-        assertion_ids: list[str] = []
+    def current_classification(self, object_id: str) -> dict[str, Any]:
+        """Resolve immutable envelope provenance to one current OBJECT leaf.
+
+        This is a read semantic, not caller authorization or classification
+        lowering. Invalid or disconnected history raises without denial audit.
+        """
+        self.store._require_mode("core_read")
         with self.store._connection() as conn:
-            for object_id in sorted(set(object_ids)):
-                row = conn.execute("SELECT classification_assertion_ref FROM object_envelopes WHERE object_id=?", (object_id,)).fetchone()
-                if not row:
-                    return False
-                assertion_ids.append(row["classification_assertion_ref"])
-        effective = self.effective_classification(assertion_ids)
-        if not effective:
-            return False
-        sensitivity_level, handling_tags = effective
+            conn.execute("BEGIN")
+            return self._current_object_classification(conn, object_id)
+
+    def _current_object_classification(self, conn, object_id: str) -> dict[str, Any]:
+        unavailable = "EGRESS_CLASSIFICATION_UNAVAILABLE"
+        ambiguous = "EGRESS_CLASSIFICATION_AMBIGUOUS"
+        if not isinstance(object_id, str) or not object_id:
+            raise AuthorizationDenied(unavailable)
+        envelope = conn.execute(
+            "SELECT classification_assertion_ref FROM object_envelopes WHERE object_id=?", (object_id,)
+        ).fetchone()
+        if envelope is None:
+            raise AuthorizationDenied("EGRESS_OBJECT_NOT_FOUND")
+        rows = conn.execute(
+            "SELECT assertion_id,subject_type,subject_ref,sensitivity_level,handling_tags_json,policy_version,supersedes "
+            "FROM classification_assertions WHERE subject_type='OBJECT' AND subject_ref=? LIMIT ?",
+            (object_id, _CLASSIFICATION_HISTORY_LIMIT + 1),
+        ).fetchall()
+        if not rows or len(rows) > _CLASSIFICATION_HISTORY_LIMIT:
+            raise AuthorizationDenied(unavailable)
+        if any(not isinstance(row["assertion_id"], str) or not row["assertion_id"]
+               or len(row["assertion_id"].encode("utf-8")) > 256 for row in rows):
+            raise AuthorizationDenied(unavailable)
+        history = {row["assertion_id"]: row for row in rows}
+        anchor = envelope["classification_assertion_ref"]
+        if anchor not in history:
+            raise AuthorizationDenied(unavailable)
+        # Detect alien-subject successors too; same-subject lookup alone would
+        # silently overlook a corrupt supersession branching out of this chain.
+        placeholders = ",".join("?" for _ in history)
+        successors = conn.execute(
+            "SELECT assertion_id,subject_type,subject_ref FROM classification_assertions "
+            f"WHERE supersedes IN ({placeholders}) LIMIT ?",
+            (*sorted(history), _CLASSIFICATION_HISTORY_LIMIT + 1),
+        ).fetchall()
+        if len(successors) > _CLASSIFICATION_HISTORY_LIMIT:
+            raise AuthorizationDenied(ambiguous)
+        if any(row["subject_type"] != "OBJECT" or row["subject_ref"] != object_id for row in successors):
+            raise AuthorizationDenied(unavailable)
+        ranks = self.policy["classification"]["sensitivity_rank"]
+        children: dict[str, list[str]] = {key: [] for key in history}
+        roots = []
+        tags_by_id = {}
+        for key, row in history.items():
+            if (row["policy_version"] != self.policy["policy_version"]
+                    or len(row["policy_version"].encode("utf-8")) > 128 or row["sensitivity_level"] not in ranks):
+                raise AuthorizationDenied(unavailable)
+            try:
+                if len(row["handling_tags_json"].encode("utf-8")) > 65536:
+                    raise AuthorizationDenied(unavailable)
+                tags = json.loads(row["handling_tags_json"])
+            except (TypeError, ValueError) as exc:
+                raise AuthorizationDenied(unavailable) from exc
+            if (not isinstance(tags, list) or len(tags) > _CLASSIFICATION_TAG_LIMIT
+                    or any(not isinstance(tag, str) or not tag or len(tag.encode("utf-8")) > 256 for tag in tags)):
+                raise AuthorizationDenied(unavailable)
+            if len(set(tags)) != len(tags):
+                raise AuthorizationDenied(unavailable)
+            tags_by_id[key] = sorted(tags)
+            parent = row["supersedes"]
+            if parent is None:
+                roots.append(key)
+            elif parent not in history:
+                raise AuthorizationDenied(unavailable)
+            else:
+                children[parent].append(key)
+        if len(roots) != 1 or any(len(values) > 1 for values in children.values()):
+            raise AuthorizationDenied(ambiguous)
+        visited = set()
+        current = roots[0]
+        while current not in visited:
+            visited.add(current)
+            if not children[current]:
+                break
+            current = children[current][0]
+        else:
+            raise AuthorizationDenied(ambiguous)
+        if len(visited) != len(history) or anchor not in visited:
+            raise AuthorizationDenied(ambiguous)
+        leaf = history[current]
+        return {"assertion_id": current, "sensitivity_level": leaf["sensitivity_level"],
+                "handling_tags": tags_by_id[current], "policy_version": leaf["policy_version"]}
+
+    def decide_egress(self, destination: str, object_ids: list[str]) -> dict[str, Any]:
+        """Pure policy eligibility; ALLOW grants no reader or execution authority.
+
+        One read transaction covers all objects. Neither result path appends
+        authority events, commands, or any other canonical state.
+        """
+        self.store._require_mode("core_read")
+        result = {"decision": "DENY", "reason_code": "EGRESS_INPUT_INVALID",
+                  "destination": destination if isinstance(destination, str) and len(destination.encode("utf-8")) <= 256 else None,
+                  "policy_version": self.policy["policy_version"], "effective_sensitivity": None,
+                  "effective_handling_tags": None, "object_count": 0}
+        if (not isinstance(destination, str) or not destination or result["destination"] is None
+                or not isinstance(object_ids, list) or len(object_ids) > _EGRESS_OBJECT_LIMIT
+                or any(not isinstance(value, str) or not value for value in object_ids)):
+            return result
+        ids = sorted(set(object_ids))
+        result["object_count"] = len(ids)
+        if not ids:
+            return {**result, "reason_code": "EGRESS_EMPTY"}
+        with self.store._connection() as conn:
+            conn.execute("BEGIN")
+            try:
+                current = [self._current_object_classification(conn, object_id) for object_id in ids]
+            except AuthorizationDenied as exc:
+                return {**result, "reason_code": str(exc)}
         classification = self.policy["classification"]
-        if sensitivity_level not in classification["sensitivity_rank"]:
-            return False
+        ranks = classification["sensitivity_rank"]
+        sensitivity_level = max((row["sensitivity_level"] for row in current), key=lambda level: (ranks[level], level))
+        handling_tags = set().union(*(set(row["handling_tags"]) for row in current))
+        if len(handling_tags) > _CLASSIFICATION_TAG_LIMIT:
+            return {**result, "reason_code": "EGRESS_CLASSIFICATION_UNAVAILABLE"}
+        result.update(effective_sensitivity=sensitivity_level, effective_handling_tags=sorted(handling_tags))
         rule = self.policy["egress"]["allowed_destinations"].get(destination)
         if rule is None:
-            return False
+            return {**result, "reason_code": "EGRESS_DESTINATION_DENIED"}
         if set(handling_tags).intersection(classification["restrictive_tags"]):
-            return False
-        maximum = classification["sensitivity_rank"].get(rule.get("max_sensitivity"))
-        actual = classification["sensitivity_rank"][sensitivity_level]
-        return maximum is not None and actual <= maximum and set(handling_tags).issubset(set(rule.get("accepted_tags", [])))
+            return {**result, "reason_code": "EGRESS_RESTRICTIVE_TAG"}
+        maximum = ranks.get(rule.get("max_sensitivity"))
+        if maximum is None or ranks[sensitivity_level] > maximum:
+            return {**result, "reason_code": "EGRESS_SENSITIVITY_EXCEEDED"}
+        if not handling_tags.issubset(set(rule.get("accepted_tags", []))):
+            return {**result, "reason_code": "EGRESS_TAG_NOT_ACCEPTED"}
+        return {**result, "decision": "ALLOW", "reason_code": "EGRESS_ALLOWED"}
+
+    def evaluate_egress(self, destination: str, object_ids: list[str]) -> bool:
+        self.store._require_mode("egress")
+        return self.decide_egress(destination, object_ids)["decision"] == "ALLOW"
 
     def authorize_egress(self, *, grant_id: str, task_id: str, destination: str, audience: str, object_ids: list[str], command_id: str) -> bool:
         self.store._require_mode("egress")
