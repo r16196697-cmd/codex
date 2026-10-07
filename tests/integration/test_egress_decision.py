@@ -66,6 +66,7 @@ class EgressDecisionTests(unittest.TestCase):
         self.authority.create_approval({"schema_id": "nexus.approval_decision", "schema_version": 1,
             "approval_id": "approval", "approver_principal_id": "human-root", "target_type": "CLASSIFICATION_LOWER",
             "target_ref": "object-a", "decision": "APPROVE", "approved_scope": ["CLASSIFICATION_LOWER", "object-a"],
+            "payload_integrity_hash": self.store.get_object_metadata("object-a")["integrity_hash"],
             "policy_version": "1", "issued_at": datetime.now(timezone.utc).isoformat()}, "approval")
         self.authority.record_classification_assertion(lowered, grant_id="grant", task_id="task",
             audience="fixture-target", command_id="lower", approval_id="approval")

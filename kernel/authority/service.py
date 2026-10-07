@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -456,14 +457,31 @@ class AuthorityService:
         action = "CLASSIFICATION_LOWER" if lowering else "CLASSIFY"
         if lowering and not approval_id:
             raise ApprovalDenied("CLASSIFICATION_LOWER_REQUIRES_APPROVAL")
+        payload_hash = None
+        object_lowering = lowering and assertion["subject_type"] == "OBJECT"
+        if object_lowering:
+            # The caller cannot choose the hash. Resolve the immutable target
+            # through the existing Object/Purge read semantics before approval.
+            metadata = self.store.get_object_metadata(assertion["subject_ref"])
+            payload_hash = metadata.get("integrity_hash")
+            if (metadata.get("object_id") != assertion["subject_ref"]
+                    or metadata.get("payload_state") != "AVAILABLE"
+                    or not isinstance(payload_hash, str)
+                    or re.fullmatch(r"[a-f0-9]{64}", payload_hash) is None):
+                raise AuthorizationDenied("CLASSIFICATION_LOWER_OBJECT_UNAVAILABLE")
         request = {"task": task_id, "resource": assertion["subject_ref"], "action": action, "audience": audience}
-        self.evaluate_authorization(grant_id, request, command_id + "-authorize", approval_id)
+        self.evaluate_authorization(grant_id, request, command_id + "-authorize", approval_id,
+                                    payload_integrity_hash=payload_hash)
         with self.store._lock, self.store._connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 if self.store._replay_command(conn, command_id, operation, request_hash) is not None:
                     conn.commit()
                     return
+                if object_lowering:
+                    # A purge/barrier may have committed after approval. Do not
+                    # append a new lowering to an unavailable target.
+                    self.store._assert_unbarred(conn, (assertion["subject_ref"],))
                 conn.execute("INSERT INTO classification_assertions VALUES(?,?,?,?,?,?,?,?,?)", (assertion["assertion_id"], assertion["subject_type"], assertion["subject_ref"], assertion["sensitivity_level"], json.dumps(assertion["handling_tags"], sort_keys=True), assertion["policy_version"], assertion["reason"], assertion["actor_id"], assertion.get("supersedes")))
                 self.store._record_command(conn, command_id, operation, request_hash, {"assertion_id": assertion["assertion_id"]})
                 conn.commit()

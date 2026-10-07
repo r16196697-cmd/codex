@@ -148,6 +148,8 @@ class AuthorityBudgetTests(unittest.TestCase):
         self._grant("grant-root", "human-root", "agent", resources=["object-1"], actions=["CLASSIFY", "CLASSIFICATION_LOWER", "DELEGATE"], audiences=["local"])
         initial = {"schema_id": "nexus.classification_assertion", "schema_version": 1, "assertion_id": "class-secret", "subject_type": "OBJECT", "subject_ref": "object-1", "sensitivity_level": "SECRET", "handling_tags": ["NO_EXTERNAL_EGRESS"], "policy_version": "1", "reason": "fixture classification", "actor_id": "agent"}
         self.authority.record_classification_assertion(initial, grant_id="grant-root", task_id="task-1", audience="local", command_id="cmd-class-secret")
+        self.store.put_object(command_id="put-lowering-object", object_id="object-1", payload=b"lowering fixture",
+            object_type="artifact", created_by_run="run_test", classification_assertion_ref="class-secret")
         lowered = dict(initial, assertion_id="class-lowered", sensitivity_level="PUBLIC", handling_tags=[], supersedes="class-secret")
         with self.assertRaises(ApprovalDenied):
             self.authority.record_classification_assertion(lowered, grant_id="grant-root", task_id="task-1", audience="local", command_id="cmd-class-lowered-denied")
@@ -157,6 +159,7 @@ class AuthorityBudgetTests(unittest.TestCase):
             self.authority.record_classification_assertion(unlinked, grant_id="grant-root", task_id="task-1", audience="local", command_id="cmd-class-unlinked")
         now = datetime.now(timezone.utc).isoformat()
         approval = {"schema_id": "nexus.approval_decision", "schema_version": 1, "approval_id": "approval-lower", "approver_principal_id": "human-root", "target_type": "CLASSIFICATION_LOWER", "target_ref": "object-1", "decision": "APPROVE", "approved_scope": ["CLASSIFICATION_LOWER", "object-1"], "policy_version": "1", "issued_at": now}
+        approval["payload_integrity_hash"] = self.store.get_object_metadata("object-1")["integrity_hash"]
         self.authority.create_approval(approval, "cmd-approval-lower")
         self.authority.record_classification_assertion(lowered, grant_id="grant-root", task_id="task-1", audience="local", command_id="cmd-class-lowered-ok", approval_id="approval-lower")
         self.assertEqual(self.authority.effective_classification(["class-secret", "class-lowered"]), ("SECRET", {"NO_EXTERNAL_EGRESS"}))
@@ -189,9 +192,12 @@ class AuthorityBudgetTests(unittest.TestCase):
         self._grant("grant-class-expiry", "human-root", "agent", resources=["object-expiry"], actions=["CLASSIFY", "CLASSIFICATION_LOWER", "DELEGATE"], audiences=["local"])
         initial = {"schema_id":"nexus.classification_assertion", "schema_version":1, "assertion_id":"class-expiry-high", "subject_type":"OBJECT", "subject_ref":"object-expiry", "sensitivity_level":"SECRET", "handling_tags":["NO_EXTERNAL_EGRESS"], "policy_version":"1", "reason":"initial", "actor_id":"agent"}
         self.authority.record_classification_assertion(initial, grant_id="grant-class-expiry", task_id="task-1", audience="local", command_id="cmd-class-expiry-high")
+        self.store.put_object(command_id="put-expiry-object", object_id="object-expiry", payload=b"expiry fixture",
+            object_type="artifact", created_by_run="run_test", classification_assertion_ref="class-expiry-high")
         lowered = {**initial, "assertion_id":"class-expiry-low", "sensitivity_level":"PUBLIC", "handling_tags":[], "reason":"lowered", "supersedes":"class-expiry-high"}
         now = datetime.now(timezone.utc)
         approval = {"schema_id":"nexus.approval_decision", "schema_version":1, "approval_id":"approval-class-expiry", "approver_principal_id":"human-root", "target_type":"CLASSIFICATION_LOWER", "target_ref":"object-expiry", "decision":"APPROVE", "approved_scope":["CLASSIFICATION_LOWER", "object-expiry"], "policy_version":"1", "issued_at":now.isoformat(), "expires_at":(now + timedelta(seconds=5)).isoformat()}
+        approval["payload_integrity_hash"] = self.store.get_object_metadata("object-expiry")["integrity_hash"]
         self.authority.create_approval(approval, "cmd-approval-class-expiry")
         args = {"assertion":lowered, "grant_id":"grant-class-expiry", "task_id":"task-1", "audience":"local", "command_id":"cmd-class-expiry-lower", "approval_id":"approval-class-expiry"}
         self.authority.record_classification_assertion(**args)
