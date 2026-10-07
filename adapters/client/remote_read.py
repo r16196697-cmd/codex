@@ -35,6 +35,7 @@ ABILITIES = ("nexus_project_overview", "nexus_project_continue")
 PROFILE_SCHEMA = "nexus.remote_egress_reader_profile"
 RECEIPT_SCHEMA = "nexus.remote_read_release_receipt"
 SNAPSHOT_SCHEMA = "nexus.remote_read_snapshot"
+RECEIPT_VERSION = 2
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SELECTED_FIELDS = (
@@ -60,6 +61,12 @@ _PROFILE_KEYS = {
     "created_at", "expires_at", "status", "revocation_generation",
 }
 _RECEIPT_KEYS = {
+    "schema_id", "schema_version", "request_hash", "snapshot_content_hash", "created_at",
+    "binding", "start_plan", "finish_plan", "snapshot_classification", "lowered_classification",
+    "approval", "phase", "receipt_hash", "snapshot_ref", "source_context_ref", "source_refs",
+    "source_integrity_hashes", "selected_fields", "projection_version",
+}
+_LEGACY_RECEIPT_KEYS = {
     "schema_id", "schema_version", "request_hash", "snapshot_document",
     "snapshot_content_hash", "created_at", "binding", "start_plan", "finish_plan",
     "snapshot_classification", "lowered_classification", "approval", "phase", "receipt_hash",
@@ -165,6 +172,24 @@ def _selected_workspace(workspace: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot_document(workspace: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
+    if workspace.get("project", {}).get("project_id") != binding["project_id"]:
+        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+    selected = _selected_workspace(workspace)
+    context_ref = selected["context"].get("pack_id")
+    refs = sorted({ref for ref in (
+        selected["current_state"].get("ref"), selected["what_changed"].get("ref"), context_ref,
+    ) if isinstance(ref, str) and _ID.fullmatch(ref)})
+    document = {
+        "schema_id": SNAPSHOT_SCHEMA, "schema_version": 1,
+        "projection_kind": PROJECTION_KIND, "projection_version": PROJECTION_VERSION,
+        "target": {"provider": TARGET_PROVIDER, "surface": TARGET_SURFACE},
+        "source_refs": refs, "selected_fields": list(_SELECTED_FIELDS), "workspace": selected,
+    }
+    _validate_snapshot(document)
+    return document
+
+
 def _validate_snapshot(document: dict[str, Any]) -> None:
     if (not isinstance(document, dict)
             or set(document) != {"schema_id", "schema_version", "projection_kind", "projection_version", "target", "source_refs", "selected_fields", "workspace"}
@@ -262,6 +287,39 @@ def _source_rows(app, authority, document: dict[str, Any]) -> list[dict[str, Any
     return result
 
 
+def _source_integrity_commitment(source_rows: list[dict[str, Any]]) -> dict[str, str]:
+    return {item["object_id"]: item["integrity_hash"] for item in source_rows}
+
+
+def _rebuild_snapshot_from_exact_sources(app, binding, receipt):
+    """Rebuild only from the frozen Context Pack ref; never consult latest state."""
+    from adapters.client.presence import build_project_workspace
+    from kernel.authority import AuthorityService
+
+    context_ref = receipt.get("source_context_ref")
+    if (not isinstance(context_ref, str) or not _ID.fullmatch(context_ref)
+            or context_ref not in receipt.get("source_refs", [])):
+        _fail("REMOTE_READ_RECEIPT_INVALID")
+    try:
+        workspace = build_project_workspace(application=app, resolved_binding=binding,
+            exact_context_pack_ref=context_ref)
+    except Exception:
+        _fail("REMOTE_READ_SOURCE_UNAVAILABLE")
+    document = _snapshot_document(workspace, binding)
+    if (document["source_refs"] != receipt["source_refs"]
+            or document["selected_fields"] != receipt["selected_fields"]
+            or document["projection_version"] != receipt["projection_version"]
+            or document["workspace"]["context"].get("pack_id") != context_ref):
+        _fail("REMOTE_READ_SOURCE_CHANGED")
+    authority = AuthorityService(app.store, app.store.policy)
+    source_rows = _source_rows(app, authority, document)
+    if _source_integrity_commitment(source_rows) != receipt["source_integrity_hashes"]:
+        _fail("REMOTE_READ_SOURCE_CHANGED")
+    if _sha(_canonical(document)) != receipt["snapshot_content_hash"]:
+        _fail("REMOTE_READ_SOURCE_CHANGED")
+    return document, source_rows
+
+
 def _operator_context(app, authority, context_pack: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
     from adapters.client.task_finish import _load_projection
     from kernel.experience import ExperienceProjectionService, LocalOperatorReadContext
@@ -286,37 +344,38 @@ def _snapshot_bundle(*, start_dir, binding, locator, app_opener, application=Non
     from adapters.client.presence import build_project_workspace
     from kernel.authority import AuthorityService
 
-    workspace = build_project_workspace(start_dir=start_dir, locator=locator, app_opener=app_opener,
-        application=application, resolved_binding=binding if application is not None else None)
-    if workspace.get("project", {}).get("project_id") != binding["project_id"]:
-        _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
-    selected = _selected_workspace(workspace)
-    context_ref = selected["context"].get("pack_id")
-    source_refs = set()
-    for ref in (selected["current_state"].get("ref"), selected["what_changed"].get("ref"), context_ref):
-        if isinstance(ref, str) and _ID.fullmatch(ref):
-            source_refs.add(ref)
-    document = {
-        "schema_id": SNAPSHOT_SCHEMA, "schema_version": 1,
-        "projection_kind": PROJECTION_KIND, "projection_version": PROJECTION_VERSION,
-        "target": {"provider": TARGET_PROVIDER, "surface": TARGET_SURFACE},
-        "source_refs": sorted(source_refs), "selected_fields": list(_SELECTED_FIELDS), "workspace": selected,
-    }
-    _validate_snapshot(document)
-
     owns_app = application is None
     app = application if application is not None else app_opener(
         binding["data_root"], policy_path=binding["policy_path"],
         independent_purge_journal_path=binding["independent_purge_journal_path"], read_only=True)
     try:
         _verify_store_binding(app, binding, read_only=owns_app)
+        # The live projection is used only for the read-only IDLE preflight.
+        # Snapshot bytes are built from its exact immutable Context Pack ref in
+        # the second call below; dynamic counters are not frozen in a receipt.
+        live_workspace = build_project_workspace(start_dir=start_dir, locator=locator,
+            application=app, resolved_binding=binding)
+        if live_workspace.get("project", {}).get("project_id") != binding["project_id"]:
+            _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
+        live_selected = _selected_workspace(live_workspace)
+        if (live_selected["current_work"].get("status") != "IDLE"
+                or any(live_selected["overview"].get(key) not in (0, None) for key in
+                    ("unfinished_task_count", "active_run_count", "pending_effect_count"))):
+            _fail("REMOTE_READ_PROJECT_NOT_IDLE")
+        context_ref = live_selected["context"].get("pack_id")
+        if not isinstance(context_ref, str) or not _ID.fullmatch(context_ref):
+            _fail("REMOTE_READ_SOURCE_UNAVAILABLE")
         latest = app.context_packs.latest()
         if latest.get("status") != "PACK_COMPILED" or latest.get("pack_id") != context_ref:
             _fail("REMOTE_READ_SOURCE_CHANGED")
         pack = app.context_packs.read_compiled(context_ref)
-        if (pack.get("integrity_hash") != selected["context"].get("integrity_hash")
-                or pack.get("content_hash") != selected["context"].get("content_hash")):
+        if (pack.get("integrity_hash") != live_selected["context"].get("integrity_hash")
+                or pack.get("content_hash") != live_selected["context"].get("content_hash")):
             _fail("REMOTE_READ_SOURCE_CHANGED")
+        workspace = build_project_workspace(application=app, resolved_binding=binding,
+            exact_context_pack_ref=context_ref)
+        document = _snapshot_document(workspace, binding)
+        selected = document["workspace"]
         rule = app.store.policy.get("egress", {}).get("allowed_destinations", {}).get(EGRESS_DESTINATION)
         ranks = app.store.policy.get("classification", {}).get("sensitivity_rank", {})
         max_level = ranks.get(rule.get("max_sensitivity")) if isinstance(rule, dict) else None
@@ -342,11 +401,6 @@ def _snapshot_bundle(*, start_dir, binding, locator, app_opener, application=Non
             operator, runtime, boundary = _operator_context(app, authority, pack)
         else:
             operator, runtime, boundary = principals["operator"], principals["runtime"], principals["boundary"]
-        current_work = selected["current_work"].get("status")
-        overview = selected["overview"]
-        if (current_work != "IDLE" or any(overview.get(key) not in (0, None) for key in
-                ("unfinished_task_count", "active_run_count", "pending_effect_count"))):
-            _fail("REMOTE_READ_PROJECT_NOT_IDLE")
         return document, sources, inherited["level"], {"operator": operator, "runtime": runtime, "boundary": boundary}, {
             "inherited": inherited, "source_inherited": {"level": source_level, "tags": source_tags},
             "policy": app.store.policy,
@@ -468,8 +522,9 @@ def _write_receipt(path: Path, receipt: dict[str, Any]) -> None:
     _write_atomic(path, _canonical(receipt))
 
 
-def _validate_receipt(receipt: dict[str, Any]) -> None:
-    if (set(receipt) != _RECEIPT_KEYS or receipt.get("schema_id") != RECEIPT_SCHEMA
+def _upgrade_legacy_receipt(path: Path, receipt: dict[str, Any]) -> dict[str, Any]:
+    """Remove a v1 embedded snapshot after validating its exact commitment."""
+    if (set(receipt) != _LEGACY_RECEIPT_KEYS or receipt.get("schema_id") != RECEIPT_SCHEMA
             or type(receipt.get("schema_version")) is not int or receipt["schema_version"] != 1
             or receipt.get("phase") not in {"AUTHORIZED", "STARTED", "OBJECT_CREATED", "APPROVED", "LOWERED", "FINISHED", "PROFILED"}
             or not isinstance(receipt.get("snapshot_document"), dict)
@@ -483,21 +538,94 @@ def _validate_receipt(receipt: dict[str, Any]) -> None:
             or _SHA256.fullmatch(receipt["receipt_hash"]) is None
             or receipt["receipt_hash"] != _receipt_hash(receipt)):
         _fail("REMOTE_READ_RECEIPT_INVALID")
-    _validate_snapshot(receipt["snapshot_document"])
-    raw = _canonical(receipt["snapshot_document"])
-    if receipt.get("snapshot_content_hash") != _sha(raw) or receipt.get("request_hash") != _sha(raw):
+    document = receipt["snapshot_document"]
+    _validate_snapshot(document)
+    digest = _sha(_canonical(document))
+    if receipt.get("snapshot_content_hash") != digest or receipt.get("request_hash") != digest:
+        _fail("REMOTE_READ_RECEIPT_INVALID")
+    workspace = document.get("workspace", {})
+    source_hashes = {}
+    for section, ref_key, hash_key in (
+        ("current_state", "ref", "integrity_sha256"),
+        ("what_changed", "ref", "integrity_sha256"),
+        ("context", "pack_id", "integrity_hash"),
+    ):
+        item = workspace.get(section)
+        if not isinstance(item, dict):
+            _fail("REMOTE_READ_RECEIPT_INVALID")
+        ref, integrity = item.get(ref_key), item.get(hash_key)
+        if not isinstance(ref, str) or not _ID.fullmatch(ref) or not isinstance(integrity, str) or not _SHA256.fullmatch(integrity):
+            _fail("REMOTE_READ_RECEIPT_INVALID")
+        if ref in source_hashes and source_hashes[ref] != integrity:
+            _fail("REMOTE_READ_RECEIPT_INVALID")
+        source_hashes[ref] = integrity
+    refs = document.get("source_refs")
+    if (not isinstance(refs, list) or any(not isinstance(ref, str) or not _ID.fullmatch(ref) for ref in refs)
+            or refs != sorted(set(refs)) or set(refs) != set(source_hashes)):
+        _fail("REMOTE_READ_RECEIPT_INVALID")
+    upgraded = {key: value for key, value in receipt.items() if key != "snapshot_document"}
+    upgraded.update({
+        "schema_version": RECEIPT_VERSION,
+        "snapshot_ref": receipt.get("approval", {}).get("target_ref"),
+        "source_context_ref": workspace["context"]["pack_id"],
+        "source_refs": refs,
+        "source_integrity_hashes": source_hashes,
+        "selected_fields": list(_SELECTED_FIELDS),
+        "projection_version": PROJECTION_VERSION,
+    })
+    upgraded["receipt_hash"] = _receipt_hash(upgraded)
+    _validate_receipt(upgraded)
+    _write_atomic(path, _canonical(upgraded))
+    return upgraded
+
+
+def _validate_receipt(receipt: dict[str, Any]) -> None:
+    if (set(receipt) != _RECEIPT_KEYS or receipt.get("schema_id") != RECEIPT_SCHEMA
+            or type(receipt.get("schema_version")) is not int or receipt["schema_version"] != RECEIPT_VERSION
+            or receipt.get("phase") not in {"AUTHORIZED", "STARTED", "OBJECT_CREATED", "APPROVED", "LOWERED", "FINISHED", "PROFILED"}
+            or not isinstance(receipt.get("binding"), dict)
+            or not isinstance(receipt.get("start_plan"), dict)
+            or not isinstance(receipt.get("finish_plan"), dict)
+            or not isinstance(receipt.get("snapshot_classification"), dict)
+            or not isinstance(receipt.get("lowered_classification"), dict)
+            or not isinstance(receipt.get("approval"), dict)
+            or set(receipt.get("binding", {})) != {"project_id", "instance_id", "policy_version", "policy_sha256", "journal_identity"}
+            or not isinstance(receipt.get("receipt_hash"), str)
+            or _SHA256.fullmatch(receipt["receipt_hash"]) is None
+            or receipt["receipt_hash"] != _receipt_hash(receipt)):
+        _fail("REMOTE_READ_RECEIPT_INVALID")
+    refs = receipt.get("source_refs")
+    hashes = receipt.get("source_integrity_hashes")
+    digest = receipt.get("snapshot_content_hash")
+    if (not isinstance(digest, str) or _SHA256.fullmatch(digest) is None
+            or receipt.get("request_hash") != digest
+            or receipt.get("projection_version") != PROJECTION_VERSION
+            or receipt.get("selected_fields") != list(_SELECTED_FIELDS)
+            or not isinstance(refs, list) or not refs or len(refs) > 3
+            or any(not isinstance(ref, str) or not _ID.fullmatch(ref) for ref in refs)
+            or refs != sorted(set(refs))
+            or not isinstance(hashes, dict) or set(hashes) != set(refs)
+            or any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in hashes.values())
+            or receipt.get("source_context_ref") not in refs
+            or not isinstance(receipt.get("snapshot_ref"), str)
+            or receipt["snapshot_ref"] != "remote-snapshot-" + digest[:32]
+            or receipt.get("approval", {}).get("target_ref") != receipt.get("snapshot_ref")):
         _fail("REMOTE_READ_RECEIPT_INVALID")
 
 
-def _make_receipt(binding, document, plans, created_at):
-    receipt = {"schema_id": RECEIPT_SCHEMA, "schema_version": 1,
-        "request_hash": plans["digest"], "snapshot_document": document,
+def _make_receipt(binding, document, source_rows, plans, created_at):
+    receipt = {"schema_id": RECEIPT_SCHEMA, "schema_version": RECEIPT_VERSION,
+        "request_hash": plans["digest"],
         "snapshot_content_hash": plans["digest"], "created_at": created_at,
         "binding": _receipt_binding_facts(binding), "start_plan": plans["start_plan"],
         "finish_plan": plans["finish_plan"],
         "snapshot_classification": plans["initial_classification"],
-        "lowered_classification": plans["lowered_classification"],
-        "approval": plans["approval"], "phase": "AUTHORIZED"}
+        "lowered_classification": plans["lowered_classification"], "approval": plans["approval"],
+        "phase": "AUTHORIZED", "snapshot_ref": plans["snapshot_id"],
+        "source_context_ref": document["workspace"]["context"]["pack_id"],
+        "source_refs": list(document["source_refs"]),
+        "source_integrity_hashes": _source_integrity_commitment(source_rows),
+        "selected_fields": list(_SELECTED_FIELDS), "projection_version": PROJECTION_VERSION}
     receipt["receipt_hash"] = _receipt_hash(receipt)
     return receipt
 
@@ -519,7 +647,7 @@ def _services(store):
         "verifier": VerificationService(store, authority)}
 
 
-def _validate_frozen_plans(app, receipt):
+def _validate_frozen_plans(app, receipt, document):
     from adapters.client import task_finish as finish
     from adapters.client import task_start as start
     from kernel.authority import AuthorityService
@@ -534,11 +662,11 @@ def _validate_frozen_plans(app, receipt):
             or receipt["binding"] != _receipt_binding_facts(receipt["binding"])
             or s["grant"]["expires_at"] <= receipt["created_at"]):
         _fail("REMOTE_READ_RECEIPT_INVALID")
-    _validate_snapshot(receipt["snapshot_document"])
+    _validate_snapshot(document)
     initial = receipt["snapshot_classification"]
     try:
         expected = _build_plans(
-            binding=receipt["binding"], document=receipt["snapshot_document"],
+            binding=receipt["binding"], document=document,
             inherited={"level": initial["sensitivity_level"], "tags": initial["handling_tags"]},
             operator=s["operator_id"], runtime=s["runtime_id"],
             boundary=s["root"]["data_boundary"], created_at=receipt["created_at"],
@@ -551,7 +679,10 @@ def _validate_frozen_plans(app, receipt):
             or expected["lowered_classification"] != receipt["lowered_classification"]
             or expected["approval"] != receipt["approval"]
             or receipt["snapshot_content_hash"] != expected["digest"]
-            or receipt["binding"]["project_id"] != receipt["snapshot_document"]["workspace"]["project"]["project_id"]):
+            or receipt["snapshot_ref"] != expected["snapshot_id"]
+            or receipt["source_refs"] != document["source_refs"]
+            or receipt["source_context_ref"] != document["workspace"]["context"]["pack_id"]
+            or receipt["binding"]["project_id"] != document["workspace"]["project"]["project_id"]):
         _fail("REMOTE_READ_RECEIPT_INVALID")
     return s, f
 
@@ -604,7 +735,77 @@ def _validate_released_snapshot_for_finish(app, authority, binding, receipt):
         _fail("REMOTE_READ_EGRESS_POLICY_DENIED")
 
 
-def _execute_release(*, app, binding, receipt_path, receipt, start_dir, locator, app_opener,
+def _read_existing_snapshot(app, receipt, *, required: bool) -> dict[str, Any] | None:
+    from kernel.object.errors import ObjectNotFound
+
+    snapshot_id = receipt["snapshot_ref"]
+    try:
+        metadata = app.store.get_object_metadata(snapshot_id)
+    except ObjectNotFound:
+        if required:
+            _fail("REMOTE_READ_SNAPSHOT_UNAVAILABLE")
+        return None
+    except Exception:
+        _fail("REMOTE_READ_SNAPSHOT_UNAVAILABLE")
+    if metadata.get("payload_state") == "PURGED":
+        _fail("REMOTE_READ_SNAPSHOT_PURGED")
+    if (metadata.get("object_id") != snapshot_id or metadata.get("object_type") != "artifact"
+            or metadata.get("integrity_hash") != receipt["snapshot_content_hash"]
+            or metadata.get("payload_state") != "AVAILABLE" or metadata.get("validity") != "VALID"
+            or metadata.get("lifecycle") != "ACTIVE"):
+        _fail("REMOTE_READ_SNAPSHOT_UNAVAILABLE")
+    try:
+        raw = app.store.get_payload(snapshot_id)
+        document = _strict_json(raw)
+    except Exception:
+        _fail("REMOTE_READ_SNAPSHOT_UNAVAILABLE")
+    if _sha(raw) != receipt["snapshot_content_hash"]:
+        _fail("REMOTE_READ_SNAPSHOT_UNAVAILABLE")
+    _validate_snapshot(document)
+    return document
+
+
+def _validate_profiled_release(app, binding, receipt, start_normalized, finish_normalized):
+    from adapters.client import task_finish as finish
+    from adapters.client import task_start as start
+    from kernel.authority import AuthorityService
+
+    authority = AuthorityService(app.store, app.store.policy)
+    _validate_released_snapshot_for_finish(app, authority, binding, receipt)
+    start_result = start._replay(
+        app.store, start_normalized["request_command_id"], "daily_task_start_request", start_normalized["request"])
+    finish_result = finish._replay(
+        app.store, finish_normalized["request_command_id"], "daily_task_finish_request", finish_normalized["request"])
+    if start_result != {"status": "REQUEST_BOUND"} or finish_result != {"status": "REQUEST_BOUND"}:
+        _fail("REMOTE_READ_RELEASE_FACTS_UNAVAILABLE")
+    root_result = start._replay(app.store, start_normalized["root_command_id"], "create_hosted_task_root",
+        start._bridge_request(app.store, start_normalized))
+    if (not isinstance(root_result, dict)
+            or root_result.get("task_id") != start_normalized["root"]["task_id"]
+            or root_result.get("root_run_id") != start_normalized["root"]["root_run_id"]
+            or root_result.get("executor_kind") != "ORCHESTRATOR"
+            or root_result.get("status") != "RUNNING"):
+        _fail("REMOTE_READ_RELEASE_FACTS_UNAVAILABLE")
+    finish._assert_command_namespace(app.store, finish_normalized, request_bound=True)
+    if (finish_normalized["outcome"] != "SUCCEEDED"
+            or finish._transition_committed(app.store, finish_normalized, "verifying", "RUNNING", "VERIFYING",
+                finish_normalized["classifications"]["verifying_event"]) is None
+            or finish._transition_committed(app.store, finish_normalized, "terminal", "VERIFYING", "SUCCEEDED",
+                finish_normalized["classifications"]["terminal_event"]) is None
+            or finish._replay(app.store, finish_normalized["command_id"] + ":revoke", "transition_grant",
+                {"grant_id": finish_normalized["grant_id"], "expected": "ACTIVE", "target": "REVOKED"}) is None):
+        _fail("REMOTE_READ_RELEASE_FACTS_UNAVAILABLE")
+    projection = finish._load_projection(app.store, {
+        "task_id": finish_normalized["task_id"], "run_id": finish_normalized["run_id"],
+        "grant_id": finish_normalized["grant_id"],
+    })
+    if (projection["task"].get("status") != "SUCCEEDED"
+            or projection["run"].get("status") != "SUCCEEDED"
+            or projection["grant"].get("status") != "REVOKED"):
+        _fail("REMOTE_READ_RELEASE_FACTS_UNAVAILABLE")
+
+
+def _execute_release(*, app, binding, receipt_path, receipt, document, start_dir, locator, app_opener,
                      confirmation_already_bound=True):
     from adapters.client import task_finish as finish
     from adapters.client import task_start as start
@@ -614,9 +815,12 @@ def _execute_release(*, app, binding, receipt_path, receipt, start_dir, locator,
     if receipt["binding"] != _receipt_binding_facts(binding):
         _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
     _check_egress_profile_policy(app.store.policy)
+    frozen_document, _ = _rebuild_snapshot_from_exact_sources(app, binding, receipt)
+    if frozen_document != document:
+        _fail("REMOTE_READ_SOURCE_CHANGED")
     start_plan = receipt["start_plan"]
     finish_plan = receipt["finish_plan"]
-    start_normalized, finish_normalized = _validate_frozen_plans(app, receipt)
+    start_normalized, finish_normalized = _validate_frozen_plans(app, receipt, document)
     services = _services(app.store)
     authority = services["authority"]
 
@@ -630,8 +834,8 @@ def _execute_release(*, app, binding, receipt_path, receipt, start_dir, locator,
         # resume the frozen snapshot while revalidating its exact source refs
         # and current classifications below, rather than silently substituting
         # the newer projection or asking for a second approval.
-        _source_rows(app, authority, receipt["snapshot_document"])
-    inherited_sources = _source_rows(app, authority, receipt["snapshot_document"])
+        _source_rows(app, authority, document)
+    inherited_sources = _source_rows(app, authority, document)
     inherited_level = max((item["sensitivity_level"] for item in inherited_sources),
         key=lambda level: app.store.policy["classification"]["sensitivity_rank"][level]) if inherited_sources else "PUBLIC"
     inherited_tags = sorted(set().union(*(set(item["handling_tags"]) for item in inherited_sources)) if inherited_sources else set())
@@ -684,9 +888,9 @@ def _execute_release(*, app, binding, receipt_path, receipt, start_dir, locator,
          "action": "OBJECT_WRITE", "audience": "nexus-runtime"},
         start_normalized["command_id"] + ":authorize-remote-snapshot")
     app.store.put_object(command_id=start_normalized["command_id"] + ":put-remote-snapshot",
-        object_id=snapshot_id, payload=_canonical(receipt["snapshot_document"]), object_type="artifact",
+        object_id=snapshot_id, payload=_canonical(document), object_type="artifact",
         created_by_run=start_normalized["root"]["root_run_id"],
-        classification_assertion_ref=initial["assertion_id"], derived_from=receipt["snapshot_document"]["source_refs"])
+        classification_assertion_ref=initial["assertion_id"], derived_from=document["source_refs"])
     metadata = app.store.get_object_metadata(snapshot_id)
     if metadata.get("integrity_hash") != receipt["snapshot_content_hash"] or metadata.get("payload_state") != "AVAILABLE":
         _fail("REMOTE_READ_SNAPSHOT_OBJECT_MISMATCH")
@@ -725,8 +929,8 @@ def _execute_release(*, app, binding, receipt_path, receipt, start_dir, locator,
         "run_id": start_result["root_run_id"], "finish": finish_result}
 
 
-def _profile_document(binding, receipt, created_at):
-    snapshot = receipt["snapshot_document"]
+def _profile_document(binding, receipt, document, created_at):
+    snapshot = document
     document = {
         "schema_id": PROFILE_SCHEMA, "schema_version": 1,
         "profile_id": "remote-reader-" + receipt["snapshot_content_hash"][:24],
@@ -792,8 +996,74 @@ def _profile_expired(profile):
     return expiration <= _now()
 
 
+def _profile_readiness(app, binding, profile):
+    from kernel.authority import AuthorityService
+
+    _verify_store_binding(app, binding)
+    try:
+        metadata = app.store.get_object_metadata(profile["snapshot_ref"])
+    except Exception:
+        return False, "REMOTE_READ_SNAPSHOT_UNAVAILABLE"
+    if metadata.get("payload_state") == "PURGED":
+        return False, "REMOTE_READ_SNAPSHOT_PURGED"
+    if (metadata.get("object_id") != profile["snapshot_ref"] or metadata.get("object_type") != "artifact"
+            or metadata.get("integrity_hash") != profile["snapshot_content_hash"]
+            or metadata.get("payload_state") != "AVAILABLE" or metadata.get("validity") != "VALID"
+            or metadata.get("lifecycle") != "ACTIVE"):
+        return False, "REMOTE_READ_SNAPSHOT_UNAVAILABLE"
+    authority = AuthorityService(app.store, app.store.policy)
+    approval = authority.get_approval_metadata(profile["approval_id"])
+    if (not approval or approval.get("principal_type") != "HUMAN"
+            or approval.get("approver_status") != "ACTIVE" or approval.get("decision") != "APPROVE"
+            or approval.get("target_type") != "CLASSIFICATION_LOWER"
+            or approval.get("target_ref") != profile["snapshot_ref"]
+            or approval.get("payload_integrity_hash") != profile["snapshot_content_hash"]
+            or approval.get("policy_version") != binding["policy_version"]
+            or not {"CLASSIFICATION_LOWER", profile["snapshot_ref"]}.issubset(set(approval.get("approved_scope", [])))):
+        return False, "REMOTE_READ_APPROVAL_UNAVAILABLE"
+    expires_at = approval.get("expires_at")
+    if expires_at and datetime.fromisoformat(expires_at.replace("Z", "+00:00")) <= _now():
+        return False, "REMOTE_READ_APPROVAL_EXPIRED"
+    current = authority.current_classification(profile["snapshot_ref"])
+    if (not isinstance(current, dict) or current.get("assertion_id") != profile["classification_assertion_id"]
+            or current.get("policy_version") != binding["policy_version"]
+            or current.get("sensitivity_level") != "PUBLIC" or current.get("handling_tags") != []):
+        return False, "REMOTE_READ_CLASSIFICATION_RESTRICTED"
+    decision = authority.decide_egress(EGRESS_DESTINATION, [profile["snapshot_ref"]])
+    if decision.get("decision") != "ALLOW":
+        return False, "REMOTE_READ_EGRESS_POLICY_DENIED"
+    return True, None
+
+
+def _verify_receipt_projection(receipt, document, source_rows):
+    digest = _sha(_canonical(document))
+    if (digest != receipt["snapshot_content_hash"] or receipt["request_hash"] != digest
+            or document["source_refs"] != receipt["source_refs"]
+            or document["selected_fields"] != receipt["selected_fields"]
+            or document["projection_version"] != receipt["projection_version"]
+            or document["workspace"]["context"].get("pack_id") != receipt["source_context_ref"]
+            or _source_integrity_commitment(source_rows) != receipt["source_integrity_hashes"]):
+        _fail("REMOTE_READ_SOURCE_CHANGED")
+
+
+def _revalidate_receipt_read_only(app, binding, receipt, *, expected_document=None):
+    _verify_store_binding(app, binding)
+    document, source_rows = _rebuild_snapshot_from_exact_sources(app, binding, receipt)
+    if expected_document is not None and document != expected_document:
+        _fail("REMOTE_READ_SOURCE_CHANGED")
+    _verify_receipt_projection(receipt, document, source_rows)
+    start_normalized, finish_normalized = _validate_frozen_plans(app, receipt, document)
+    required_object = receipt["phase"] not in {"AUTHORIZED", "STARTED"}
+    stored_document = _read_existing_snapshot(app, receipt, required=required_object)
+    if stored_document is not None and stored_document != document:
+        _fail("REMOTE_READ_SNAPSHOT_OBJECT_MISMATCH")
+    return document, source_rows, start_normalized, finish_normalized
+
+
 def _load_receipt(path):
     receipt = _read_json(path, "REMOTE_READ_RECEIPT_INVALID")
+    if receipt.get("schema_id") == RECEIPT_SCHEMA and receipt.get("schema_version") == 1:
+        receipt = _upgrade_legacy_receipt(path, receipt)
     _validate_receipt(receipt)
     if path.name != receipt["request_hash"] + ".json":
         _fail("REMOTE_READ_RECEIPT_INVALID")
@@ -813,9 +1083,6 @@ def _snapshot_freshness(app, binding, snapshot_workspace):
         return "UNKNOWN"
     sections = (
         ("current_state", ("status", "ref", "integrity_sha256", "revision", "accepted_revision", "objective", "next_step")),
-        ("current_work", ("status",)),
-        ("overview", ("unfinished_task_count", "active_run_count", "pending_effect_count")),
-        ("last_completed", ("summary", "outcome")),
         ("what_changed", ("status", "ref", "integrity_sha256", "accepted_revision", "objective", "next_step", "recent_work_added")),
         ("context", ("status", "pack_id", "content_hash", "integrity_hash", "serialized_byte_size")),
     )
@@ -862,15 +1129,13 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
             _fail("REMOTE_READ_PENDING_RELEASE_CONFLICT")
 
         replayed = False
+        document = None
         if pending:
             receipt_path, receipt = pending[0]
             _validate_receipt(receipt)
             if receipt["binding"] != _receipt_binding_facts(binding):
                 _fail("PROJECT_INSTANCE_BINDING_MISMATCH")
-            # Resume the exact previously confirmed bytes; current live inputs
-            # may have advanced while the crash was being recovered.
             digest = receipt["snapshot_content_hash"]
-            document = receipt["snapshot_document"]
             replayed = True
         else:
             bundle = _snapshot_bundle(start_dir=start_dir, binding=binding,
@@ -881,7 +1146,10 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
             receipt_path = _receipt_path(directory, digest)
             if receipt_path.exists():
                 receipt = _load_receipt(receipt_path)
-                if receipt["snapshot_document"] != document or receipt["binding"] != _receipt_binding_facts(binding):
+                if (receipt["snapshot_content_hash"] != digest
+                        or receipt["source_refs"] != document["source_refs"]
+                        or receipt["source_integrity_hashes"] != _source_integrity_commitment(source_rows)
+                        or receipt["binding"] != _receipt_binding_facts(binding)):
                     _fail("REMOTE_READ_COMMAND_CONFLICT")
                 replayed = True
             else:
@@ -889,14 +1157,15 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
                     inherited=classification_facts["inherited"],
                     operator=principals["operator"], runtime=principals["runtime"],
                     boundary=principals["boundary"], created_at=_timestamp())
-                receipt = _make_receipt(binding, document, plans, plans["start_plan"]["root"]["created_at"])
+                receipt = _make_receipt(binding, document, source_rows, plans,
+                    plans["start_plan"]["root"]["created_at"])
                 # Validate all frozen protocol plans while the application remains
                 # read-only, before asking the HUMAN to authorize the exact request.
                 ro_app = selected_opener(binding["data_root"], policy_path=binding["policy_path"],
                     independent_purge_journal_path=binding["independent_purge_journal_path"], read_only=True)
                 try:
                     _verify_store_binding(ro_app, binding)
-                    _validate_frozen_plans(ro_app, receipt)
+                    _validate_frozen_plans(ro_app, receipt, document)
                     from adapters.client import task_start as start
                     from adapters.client import task_finish as finish
                     from kernel.authority import AuthorityService
@@ -907,7 +1176,8 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
                     start._validate_current_authority(ro_app.store, authority, s, require_current_created_at=True)
                     start._assert_ids_unused_or_replay(ro_app.store, s, request_bound=False, grant_replay=False)
                     finish._assert_command_namespace(ro_app.store, f, request_bound=False)
-                    _source_rows(ro_app, authority, document)
+                    current_sources = _source_rows(ro_app, authority, document)
+                    _verify_receipt_projection(receipt, document, current_sources)
                 finally:
                     ro_app.close()
                 preview = {
@@ -922,39 +1192,41 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
                 phrase = "RELEASE REMOTE SNAPSHOT " + binding["project_id"]
                 if not confirmation(phrase, preview):
                     _fail("REMOTE_READ_CONFIRMATION_DENIED")
-                # Durable host-local confirmation receipt is written before any
-                # canonical write. It contains only the bounded selected snapshot.
+                # Durable host-local state freezes only the confirmed content
+                # commitment and exact immutable source references.
                 _write_atomic(receipt_path, _canonical(receipt))
-
-        if receipt["phase"] == "PROFILED":
-            if not profile_path.exists():
-                _fail("REMOTE_READ_PROFILE_MISSING")
-            profile = _read_json(profile_path, "REMOTE_READ_PROFILE_INVALID")
-            _validate_profile(profile)
-            if profile.get("snapshot_content_hash") != digest:
-                return {"status": "REMOTE_READ_SNAPSHOT_SUPERSEDED", "replayed": True,
-                    "snapshot_ref": receipt["approval"]["target_ref"], "snapshot_content_hash": digest}
-            if profile.get("status") == "REVOKED":
-                return {"status": "REMOTE_READER_REVOKED", "replayed": True,
-                    "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": digest}
-            if _profile_expired(profile):
-                return {"status": "REMOTE_READER_EXPIRED", "replayed": True,
-                    "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": digest}
 
         if receipt["snapshot_content_hash"] != digest or receipt["binding"] != _receipt_binding_facts(binding):
             _fail("REMOTE_READ_RECEIPT_INVALID")
-        # Completed exact replay is a pure read and performs no file rewrite.
-        if receipt["phase"] == "PROFILED" and profile_path.exists():
-            profile = _read_json(profile_path, "REMOTE_READ_PROFILE_INVALID")
-            _validate_profile(profile)
-            if (profile.get("snapshot_content_hash") == digest and profile.get("status") == "ACTIVE"
-                    and profile.get("project_id") == binding["project_id"]
-                    and profile.get("instance_id") == binding["instance_id"]
-                    and not _profile_expired(profile)):
+
+        # Rebuild only from the exact committed Context Pack and source hashes.
+        # This is intentionally before any canonical write on every resume.
+        ro_app = selected_opener(binding["data_root"], policy_path=binding["policy_path"],
+            independent_purge_journal_path=binding["independent_purge_journal_path"], read_only=True)
+        try:
+            document, source_rows, start_normalized, finish_normalized = _revalidate_receipt_read_only(
+                ro_app, binding, receipt, expected_document=document)
+            if receipt["phase"] == "PROFILED":
+                if not profile_path.exists():
+                    _fail("REMOTE_READ_PROFILE_MISSING")
+                profile = _read_json(profile_path, "REMOTE_READ_PROFILE_INVALID")
+                _validate_profile(profile)
+                if profile.get("snapshot_content_hash") != digest:
+                    return {"status": "REMOTE_READ_SNAPSHOT_SUPERSEDED", "replayed": True,
+                        "snapshot_ref": receipt["snapshot_ref"], "snapshot_content_hash": digest}
+                if profile.get("status") == "REVOKED":
+                    return {"status": "REMOTE_READER_REVOKED", "replayed": True,
+                        "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": digest}
+                if _profile_expired(profile):
+                    return {"status": "REMOTE_READER_EXPIRED", "replayed": True,
+                        "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": digest}
+                _validate_profiled_release(ro_app, binding, receipt, start_normalized, finish_normalized)
                 return {"status": "REMOTE_READ_SNAPSHOT_ALREADY_RELEASED", "replayed": True,
                     "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": digest,
                     "source_state_revision": profile["source_state_revision"],
                     "source_accepted_revision": profile["source_accepted_revision"]}
+        finally:
+            ro_app.close()
 
         kwargs = {"data_root": binding["data_root"], "policy_path": binding["policy_path"],
             "independent_purge_journal_path": binding["independent_purge_journal_path"]}
@@ -962,10 +1234,15 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
         try:
             writer = selected_opener(**kwargs, read_only=False)
             _verify_store_binding(writer, binding, read_only=False)
-            _validate_frozen_plans(writer, receipt)
+            document, _ = _rebuild_snapshot_from_exact_sources(writer, binding, receipt)
+            _validate_frozen_plans(writer, receipt, document)
+            stored_document = _read_existing_snapshot(
+                writer, receipt, required=receipt["phase"] not in {"AUTHORIZED", "STARTED"})
+            if stored_document is not None and stored_document != document:
+                _fail("REMOTE_READ_SNAPSHOT_OBJECT_MISMATCH")
             result = _execute_release(app=writer, binding=binding, receipt_path=receipt_path, receipt=receipt,
-                start_dir=start_dir, locator=selected_locator, app_opener=selected_opener)
-            profile = _profile_document(binding, receipt, result["created_at"])
+                document=document, start_dir=start_dir, locator=selected_locator, app_opener=selected_opener)
+            profile = _profile_document(binding, receipt, document, result["created_at"])
             _validate_profile(profile)
             previous = None
             if profile_path.exists():
@@ -991,7 +1268,7 @@ def prepare_remote_read(*, start_dir=None, confirmation: Callable[[str, dict[str
                 writer.close()
 
 
-def remote_reader_status(*, start_dir=None, registry_path=None, locator=None):
+def remote_reader_status(*, start_dir=None, registry_path=None, locator=None, app_opener=None):
     selected_locator = locator or locate_project
     binding = selected_locator(start_dir=start_dir)
     path = _profile_directory(binding, registry_path) / "profile.json"
@@ -1006,9 +1283,27 @@ def remote_reader_status(*, start_dir=None, registry_path=None, locator=None):
         return {"status": "REMOTE_READER_REVOKED", "profile_id": profile["profile_id"]}
     if _profile_expired(profile):
         return {"status": "REMOTE_READER_EXPIRED", "profile_id": profile["profile_id"]}
-    return {"status": "REMOTE_READER_ACTIVE", "profile_id": profile["profile_id"],
-        "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": profile["snapshot_content_hash"],
-        "expires_at": profile["expires_at"], "abilities": list(profile["allowed_abilities"])}
+    selected_opener = app_opener or open_panel_application
+    try:
+        app = selected_opener(binding["data_root"], policy_path=binding["policy_path"],
+            independent_purge_journal_path=binding["independent_purge_journal_path"], read_only=True)
+    except Exception:
+        return {"status": "REMOTE_READER_PROFILE_ACTIVE", "readiness": "NOT_READY",
+            "reason": "REMOTE_READ_INSTANCE_UNAVAILABLE", "profile_id": profile["profile_id"]}
+    try:
+        ready, reason = _profile_readiness(app, binding, profile)
+        result = {"status": "REMOTE_READER_READ_READY" if ready else "REMOTE_READER_PROFILE_ACTIVE",
+            "readiness": "READ_READY" if ready else "NOT_READY", "profile_id": profile["profile_id"],
+            "snapshot_ref": profile["snapshot_ref"], "snapshot_content_hash": profile["snapshot_content_hash"],
+            "expires_at": profile["expires_at"], "abilities": list(profile["allowed_abilities"])}
+        if reason:
+            result["reason"] = reason
+        return result
+    except Exception:
+        return {"status": "REMOTE_READER_PROFILE_ACTIVE", "readiness": "UNKNOWN",
+            "reason": "REMOTE_READ_STATUS_UNAVAILABLE", "profile_id": profile["profile_id"]}
+    finally:
+        app.close()
 
 
 def revoke_remote_reader(*, start_dir=None, registry_path=None, locator=None):

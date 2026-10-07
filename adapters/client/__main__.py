@@ -513,8 +513,8 @@ def main(argv: list[str] | None = None) -> int:
             _emit_json_document(result)
             return 0 if result["status"] in {
                 "REMOTE_READ_SNAPSHOT_RELEASED", "REMOTE_READ_SNAPSHOT_ALREADY_RELEASED",
-                "REMOTE_READER_ACTIVE", "REMOTE_READER_NOT_CONFIGURED", "REMOTE_READER_REVOKED",
-                "REMOTE_READER_EXPIRED",
+                "REMOTE_READER_READ_READY", "REMOTE_READER_PROFILE_ACTIVE",
+                "REMOTE_READER_NOT_CONFIGURED", "REMOTE_READER_REVOKED", "REMOTE_READER_EXPIRED",
             } else 3
         if args.command == "checkpoint":
             from adapters.client.checkpoint import CheckpointError, checkpoint_project, read_checkpoint_proposal

@@ -267,6 +267,7 @@ def _fit_workspace_budget(workspace: dict[str, Any]) -> dict[str, Any]:
 def build_project_workspace(
     *, start_dir: str | Path | None = None, locator=None, app_opener=None,
     application=None, resolved_binding: dict[str, Any] | None = None,
+    exact_context_pack_ref: str | None = None,
 ) -> dict[str, Any]:
     """Resolve and verify one attached Project, then build a bounded workspace.
 
@@ -289,11 +290,29 @@ def build_project_workspace(
     elif Path(application.store.data_root).resolve() != Path(resolved["data_root"]).resolve():
         raise ValueError("PROJECT_WORKSPACE_APPLICATION_BINDING_MISMATCH")
     try:
-        snapshot = application.view_model.snapshot()
-        context_meta = application.context_packs.latest()
-        pack = None
-        if context_meta.get("status") == "PACK_COMPILED" and isinstance(context_meta.get("pack_id"), str):
-            pack = application.context_packs.read_compiled(context_meta["pack_id"])
+        if exact_context_pack_ref is None:
+            snapshot = application.view_model.snapshot()
+            context_meta = application.context_packs.latest()
+            pack = None
+            if context_meta.get("status") == "PACK_COMPILED" and isinstance(context_meta.get("pack_id"), str):
+                pack = application.context_packs.read_compiled(context_meta["pack_id"])
+        else:
+            # Reconstitute a deterministic immutable projection from one exact
+            # Context Pack reference. Live Task/Run counts are intentionally
+            # UNKNOWN here because they are not immutable members of that pack.
+            pack = application.context_packs.read_compiled(exact_context_pack_ref)
+            context_meta = {
+                "status": "PACK_COMPILED", "pack_id": pack["pack_id"],
+                "content_hash": pack["content_hash"], "integrity_hash": pack["integrity_hash"],
+                "serialized_byte_size": pack["serialized_byte_size"], "compiled_at": None,
+            }
+            snapshot = {
+                "overview": {key: "UNKNOWN" for key in (
+                    "task_count", "recorded_run_count", "unfinished_task_count",
+                    "active_run_count", "pending_effect_count",
+                )},
+                "tasks": [], "skill_status": {},
+            }
         state_doc, delta_doc, entry_refs = _read_continuity_documents(pack)
     finally:
         if owns_application:
@@ -383,7 +402,10 @@ def build_project_workspace(
         "freshness": {
             "state_as_of": current_state.get("as_of"),
             "context_compiled_at": context.get("compiled_at"),
-            "basis": "VERIFIED_LATEST_CONTEXT_PACK",
+            "basis": (
+                "VERIFIED_EXACT_CONTEXT_PACK_REF"
+                if exact_context_pack_ref is not None else "VERIFIED_LATEST_CONTEXT_PACK"
+            ),
         },
     }
     return _fit_workspace_budget(result)

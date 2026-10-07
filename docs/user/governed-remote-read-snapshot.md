@@ -61,3 +61,9 @@ remote MCP surface 固定为两个无参数工具：
 ## 安全边界
 
 本版本没有远程连接，因此不构成对外发送授权，也不表示 ChatGPT 已连接或已经读取数据。future Remote MCP 部署必须单独定义和验收 remote-reader identity、egress destination、classification 与连接安全；不得把 Local MCP 的 `local-no-egress` profile 或本地 stdio 视为远程 egress 授权。
+
+## Status 与本机收据
+
+`nexus remote-read status` 的 `REMOTE_READER_READ_READY` 表示当前只读检查确认绑定、快照对象、Approval、有效期、当前分类和 egress 条件均可读。`REMOTE_READER_PROFILE_ACTIVE` 仅表示本机 profile 仍为 ACTIVE；需查看 `readiness` 与稳定 `reason`，它本身不表示内容可读。状态检查只读元数据，不读取快照正文。
+
+Host-local release receipt 只保存快照哈希、精确源引用及完整性哈希、选取字段名和冻结的治理计划，不保存选取字段值。重试只能从原 Context Pack 引用确定性重建，并要求结果哈希与已确认哈希一致。源或快照被 Purge 后，读取和重放都会 fail closed，不会改用最新状态或重建已 Purge 的快照。
