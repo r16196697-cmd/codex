@@ -51,6 +51,11 @@ def _parser() -> argparse.ArgumentParser:
                         help="Process-local root for explicitly imported Skill packages; never persisted")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    mcp = commands.add_parser("mcp", help="Governed local read plane (stdio only)")
+    mcp_commands = mcp.add_subparsers(dest="mcp_action", required=True)
+    mcp_serve = mcp_commands.add_parser("serve", help="Serve fixed read tools over trusted local stdio")
+    mcp_serve.add_argument("--project-root", type=Path, help="Local operator-selected Project discovery start; defaults to cwd")
+
     mode = commands.add_parser("mode")
     mode_commands = mode.add_subparsers(dest="mode_action", required=True)
     mode_commands.add_parser("show")
@@ -443,6 +448,18 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     store = None
     try:
+        if args.command == "mcp":
+            # MCP stdout belongs exclusively to the official SDK protocol.
+            if any(value is not None for value in (args.data_root, args.policy, args.independent_purge_journal)):
+                print("READ_PLANE_INVALID_ARGUMENT", file=sys.stderr)
+                return 3
+            try:
+                from adapters.mcp.server import serve
+                serve(start_dir=args.project_root)
+                return 0
+            except Exception:
+                print("READ_PLANE_UNAVAILABLE", file=sys.stderr)
+                return 3
         if args.command == "checkpoint":
             from adapters.client.checkpoint import CheckpointError, checkpoint_project, read_checkpoint_proposal
             if any(value is not None for value in (args.data_root, args.policy, args.independent_purge_journal)):

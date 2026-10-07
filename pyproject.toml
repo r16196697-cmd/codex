@@ -7,7 +7,7 @@ name = "project-nexus"
 version = "0.1.0"
 description = "Local governed continuity and operator surfaces for Project Nexus"
 requires-python = ">=3.11"
-dependencies = ["jsonschema==4.26.0", "PyYAML==6.0.3"]
+dependencies = ["jsonschema==4.26.0", "PyYAML==6.0.3", "mcp==2.3.0"]
 
 [project.scripts]
 nexus = "adapters.client.__main__:main"

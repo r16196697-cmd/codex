@@ -1,0 +1,5 @@
+--- install_nexus_host.py
++++ install_nexus_host.py
+@@ -247,1 +247,1 @@
+-    mapping = {"jsonschema": "jsonschema", "PyYAML": "yaml"}
++    mapping = {"jsonschema": "jsonschema", "PyYAML": "yaml", "mcp": "mcp"}
