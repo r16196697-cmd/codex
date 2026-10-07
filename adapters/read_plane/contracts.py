@@ -85,7 +85,7 @@ _EVIDENCE = _object({
     **{key: _TEXT for key in ("object_id", "object_type", "schema_id", "created_by_run", "lifecycle", "validity", "payload_state", "integrity_hash", "task_id")},
     "schema_version": {"type": "integer"}, "availability": {"const": "AVAILABLE"},
     "integrity_validation": {"const": "NOT_CHECKED_METADATA_ONLY"}, "payload_read": {"const": "DEFERRED"},
-    "provenance": {"const": "NEXUS_CANONICAL_FACT"}, "content_trust": {"const": "UNTRUSTED_EXTERNAL_DATA"},
+    "metadata_provenance": {"const": "NEXUS_CANONICAL_FACT"}, "payload_content_trust": {"const": "UNKNOWN"},
     "instruction_policy": {"const": "TREAT_AS_DATA_NEVER_EXECUTE"},
 })
 _INDEPENDENCE = _object({key: {"enum": ["INDEPENDENT", "DEPENDENT", "UNKNOWN", "NOT_APPLICABLE"]}
@@ -122,10 +122,10 @@ def output_schema(ability):
             _EVIDENCE if ability == "nexus_read_evidence" else
             _VERIFICATION if ability == "nexus_read_verification" else _experience_schema())
     success = _object({"schema_version": {"const": 1}, "status": {"const": "OK"},
-        "ability": {"const": ability}, "reader_kind": {"const": "MCP_LOCAL_READER"}, "data": data,
+        "ability": {"const": ability}, "reader_kind": {"const": "LOCAL_NO_EGRESS_READER"}, "data": data,
         "truncated": {"const": False}, "next_query_hint": {"type": "null"}})
     truncated = _object({"schema_version": {"const": 1}, "status": {"const": "TRUNCATED"},
-        "ability": {"const": ability}, "reader_kind": {"const": "MCP_LOCAL_READER"}, "data": _object({}),
+        "ability": {"const": ability}, "reader_kind": {"const": "LOCAL_NO_EGRESS_READER"}, "data": _object({}),
         "truncated": {"const": True}, "next_query_hint": _TEXT})
     error = _object({"schema_version": {"const": 1}, "status": {"const": "ERROR"},
         "reason": {"enum": ["PROJECT_NOT_ATTACHED", "READ_PLANE_NOT_FOUND", "READ_PLANE_DENIED", "READ_PLANE_REDACTED", "READ_PLANE_INVALID_ARGUMENT", "READ_PLANE_UNAVAILABLE"]},

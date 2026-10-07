@@ -32,6 +32,34 @@ class LocalMCPTests(unittest.TestCase):
         self.read.setUp()
         self.addCleanup(self.read.doCleanups)
 
+    def test_official_client_locality_is_not_egress_authorization(self):
+        from tests.integration.test_read_plane import ReadPlaneFixture
+        fixture = ReadPlaneFixture()
+        fixture.private_local = True
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        before = commitment(fixture.fixture.data_root)
+        journal = (fixture.fixture.journal_path.read_bytes(), fixture.fixture.journal_path.stat().st_mtime_ns)
+        async def check():
+            for profile in (None, "local-no-egress"):
+                async with Client(create_server(start_dir=fixture.nested, reader_profile=profile)) as client:
+                    args = {"evidence_ref": fixture.evidence_id}
+                    result = await client.call_tool("nexus_read_evidence", args)
+                    if profile is None:
+                        self.assertTrue(result.is_error)
+                        self.assertEqual(result.structured_content["reason"], "READ_PLANE_DENIED")
+                        self.assertNotIn("data", result.structured_content)
+                    else:
+                        self.assertFalse(result.is_error, result)
+                        self.assertEqual(result.structured_content["reader_kind"], "LOCAL_NO_EGRESS_READER")
+                        self.assertEqual(result.structured_content["data"]["payload_content_trust"], "UNKNOWN")
+                        self.assertNotIn("external data", result.content[0].text)
+                    spoofed = await client.call_tool("nexus_read_evidence", {**args, "reader_profile": "local-no-egress"})
+                    self.assertEqual(spoofed.structured_content["reason"], "READ_PLANE_INVALID_ARGUMENT")
+        asyncio.run(check())
+        self.assertEqual(before, commitment(fixture.fixture.data_root))
+        self.assertEqual(journal, (fixture.fixture.journal_path.read_bytes(), fixture.fixture.journal_path.stat().st_mtime_ns))
+
     def test_official_client_identity_fixed_tools_and_schemas(self):
         async def check():
             async with Client(create_server(read_plane=self.read.plane)) as client:
@@ -90,13 +118,20 @@ class LocalMCPTests(unittest.TestCase):
         repo = Path(__file__).resolve().parents[2]
         # An isolated pip --target fixture needs .pth processing for pywin32.
         # A normal installed environment processes these at Python startup.
-        code = "import site,sys;[site.addsitedir(p) for p in list(sys.path) if p];from adapters.client.__main__ import main;sys.exit(main(['mcp','serve']))"
+        code = "import site,sys;[site.addsitedir(p) for p in list(sys.path) if p];from adapters.client.__main__ import main;sys.exit(main(sys.argv[1:]))"
         env = {**os.environ, **self.read.environment, "PYTHONDONTWRITEBYTECODE": "1",
                "PYTHONPATH": os.pathsep.join([str(repo), *sys.path])}
         before = commitment(self.read.fixture.data_root)
         journal = (self.read.fixture.journal_path.read_bytes(), self.read.fixture.journal_path.stat().st_mtime_ns)
         async def check():
-            async with Client(StdioServerParameters(command=sys.executable, args=["-B", "-c", code],
+            async with Client(StdioServerParameters(command=sys.executable, args=["-B", "-c", code, "mcp", "serve"],
+                env=env, cwd=self.read.nested)) as client:
+                result = await client.call_tool("nexus_task_experience", {"task_id": self.read.fixture.task_id})
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.structured_content["reason"], "READ_PLANE_DENIED")
+                self.assertNotIn("data", result.structured_content)
+            async with Client(StdioServerParameters(command=sys.executable,
+                args=["-B", "-c", code, "mcp", "serve", "--reader-profile", "local-no-egress"],
                 env=env, cwd=self.read.nested)) as client:
                 self.assertEqual(client.server_info.name, "nexus")
                 result = await client.call_tool("nexus_task_experience", {"task_id": self.read.fixture.task_id})
@@ -131,13 +166,38 @@ class LocalMCPTests(unittest.TestCase):
 
 
 class MCPWorkspaceTests(unittest.TestCase):
+    def test_canonical_strings_cli_read_plane_mcp_are_identical(self):
+        from tests.integration.test_read_plane import ReadPlaneWorkspaceTests
+        fixture = ReadPlaneWorkspaceTests()
+        fixture.canonical_text = True
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        p = fixture.presence
+        plane = LocalReadPlane(start_dir=p.nested, reader_profile="local-no-egress")
+        before = commitment(p.root)
+        journal = (p.journal.read_bytes(), p.journal.stat().st_mtime_ns)
+        async def check():
+            async with Client(create_server(read_plane=plane)) as client:
+                for command, name in (("status", "nexus_project_overview"), ("continue", "nexus_project_continue")):
+                    code, out, err = p._run_cli([command, "--json"], cwd=p.nested)
+                    self.assertEqual(code, 0, err)
+                    result = await client.call_tool(name, {})
+                    self.assertFalse(result.is_error, result)
+                    self.assertEqual(result.structured_content["data"], json.loads(out))
+                    self.assertEqual(result.structured_content, plane.invoke(name, {}))
+                    self.assertIn(r"C:\fixture\project", result.content[0].text)
+                    self.assertIn("secret=rotation-policy", result.content[0].text)
+        asyncio.run(check())
+        self.assertEqual(before, commitment(p.root))
+        self.assertEqual(journal, (p.journal.read_bytes(), p.journal.stat().st_mtime_ns))
+
     def test_cli_read_plane_mcp_same_workspace_without_full_context(self):
         from tests.integration.test_read_plane import ReadPlaneWorkspaceTests
         fixture = ReadPlaneWorkspaceTests()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         presence = fixture.presence
-        plane = LocalReadPlane(start_dir=presence.nested)
+        plane = LocalReadPlane(reader_profile="local-no-egress", start_dir=presence.nested)
         before = commitment(presence.root)
         async def check():
             async with Client(create_server(read_plane=plane)) as client:
@@ -183,9 +243,10 @@ class MCPWorkspaceTests(unittest.TestCase):
                 env=env, capture_output=True)
             self.assertEqual(help_result.returncode, 0, help_result.stderr)
             self.assertIn(b"--project-root", help_result.stdout)
+            self.assertIn(b"--reader-profile", help_result.stdout)
             before = commitment(presence.root)
             async def check():
-                async with Client(StdioServerParameters(command=str(executable), args=["mcp", "serve"],
+                async with Client(StdioServerParameters(command=str(executable), args=["mcp", "serve", "--reader-profile", "local-no-egress"],
                     cwd=presence.nested, env=env)) as client:
                     result = await client.call_tool("nexus_project_continue", {})
                     self.assertFalse(result.is_error, result)

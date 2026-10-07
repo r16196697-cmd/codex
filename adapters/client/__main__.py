@@ -53,7 +53,9 @@ def _parser() -> argparse.ArgumentParser:
 
     mcp = commands.add_parser("mcp", help="Governed local read plane (stdio only)")
     mcp_commands = mcp.add_subparsers(dest="mcp_action", required=True)
-    mcp_serve = mcp_commands.add_parser("serve", help="Serve fixed read tools over trusted local stdio")
+    mcp_serve = mcp_commands.add_parser("serve", help="Serve fixed read tools over stdio; explicit consumer profile required for reads")
+    mcp_serve.add_argument("--reader-profile", choices=["local-no-egress"],
+                           help="Operator no-egress consumer assertion; never use with remote-model Hosts")
     mcp_serve.add_argument("--project-root", type=Path, help="Local operator-selected Project discovery start; defaults to cwd")
 
     mode = commands.add_parser("mode")
@@ -455,7 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
             try:
                 from adapters.mcp.server import serve
-                serve(start_dir=args.project_root)
+                serve(start_dir=args.project_root, reader_profile=args.reader_profile)
                 return 0
             except Exception:
                 print("READ_PLANE_UNAVAILABLE", file=sys.stderr)

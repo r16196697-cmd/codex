@@ -18,7 +18,7 @@ from adapters.client.hosted import CodexHostedBridge
 from adapters.panel.application import open_panel_application
 from adapters.read_plane import LocalReadPlane
 from adapters.read_plane.contracts import INPUT_SCHEMAS, TOOLS, output_schema
-from adapters.read_plane.service import McpLocalReaderContext, _ReaderInspect
+from adapters.read_plane.service import LocalNoEgressReaderContext, _ReaderInspect
 from kernel.authority import AuthorityService
 from kernel.experience import ExperienceProjectionService, LocalOperatorReadContext
 from kernel.verification import VerificationService
@@ -51,6 +51,9 @@ class ReadPlaneFixture(unittest.TestCase):
         def create_root(bridge, **kwargs):
             if getattr(self, "evidence_level", "PUBLIC") == "SECRET":
                 kwargs["data_boundary"] = {"allowed_classifications": ["PUBLIC", "SECRET"], "handling_tags": []}
+            elif getattr(self, "private_local", False):
+                kwargs["data_boundary"] = {"allowed_classifications": ["PUBLIC", "PROJECT_PRIVATE"],
+                                          "handling_tags": ["LOCAL_ONLY", "NO_EXTERNAL_EGRESS"]}
             return original_root(bridge, **kwargs)
         with mock.patch.object(AuthorityService, "create_grant", create_grant), \
              mock.patch.object(CodexHostedBridge, "create_task_root", create_root):
@@ -62,6 +65,9 @@ class ReadPlaneFixture(unittest.TestCase):
         assertion_id = "class-read-plane-evidence"
         classification = f._classification(assertion_id, "OBJECT", self.evidence_id)
         classification["sensitivity_level"] = getattr(self, "evidence_level", "PUBLIC")
+        if getattr(self, "private_local", False):
+            classification.update(sensitivity_level="PROJECT_PRIVATE",
+                                  handling_tags=["LOCAL_ONLY", "NO_EXTERNAL_EGRESS"])
         f.authority.record_classification_assertion(classification,
             grant_id=f.grant_id, task_id=f.task_id, audience="nexus-runtime", command_id="classify-read-evidence")
         f.writer.put_object(command_id="put-read-evidence", object_id=self.evidence_id,
@@ -100,7 +106,7 @@ class ReadPlaneFixture(unittest.TestCase):
         self.env_patch = mock.patch.dict(os.environ, self.environment)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
-        self.plane = LocalReadPlane(start_dir=self.project)
+        self.plane = LocalReadPlane(reader_profile="local-no-egress", start_dir=self.project)
 
     def invoke(self, name, args=None):
         result = self.plane.invoke(name, args or {})
@@ -114,12 +120,51 @@ class ReadPlaneFixture(unittest.TestCase):
             expected = ExperienceProjectionService(reader, read_context=LocalOperatorReadContext()).project_task(self.fixture.task_id)
         self.assertEqual(result["data"], expected)
         self.assertEqual(result["data"]["lifecycle"]["semantic_quality"], "UNKNOWN")
-        self.assertEqual(result["reader_kind"], "MCP_LOCAL_READER")
+        self.assertEqual(result["reader_kind"], "LOCAL_NO_EGRESS_READER")
+
+    def test_default_reader_denied_before_content_or_storage_access(self):
+        before = commitment(self.fixture.data_root)
+        journal = (self.fixture.journal_path.read_bytes(), self.fixture.journal_path.stat().st_mtime_ns)
+        for profile in (None, "generic", "remote"):
+            locator, opener = mock.Mock(), mock.Mock()
+            plane = LocalReadPlane(start_dir=self.project, reader_profile=profile,
+                                  locator=locator, app_opener=opener)
+            for name, (field, _) in TOOLS.items():
+                result = plane.invoke(name, {field: "exact-id"} if field else {})
+                self.assertEqual(result["reason"], "READ_PLANE_DENIED")
+                self.assertNotIn("data", result)
+                Draft202012Validator(output_schema(name)).validate(result)
+            locator.assert_not_called()
+            opener.assert_not_called()
+        self.assertEqual(before, commitment(self.fixture.data_root))
+        self.assertEqual(journal, (self.fixture.journal_path.read_bytes(), self.fixture.journal_path.stat().st_mtime_ns))
+
+    def test_private_local_only_requires_explicit_consumer_profile(self):
+        fixture = ReadPlaneFixture()
+        fixture.private_local = True
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        before = commitment(fixture.fixture.data_root)
+        args = {"evidence_ref": fixture.evidence_id}
+        generic = LocalReadPlane(start_dir=fixture.project)
+        self.assertEqual(generic.invoke("nexus_read_evidence", args)["reason"], "READ_PLANE_DENIED")
+        self.assertEqual(fixture.invoke("nexus_read_evidence", args)["status"], "OK")
+        self.assertEqual(before, commitment(fixture.fixture.data_root))
+
+    def test_tool_arguments_cannot_select_reader_profile(self):
+        plane = LocalReadPlane(start_dir=self.project)
+        for name, (field, _) in TOOLS.items():
+            args = {field: "exact-id"} if field else {}
+            for key in ("reader_profile", "reader-profile", "caller_kind"):
+                result = plane.invoke(name, {**args, key: "local-no-egress"})
+                self.assertEqual(result["reason"], "READ_PLANE_INVALID_ARGUMENT")
 
     def test_evidence_metadata_only_and_verification_semantics(self):
         evidence = self.invoke("nexus_read_evidence", {"evidence_ref": self.evidence_id})
         self.assertEqual(evidence["status"], "OK", evidence)
-        self.assertEqual(evidence["data"]["content_trust"], "UNTRUSTED_EXTERNAL_DATA")
+        self.assertEqual(evidence["data"]["payload_content_trust"], "UNKNOWN")
+        self.assertEqual(evidence["data"]["metadata_provenance"], "NEXUS_CANONICAL_FACT")
+        self.assertNotIn("content_trust", evidence["data"])
         self.assertEqual(evidence["data"]["payload_read"], "DEFERRED")
         self.assertNotIn("fixture-credential", json.dumps(evidence))
         verification = self.invoke("nexus_read_verification", {"verification_id": "verify-read-plane"})
@@ -136,7 +181,7 @@ class ReadPlaneFixture(unittest.TestCase):
 
     def test_unknown_arguments_and_types_rejected_before_open(self):
         with mock.patch("adapters.read_plane.service.open_panel_application", side_effect=AssertionError("must not open")):
-            plane = LocalReadPlane(start_dir=self.project)
+            plane = LocalReadPlane(reader_profile="local-no-egress", start_dir=self.project)
             for name in TOOLS:
                 result = plane.invoke(name, {"unknown": "C:\\fixture\\secret"})
                 self.assertEqual(result["reason"], "READ_PLANE_INVALID_ARGUMENT")
@@ -153,7 +198,7 @@ class ReadPlaneFixture(unittest.TestCase):
             def close(self):
                 self.closed = True
         app = WriterApp()
-        plane = LocalReadPlane(start_dir=self.project, app_opener=lambda *a, **kw: app)
+        plane = LocalReadPlane(reader_profile="local-no-egress", start_dir=self.project, app_opener=lambda *a, **kw: app)
         self.assertEqual(plane.invoke("nexus_task_experience", {"task_id": self.fixture.task_id})["reason"], "READ_PLANE_DENIED")
         self.assertTrue(app.closed)
 
@@ -162,21 +207,21 @@ class ReadPlaneFixture(unittest.TestCase):
         def opener(*args, **kwargs):
             opened.append(kwargs["read_only"])
             return open_panel_application(*args, **kwargs)
-        plane = LocalReadPlane(start_dir=self.project, app_opener=opener)
+        plane = LocalReadPlane(reader_profile="local-no-egress", start_dir=self.project, app_opener=opener)
         result = plane.invoke("nexus_task_experience", {"task_id": self.fixture.task_id})
         self.assertEqual(result["status"], "OK", result)
         self.assertEqual(opened, [True])
         self.assertEqual(result["data"]["lifecycle"]["runs"]["items"][0]["grant_status"], "REVOKED")
         with self.fixture._reader() as reader:
             inspector = _ReaderInspect(reader, AuthorityService(reader, reader.policy),
-                McpLocalReaderContext("project-read-test", reader.instance_binding["instance_id"]))
+                LocalNoEgressReaderContext("project-read-test", reader.instance_binding["instance_id"], "local-no-egress"))
             with self.assertRaisesRegex(Exception, "READ_PLANE_DENIED"):
                 inspector._authorize(self.fixture.grant_id, self.fixture.task_id, "task:" + self.fixture.task_id)
 
     def test_classification_hidden_evidence_and_verification_denied(self):
         with self.fixture._reader() as reader:
             authority = AuthorityService(reader, reader.policy)
-            context = McpLocalReaderContext("project-read-test", reader.instance_binding["instance_id"])
+            context = LocalNoEgressReaderContext("project-read-test", reader.instance_binding["instance_id"], "local-no-egress")
             inspector = _ReaderInspect(reader, authority, context)
             row = {"sensitivity_level": "SECRET", "handling_tags_json": "[]", "data_boundary_json": json.dumps({"allowed_classifications": ["SECRET"], "handling_tags": []})}
             self.assertFalse(inspector._classification_visible(row))
@@ -201,13 +246,13 @@ class ReadPlaneFixture(unittest.TestCase):
     def test_unattached_malformed_and_unbound_project_safe(self):
         outside = self.fixture.root / "outside"
         outside.mkdir()
-        self.assertEqual(LocalReadPlane(start_dir=outside).invoke("nexus_project_continue", {})["reason"], "PROJECT_NOT_ATTACHED")
+        self.assertEqual(LocalReadPlane(reader_profile="local-no-egress", start_dir=outside).invoke("nexus_project_continue", {})["reason"], "PROJECT_NOT_ATTACHED")
         nexus_dir = outside / ".nexus"
         nexus_dir.mkdir()
         (nexus_dir / "project.json").write_text('{"schema_id":"nexus.project_manifest","schema_version":1,"project_id":"project-unbound"}', encoding="utf-8")
-        self.assertEqual(LocalReadPlane(start_dir=outside).invoke("nexus_project_continue", {})["reason"], "READ_PLANE_UNAVAILABLE")
+        self.assertEqual(LocalReadPlane(reader_profile="local-no-egress", start_dir=outside).invoke("nexus_project_continue", {})["reason"], "READ_PLANE_UNAVAILABLE")
         (nexus_dir / "project.json").write_text('{"project_id":"C:\\private"}', encoding="utf-8")
-        result = LocalReadPlane(start_dir=outside).invoke("nexus_project_continue", {})
+        result = LocalReadPlane(reader_profile="local-no-egress", start_dir=outside).invoke("nexus_project_continue", {})
         self.assertEqual(result["reason"], "READ_PLANE_UNAVAILABLE")
         self.assertNotIn("private", json.dumps(result))
 
@@ -283,17 +328,76 @@ class ReadPlaneFixture(unittest.TestCase):
 class ReadPlaneWorkspaceTests(unittest.TestCase):
     def setUp(self):
         from tests.integration.test_native_presence import NativePresenceTests
+        from tests.integration.test_continuation_commit import ContinuationCommitTests
         self.presence = NativePresenceTests()
-        self.presence.setUp()
+        original = ContinuationCommitTests._extra_resources
+        def extra_resources(fixture, plan, extra):
+            return original(fixture, plan, set(extra) | {
+                "fixture-text-state", "object:fixture-text-state", "fixture-text-pack"})
+        patch = (mock.patch.object(ContinuationCommitTests, "_extra_resources", extra_resources)
+                 if getattr(self, "canonical_text", False) else contextlib.nullcontext())
+        with patch:
+            self.presence.setUp()
         self.addCleanup(self.presence.doCleanups)
+        if getattr(self, "canonical_text", False):
+            self._seed_canonical_text_context()
         self.patch = mock.patch.dict(os.environ, self.presence.env)
         self.patch.start()
         self.addCleanup(self.patch.stop)
 
+    def _seed_canonical_text_context(self):
+        # Isolated canonical Object/Context APIs, not a patched semantic result.
+        # The Continuation human-assertion protocol intentionally prohibits
+        # absolute paths; other valid canonical artifacts can contain them.
+        p = self.presence
+        task = p.continuation.current_start_plan
+        with contextlib.closing(open_panel_application(p.root, policy_path=p.policy,
+                independent_purge_journal_path=p.journal, read_only=False)) as app:
+            authority = AuthorityService(app.store, app.store.policy)
+            doc = json.loads(app.store.get_payload(p.commit_result["new_current_state_ref"]))
+            doc["current_objective"] = r"Review C:\fixture\project and secret=rotation-policy"
+            doc["current_operating_priority"] = r"Document C:\fixture\project; secret=rotation-policy"
+            for ref in ("fixture-text-state", "fixture-text-pack"):
+                assertion_id = "class-" + ref
+                authority.record_classification_assertion({
+                    "schema_id": "nexus.classification_assertion", "schema_version": 1,
+                    "assertion_id": assertion_id, "subject_type": "OBJECT", "subject_ref": ref,
+                    "sensitivity_level": "PUBLIC", "handling_tags": [], "policy_version": "1",
+                    "reason": "Canonical text preservation fixture", "actor_id": "runtime-service"},
+                    grant_id=task["grant"]["grant_id"], task_id=task["root"]["task_id"],
+                    audience="nexus-runtime", command_id="record-" + assertion_id)
+            app.store.put_object(command_id="put-fixture-text-state", object_id="fixture-text-state",
+                payload=json.dumps(doc).encode("utf-8"), object_type="artifact",
+                created_by_run=task["root"]["root_run_id"], classification_assertion_ref="class-fixture-text-state")
+            app.context_packs.compile(task_id=task["root"]["task_id"], run_id=task["root"]["root_run_id"],
+                grant_id=task["grant"]["grant_id"], pack_object_id="fixture-text-pack",
+                classification_assertion_ref="class-fixture-text-pack", command_id="compile-fixture-text",
+                source_refs=["fixture-text-state"])
+
+    def test_canonical_strings_preserved_exactly_like_cli(self):
+        fixture = ReadPlaneWorkspaceTests()
+        fixture.canonical_text = True
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        p = fixture.presence
+        before = commitment(p.root)
+        journal = (p.journal.read_bytes(), p.journal.stat().st_mtime_ns)
+        for command, name in (("status", "nexus_project_overview"), ("continue", "nexus_project_continue")):
+            code, out, err = p._run_cli([command, "--json"], cwd=p.nested)
+            self.assertEqual(code, 0, err)
+            result = LocalReadPlane(start_dir=p.nested, reader_profile="local-no-egress").invoke(name, {})
+            self.assertEqual(result["status"], "OK", result)
+            self.assertEqual(result["data"], json.loads(out))
+            for field in ("objective", "next_step"):
+                self.assertIn(r"C:\fixture\project", result["data"]["current_state"][field])
+                self.assertIn("secret=rotation-policy", result["data"]["current_state"][field])
+        self.assertEqual(before, commitment(p.root))
+        self.assertEqual(journal, (p.journal.read_bytes(), p.journal.stat().st_mtime_ns))
+
     def test_cli_root_nested_and_read_plane_semantic_consistency(self):
         p = self.presence
-        root = LocalReadPlane(start_dir=p.repo).invoke("nexus_project_overview", {})
-        nested = LocalReadPlane(start_dir=p.nested).invoke("nexus_project_continue", {})
+        root = LocalReadPlane(reader_profile="local-no-egress", start_dir=p.repo).invoke("nexus_project_overview", {})
+        nested = LocalReadPlane(reader_profile="local-no-egress", start_dir=p.nested).invoke("nexus_project_continue", {})
         self.assertEqual(root["status"], "OK", root)
         self.assertEqual(nested["status"], "OK", nested)
         for command in ("status", "continue"):
