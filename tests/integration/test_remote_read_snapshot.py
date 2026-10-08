@@ -8,11 +8,13 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from mcp import Client
+from mcp import Client, ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from jsonschema import Draft202012Validator
 
 from adapters.client.project_locator import attach_project
@@ -288,6 +290,36 @@ class RemoteReadSnapshotTests(RemoteReadFixture):
         asyncio.run(check_mcp())
         self.assertEqual(after_prepare, self.canonical_commitment())
         self.assertEqual(journal_before, (journal.read_bytes(), journal.stat().st_mtime_ns))
+
+    def test_remote_serve_stdio_serializes_tools_and_returns_released_marker(self):
+        released = prepare_remote_read(start_dir=self.nested, registry_path=self.registry,
+            confirmation=lambda *_: True)
+        self.assertEqual(released["status"], "REMOTE_READ_SNAPSHOT_RELEASED", released)
+        before_reads = self.canonical_commitment()
+
+        async def check_stdio():
+            params = StdioServerParameters(
+                command=sys.executable,
+                args=["-B", "-m", "adapters.client", "mcp", "remote-serve",
+                      "--project-root", str(self.repo)],
+                env=os.environ.copy(),
+            )
+            async with stdio_client(params) as (read_stream, write_stream):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    tools = await session.list_tools()
+                    names = sorted(tool.name for tool in tools.tools)
+                    self.assertEqual(names, ["nexus_project_continue", "nexus_project_overview"])
+                    self.assertTrue(all(tool.output_schema["type"] == "object" for tool in tools.tools))
+                    overview = await session.call_tool("nexus_project_overview", {})
+                    continued = await session.call_tool("nexus_project_continue", {})
+                    self.assertFalse(overview.is_error)
+                    self.assertFalse(continued.is_error)
+                    self.assertIn(SELECTED_MARKER, json.dumps(
+                        [overview.structured_content, continued.structured_content], ensure_ascii=False))
+
+        asyncio.run(check_stdio())
+        self.assertEqual(before_reads, self.canonical_commitment())
 
     def test_denied_confirmation_zero_canonical_writes(self):
         before = self.canonical_commitment()

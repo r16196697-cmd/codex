@@ -95,7 +95,8 @@ def _output_schema(ability):
         "reason": {"enum": ["READ_PLANE_INVALID_ARGUMENT", "READ_PLANE_DENIED",
             "READ_PLANE_UNAVAILABLE", "READ_PLANE_REDACTED"]},
     })
-    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "oneOf": [success, error]}
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object",
+        "oneOf": [success, error]}
 
 
 def _registration_stub() -> dict:
